@@ -252,11 +252,11 @@ class Validators {
       return 'الرقم القومي مطلوب';
     }
 
-    if (value.length != 10) {
-      return 'الرقم القومي يجب أن يكون 10 أرقام';
+    if (value.length != 14) {
+      return 'الرقم القومي يجب أن يكون 14 أرقام';
     }
 
-    if (!RegExp(r'^[0-9]{10}$').hasMatch(value)) {
+    if (!RegExp(r'^[0-9]{14}$').hasMatch(value)) {
       return 'الرقم القومي غير صالح';
     }
 

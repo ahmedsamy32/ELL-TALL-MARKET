@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/cart_provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/widgets/cart_item_widget.dart';
 import 'package:ell_tall_market/widgets/custom_button.dart';
@@ -10,7 +10,7 @@ class CartScreen extends StatelessWidget {
   const CartScreen({super.key});
 
   void _checkLoginAndNavigate(BuildContext context, Function action) {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
     if (authProvider.isLoggedIn) {
       action();
     } else {

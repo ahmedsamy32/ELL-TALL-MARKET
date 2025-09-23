@@ -33,12 +33,12 @@ class _SplashScreenState extends State<SplashScreen> {
         return;
       }
 
-      debugPrint('🔍 SplashScreen: محاولة الوصول إلى FirebaseAuthProvider...');
+      debugPrint('🔍 SplashScreen: محاولة الوصول إلى authProvider...');
       final authProvider = Provider.of<FirebaseAuthProvider>(
         context,
         listen: false,
       );
-      debugPrint('✅ SplashScreen: تم العثور على FirebaseAuthProvider بنجاح');
+      debugPrint('✅ SplashScreen: تم العثور على authProvider بنجاح');
 
       // نعمل Delay علشان يظهر Splash كويس
       await Future.delayed(Duration(seconds: 2));

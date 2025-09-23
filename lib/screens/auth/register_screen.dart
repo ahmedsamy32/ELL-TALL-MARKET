@@ -123,10 +123,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _handleGoogleRegister() async {
     try {
       print("🔄 [DEBUG] بدء تسجيل دخول Google...");
-      final authProvider = Provider.of<FirebaseAuthProvider>(
-        context,
-        listen: false,
-      );
+      final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
 
       SnackBarHelper.showLoading(context, '🔄 جاري التسجيل بواسطة جوجل...');
 
@@ -158,10 +155,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _handleFacebookRegister() async {
     try {
       print("🔄 [DEBUG] بدء تسجيل دخول Facebook...");
-      final authProvider = Provider.of<FirebaseAuthProvider>(
-        context,
-        listen: false,
-      );
+      final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

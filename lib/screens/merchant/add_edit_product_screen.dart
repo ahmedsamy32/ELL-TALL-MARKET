@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/models/product_model.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/services/product_service.dart';
 import 'package:ell_tall_market/widgets/custom_button.dart';
 import 'package:ell_tall_market/widgets/custom_textfield.dart';
@@ -291,7 +291,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
   void _saveProduct() async {
     if (_formKey.currentState!.validate() && _productImages.isNotEmpty) {
       try {
-        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
         final currentUser = authProvider.user;
         // تجهيز بيانات المنتج
         final product = ProductModel(

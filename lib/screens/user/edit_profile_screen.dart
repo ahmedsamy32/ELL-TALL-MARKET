@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
+import 'package:ell_tall_market/models/user_model.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -27,7 +28,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
-    final user = Provider.of<AuthProvider>(context, listen: false).user!;
+    final user = Provider.of<FirebaseAuthProvider>(
+      context,
+      listen: false,
+    ).user!;
     _nameController = TextEditingController(text: user.name);
     _phoneController = TextEditingController(text: user.phone);
     _currentPasswordController = TextEditingController();
@@ -64,16 +68,43 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     setState(() => _isSaving = true);
 
     try {
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
-
-      // تحديث البروفايل الأساسي
-      bool profileSuccess = await authProvider.updateProfile(
-        name: _nameController.text.trim(),
-        phone: _phoneController.text.trim(),
-        imageUrl: _pickedImage?.path,
+      final authProvider = Provider.of<FirebaseAuthProvider>(
+        context,
+        listen: false,
       );
 
-      if (!profileSuccess) {
+      // إنشاء نموذج المستخدم المحدث
+      final updatedUser = UserModel(
+        id: authProvider.user!.id,
+        firebaseId: authProvider.user!.firebaseId,
+        name: _nameController.text.trim(),
+        email: authProvider.user!.email,
+        phone: _phoneController.text.trim(),
+        type: authProvider.user!.type,
+        avatarUrl: _pickedImage?.path ?? authProvider.user!.avatarUrl,
+        createdAt: authProvider.user!.createdAt,
+        updatedAt: DateTime.now(),
+        isActive: authProvider.user!.isActive,
+        lastLogin: authProvider.user!.lastLogin,
+        loginCount: authProvider.user!.loginCount,
+        storeId: authProvider.user!.storeId,
+        preferredPaymentMethod: authProvider.user!.preferredPaymentMethod,
+        address: authProvider.user!.address,
+        storeName: authProvider.user!.storeName,
+        storeDescription: authProvider.user!.storeDescription,
+        storeLogoUrl: authProvider.user!.storeLogoUrl,
+        storeCoverUrl: authProvider.user!.storeCoverUrl,
+        storeAddress: authProvider.user!.storeAddress,
+        storeLocation: authProvider.user!.storeLocation,
+        storeCategory: authProvider.user!.storeCategory,
+        storeRating: authProvider.user!.storeRating,
+        storeRatingCount: authProvider.user!.storeRatingCount,
+      );
+
+      // تحديث البروفايل
+      final updatedResult = await authProvider.updateProfile(updatedUser);
+
+      if (updatedResult == null) {
         _showErrorSnackBar('فشل في تحديث البيانات الشخصية');
         setState(() => _isSaving = false);
         return;
@@ -166,8 +197,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _deleteAccount() async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final userId = authProvider.user!.id;
+    final authProvider = Provider.of<FirebaseAuthProvider>(
+      context,
+      listen: false,
+    );
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -191,7 +224,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     if (confirmed == true) {
       try {
-        bool success = await authProvider.deleteUser(userId);
+        bool success = await authProvider.deleteUser();
         if (success) {
           _showSuccessSnackBar('تم حذف الحساب بنجاح');
           // العودة لشاشة تسجيل الدخول
@@ -211,7 +244,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final user = Provider.of<AuthProvider>(context).user!;
+    final user = Provider.of<FirebaseAuthProvider>(context).user!;
     return Scaffold(
       appBar: AppBar(
         title: const Text('تعديل الملف الشخصي'),

@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/models/user_model.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 import 'package:ell_tall_market/widgets/custom_search_bar.dart';
@@ -22,13 +22,13 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<AuthProvider>(context, listen: false).fetchAllUsers();
+      Provider.of<FirebaseAuthProvider>(context, listen: false).fetchAllUsers();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -57,7 +57,7 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
     );
   }
 
-  Widget _buildCaptainsList(AuthProvider provider) {
+  Widget _buildCaptainsList(FirebaseAuthProvider provider) {
     if (provider.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -213,7 +213,7 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
                   Navigator.pop(context);
 
                   // TODO: رفع بيانات الكابتن + الصورة مع AuthProvider
-                  // Provider.of<AuthProvider>(context, listen: false).addCaptain(
+                  // Provider.of<authProvider>(context, listen: false).addCaptain(
                   //   name: _nameController.text,
                   //   email: _emailController.text,
                   //   phone: _phoneController.text,

@@ -4,7 +4,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 
 class AddressesScreen extends StatefulWidget {
   const AddressesScreen({super.key});
@@ -29,7 +29,10 @@ class _AddressesScreenState extends State<AddressesScreen> {
   @override
   void initState() {
     super.initState();
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final authProvider = Provider.of<FirebaseAuthProvider>(
+      context,
+      listen: false,
+    );
     _fillManualAddress(authProvider.user?.address ?? '');
   }
 
@@ -90,7 +93,10 @@ class _AddressesScreenState extends State<AddressesScreen> {
   }
 
   void saveAddress() async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final authProvider = Provider.of<FirebaseAuthProvider>(
+      context,
+      listen: false,
+    );
     if (authProvider.user == null) return;
 
     final addressParts = [
@@ -142,9 +148,9 @@ class _AddressesScreenState extends State<AddressesScreen> {
     );
 
     // Updating the user data in the database and then inside AuthProvider
-    final success = await authProvider.updateUser(updatedUser);
+    final updatedResult = await authProvider.updateUser(updatedUser);
 
-    if (success) {
+    if (updatedResult != null) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('تم حفظ العنوان بنجاح')));

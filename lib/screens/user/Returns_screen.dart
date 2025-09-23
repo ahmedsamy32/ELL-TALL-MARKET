@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/config/supabase_config.dart';
 
 class ReturnItem {
@@ -54,7 +54,7 @@ class _ReturnsScreenState extends State<ReturnsScreen> {
   final _supabase = SupabaseConfig.client;
 
   Future<void> addOrEditReturn(BuildContext context, ReturnItem? existing) async {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
     String productName = existing?.productName ?? '';
     String reason = existing?.reason ?? '';
 
@@ -168,7 +168,7 @@ class _ReturnsScreenState extends State<ReturnsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context);
 
     return Scaffold(
       appBar: AppBar(title: const Text('المرتجعات')),

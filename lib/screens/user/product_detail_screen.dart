@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/cart_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/widgets/custom_button.dart';
 import 'package:ell_tall_market/widgets/rating_star.dart';
@@ -26,7 +26,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   Future<void> _handleBuyNow(BuildContext context) async {
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     final orderProvider = Provider.of<OrderProvider>(context, listen: false);
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
 
     if (!authProvider.isLoggedIn) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -268,7 +268,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           child: CustomButton(
                             text: 'إضافة إلى السلة',
                             onPressed: () async {
-                              final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                              final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
                               if (!authProvider.isLoggedIn) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(content: Text('يرجى تسجيل الدخول أولاً')),

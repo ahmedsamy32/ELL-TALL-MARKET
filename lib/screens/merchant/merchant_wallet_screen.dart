@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/services/financial_service.dart';
 import 'package:ell_tall_market/models/financial_transaction_model.dart';
 import 'package:intl/intl.dart' as intl;
@@ -49,7 +49,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
       final storeId = authProvider.user!.storeId!;
 
       // جلب الرصيد الحالي

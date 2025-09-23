@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/widgets/custom_textfield.dart';
 
 class ChangePasswordScreen extends StatefulWidget {
@@ -33,7 +33,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     });
 
     try {
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final authProvider = Provider.of<FirebaseAuthProvider>(
+        context,
+        listen: false,
+      );
 
       final success = await authProvider.updatePassword(
         _currentPasswordController.text,

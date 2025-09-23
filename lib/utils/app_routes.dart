@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 
 // ===== Screens =====
@@ -189,7 +189,7 @@ class AppRoutes {
       case merchantProducts:
         return MaterialPageRoute(
           builder: (context) {
-            final authProvider = Provider.of<AuthProvider>(
+            final authProvider = Provider.of<FirebaseAuthProvider>(
               context,
               listen: false,
             );
@@ -209,7 +209,7 @@ class AppRoutes {
       case merchantOrders:
         return MaterialPageRoute(
           builder: (context) {
-            final authProvider = Provider.of<AuthProvider>(
+            final authProvider = Provider.of<FirebaseAuthProvider>(
               context,
               listen: false,
             );
@@ -230,7 +230,7 @@ class AppRoutes {
       case captainOrders:
         return MaterialPageRoute(
           builder: (context) {
-            final authProvider = Provider.of<AuthProvider>(
+            final authProvider = Provider.of<FirebaseAuthProvider>(
               context,
               listen: false,
             );
@@ -268,7 +268,7 @@ class AppRoutes {
       case manageCaptains:
         return MaterialPageRoute(
           builder: (context) {
-            final authProvider = Provider.of<AuthProvider>(
+            final authProvider = Provider.of<FirebaseAuthProvider>(
               context,
               listen: false,
             );
@@ -365,7 +365,10 @@ class AppRoutes {
     String routeName, {
     Object? arguments,
   }) {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final authProvider = Provider.of<FirebaseAuthProvider>(
+      context,
+      listen: false,
+    );
 
     // التحقق من الشاشات المحمية
     final protectedRoutes = [
@@ -418,7 +421,10 @@ class AppRoutes {
 
   /// التحقق من صلاحية الوصول للشاشة
   static bool canAccessRoute(BuildContext context, String routeName) {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final authProvider = Provider.of<FirebaseAuthProvider>(
+      context,
+      listen: false,
+    );
 
     if (!authProvider.isLoggedIn) {
       return false;

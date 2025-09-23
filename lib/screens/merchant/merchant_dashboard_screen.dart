@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 
@@ -16,7 +16,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context);
     final user = authProvider.user;
 
     return Scaffold(
@@ -66,7 +66,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
   }
 
   Widget _buildDrawer() {
-    final user = Provider.of<AuthProvider>(context).user;
+    final user = Provider.of<FirebaseAuthProvider>(context).user;
 
     return Drawer(
       child: ListView(

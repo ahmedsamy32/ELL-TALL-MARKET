@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import '../../providers/auth_provider.dart';
+import '../../providers/firebase_auth_provider.dart';
 
 class PaymentMethodsScreen extends StatefulWidget {
   const PaymentMethodsScreen({super.key});
@@ -22,7 +22,7 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
   @override
   void initState() {
     super.initState();
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
     selectedMethod = authProvider.user?.preferredPaymentMethod ?? 'none';
     _fetchSavedCard();
   }
@@ -30,7 +30,7 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
   Future<void> _fetchSavedCard() async {
     setState(() => _isProcessing = true);
     try {
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
       final response = await http.get(
         Uri.parse('https://your-server.com/get-payment-method?userId=${authProvider.user!.id}'),
       );
@@ -48,7 +48,7 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context);
     final paymentMethods = [
       {'id': 'cod', 'label': 'الدفع عند الاستلام', 'icon': Icons.money},
       {'id': 'credit_card', 'label': 'بطاقة الائتمان', 'icon': Icons.credit_card},
@@ -255,7 +255,7 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
         params: PaymentMethodParams.card(paymentMethodData: PaymentMethodData()),
       );
 
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
       final response = await http.post(
         Uri.parse('https://your-server.com/save-payment-method'),
         headers: {'Content-Type': 'application/json'},
@@ -295,7 +295,7 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
           ),
         ),
       );
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
       final response = await http.post(
         Uri.parse('https://your-server.com/save-payment-method'),
         headers: {'Content-Type': 'application/json'},
@@ -328,7 +328,7 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
   Future<void> deleteSavedCard() async {
     setState(() => _isProcessing = true);
     try {
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
       final response = await http.post(
         Uri.parse('https://your-server.com/delete-payment-method'),
         headers: {'Content-Type': 'application/json'},

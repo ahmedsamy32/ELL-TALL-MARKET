@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/models/user_model.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/providers/locale_provider.dart';
@@ -12,7 +12,7 @@ class ProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context);
     final user = authProvider.user;
     if (user == null) {
       return Scaffold(
@@ -90,7 +90,7 @@ class ProfileScreen extends StatelessWidget {
   Widget _buildProfileContent(
     BuildContext context,
     UserModel user,
-    AuthProvider authProvider,
+    FirebaseAuthProvider authProvider,
   ) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -265,7 +265,10 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  void _showLogoutDialog(BuildContext context, AuthProvider authProvider) {
+  void _showLogoutDialog(
+    BuildContext context,
+    FirebaseAuthProvider authProvider,
+  ) {
     bool isLoading = false;
     showDialog(
       context: context,
@@ -288,6 +291,7 @@ class ProfileScreen extends StatelessWidget {
                     : () async {
                         setState(() => isLoading = true);
                         await authProvider.logout();
+                        if (!context.mounted) return;
                         if (Navigator.canPop(context)) Navigator.pop(context);
                         Navigator.pushReplacementNamed(
                           context,

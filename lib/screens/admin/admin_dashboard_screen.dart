@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/providers/user_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
@@ -43,7 +43,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context);
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -54,10 +54,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications),
-            onPressed: () {},
-          ),
+          IconButton(icon: const Icon(Icons.notifications), onPressed: () {}),
           PopupMenuButton(
             itemBuilder: (context) => [
               PopupMenuItem(
@@ -81,9 +78,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         ],
       ),
       drawer: _buildDrawer(context),
-      body: SafeArea(
-        child: _pages[_selectedIndex],
-      ),
+      body: SafeArea(child: _pages[_selectedIndex]),
       bottomNavigationBar: _buildBottomNavigationBar(),
     );
   }
@@ -94,9 +89,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
         padding: EdgeInsets.zero,
         children: [
           DrawerHeader(
-            decoration: BoxDecoration(
-              color: Theme.of(context).primaryColor,
-            ),
+            decoration: BoxDecoration(color: Theme.of(context).primaryColor),
             child: const Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -148,16 +141,37 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Widget _buildBottomNavigationBar() {
     return BottomNavigationBar(
       items: const [
-        BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'لوحة التحكم'),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.dashboard),
+          label: 'لوحة التحكم',
+        ),
         BottomNavigationBarItem(icon: Icon(Icons.people), label: 'المستخدمين'),
-        BottomNavigationBarItem(icon: Icon(Icons.shopping_bag), label: 'المنتجات'),
-        BottomNavigationBarItem(icon: Icon(Icons.shopping_cart), label: 'الطلبات'),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.shopping_bag),
+          label: 'المنتجات',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.shopping_cart),
+          label: 'الطلبات',
+        ),
         BottomNavigationBarItem(icon: Icon(Icons.category), label: 'الفئات'),
-        BottomNavigationBarItem(icon: Icon(Icons.local_offer), label: 'الكوبونات'),
-        BottomNavigationBarItem(icon: Icon(Icons.delivery_dining), label: 'الكباتن'),
-        BottomNavigationBarItem(icon: Icon(Icons.analytics), label: 'الإحصائيات'),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.local_offer),
+          label: 'الكوبونات',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.delivery_dining),
+          label: 'الكباتن',
+        ),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.analytics),
+          label: 'الإحصائيات',
+        ),
         BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'الإعدادات'),
-        BottomNavigationBarItem(icon: Icon(Icons.design_services), label: 'الواجهات'),
+        BottomNavigationBarItem(
+          icon: Icon(Icons.design_services),
+          label: 'الواجهات',
+        ),
         BottomNavigationBarItem(icon: Icon(Icons.image), label: 'البانرات'),
       ],
       currentIndex: _selectedIndex,
@@ -198,10 +212,26 @@ class DashboardHome extends StatelessWidget {
                 childAspectRatio: 1.5,
               ),
               children: [
-                _buildStatCard('👥 المستخدمين', userProvider.users.length.toString(), Colors.blue),
-                _buildStatCard('🛍️ المنتجات', productProvider.products.length.toString(), Colors.green),
-                _buildStatCard('📦 الطلبات', orderProvider.orders.length.toString(), Colors.orange),
-                _buildStatCard('💰 الإيرادات', '${_calculateTotalRevenue(orderProvider.orders)} ر.س', Colors.purple),
+                _buildStatCard(
+                  '👥 المستخدمين',
+                  userProvider.users.length.toString(),
+                  Colors.blue,
+                ),
+                _buildStatCard(
+                  '🛍️ المنتجات',
+                  productProvider.products.length.toString(),
+                  Colors.green,
+                ),
+                _buildStatCard(
+                  '📦 الطلبات',
+                  orderProvider.orders.length.toString(),
+                  Colors.orange,
+                ),
+                _buildStatCard(
+                  '💰 الإيرادات',
+                  '${_calculateTotalRevenue(orderProvider.orders)} ر.س',
+                  Colors.purple,
+                ),
               ],
             ),
 
@@ -217,12 +247,17 @@ class DashboardHome extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('الطلبات اليومية', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const Text(
+                            'الطلبات اليومية',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                           const SizedBox(height: 16),
                           Container(
                             height: 200,
                             color: Colors.grey[100],
-                            child: const Center(child: Text('Line Chart - الطلبات اليومية')),
+                            child: const Center(
+                              child: Text('Line Chart - الطلبات اليومية'),
+                            ),
                           ),
                         ],
                       ),
@@ -237,12 +272,17 @@ class DashboardHome extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('توزيع المستخدمين', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const Text(
+                            'توزيع المستخدمين',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                           const SizedBox(height: 16),
                           Container(
                             height: 200,
                             color: Colors.grey[100],
-                            child: const Center(child: Text('Pie Chart - توزيع المستخدمين')),
+                            child: const Center(
+                              child: Text('Pie Chart - توزيع المستخدمين'),
+                            ),
                           ),
                         ],
                       ),
@@ -264,7 +304,10 @@ class DashboardHome extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('آخر الطلبات', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const Text(
+                            'آخر الطلبات',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                           const SizedBox(height: 16),
                           _buildRecentOrdersTable(),
                         ],
@@ -280,7 +323,10 @@ class DashboardHome extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('آخر المستخدمين', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const Text(
+                            'آخر المستخدمين',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                           const SizedBox(height: 16),
                           _buildRecentUsersTable(userProvider.users),
                         ],
@@ -305,9 +351,19 @@ class DashboardHome extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: const TextStyle(color: Colors.white, fontSize: 16)),
+            Text(
+              title,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
             const SizedBox(height: 8),
-            Text(value, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+            Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
       ),
@@ -344,15 +400,21 @@ class DashboardHome extends StatelessWidget {
     final recentUsers = users.take(3).toList();
 
     return Column(
-      children: recentUsers.map((user) => ListTile(
-        leading: CircleAvatar(
-          backgroundImage: user.imageUrl != null ? NetworkImage(user.imageUrl!) : null,
-          child: user.imageUrl == null ? Text(user.name[0]) : null,
-        ),
-        title: Text(user.name),
-        subtitle: Text(user.email),
-        trailing: Text(_getUserTypeText(user.type)),
-      )).toList(),
+      children: recentUsers
+          .map(
+            (user) => ListTile(
+              leading: CircleAvatar(
+                backgroundImage: user.imageUrl != null
+                    ? NetworkImage(user.imageUrl!)
+                    : null,
+                child: user.imageUrl == null ? Text(user.name[0]) : null,
+              ),
+              title: Text(user.name),
+              subtitle: Text(user.email),
+              trailing: Text(_getUserTypeText(user.type)),
+            ),
+          )
+          .toList(),
     );
   }
 
@@ -371,7 +433,7 @@ class AdminDashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -453,10 +515,7 @@ class AdminDashboardScreen extends StatelessWidget {
             const SizedBox(height: 8),
             Text(
               title,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
           ],
         ),

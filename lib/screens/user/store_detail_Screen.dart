@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/cart_provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/models/store_model.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
@@ -52,7 +52,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
   }
 
   void _checkLoginAndNavigate(Function action) {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
     if (authProvider.isLoggedIn) {
       action();
     } else {

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/auth_provider.dart';
+import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
 import 'package:ell_tall_market/models/user_model.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 import 'package:ell_tall_market/widgets/custom_search_bar.dart';
@@ -20,13 +20,13 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<AuthProvider>(context, listen: false).fetchAllUsers();
+      Provider.of<FirebaseAuthProvider>(context, listen: false).fetchAllUsers();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
+    final authProvider = Provider.of<FirebaseAuthProvider>(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -45,7 +45,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   }
 
   /// 🔹 بطاقات إحصائيات سريعة
-  Widget _buildStatsRow(AuthProvider provider) {
+  Widget _buildStatsRow(FirebaseAuthProvider provider) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
@@ -98,7 +98,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   }
 
   /// 🔹 البحث والفلاتر
-  Widget _buildSearchAndFilterBar(AuthProvider provider) {
+  Widget _buildSearchAndFilterBar(FirebaseAuthProvider provider) {
     return AdminSearchBar(
       controller: _searchController,
       hintText: 'ابحث باسم المستخدم أو البريد',
@@ -125,7 +125,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   }
 
   /// 🔹 قائمة المستخدمين
-  Widget _buildUsersList(AuthProvider provider) {
+  Widget _buildUsersList(FirebaseAuthProvider provider) {
     if (provider.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }

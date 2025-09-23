@@ -163,10 +163,7 @@ class LoginScreenState extends State<LoginScreen> {
 
     try {
       print("🔄 [DEBUG] بدء تسجيل دخول Facebook في Login...");
-      final authProvider = Provider.of<FirebaseAuthProvider>(
-        context,
-        listen: false,
-      );
+      final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
 
       final success = await authProvider.signInWithFacebook();
       if (!mounted) return;

@@ -28,7 +28,7 @@ class FirebaseAuthProvider with ChangeNotifier {
   bool get isCustomer => _user?.type == UserType.customer;
   bool get isConnected => _isConnected;
 
-  FirebaseAuthProvider() {
+  authProvider() {
     _initializeAuth();
     _initializeNetworkListener();
     _listenToAuthChanges();
@@ -46,7 +46,7 @@ class FirebaseAuthProvider with ChangeNotifier {
 
       if (kDebugMode) {
         debugPrint(
-          '🌐 Network status in FirebaseAuthProvider: ${isConnected ? 'Connected' : 'Disconnected'}',
+          '🌐 Network status in authProvider: ${isConnected ? 'Connected' : 'Disconnected'}',
         );
       }
     });
@@ -130,7 +130,7 @@ class FirebaseAuthProvider with ChangeNotifier {
     _setError(null);
 
     try {
-      print("🔄 [DEBUG] FirebaseAuthProvider.register() - بدء العملية");
+      print("🔄 [DEBUG] authProvider.register() - بدء العملية");
       print(
         "🔄 [DEBUG] البيانات: name=$name, email=$email, userType=$userType",
       );
@@ -170,12 +170,12 @@ class FirebaseAuthProvider with ChangeNotifier {
       return false;
     } on firebase_auth.FirebaseAuthException catch (e) {
       print(
-        "❌ [DEBUG] FirebaseAuthException في FirebaseAuthProvider.register(): ${e.code} - ${e.message}",
+        "❌ [DEBUG] FirebaseAuthException في authProvider.register(): ${e.code} - ${e.message}",
       );
       _setError(e.toString());
       rethrow; // إعادة إرسال FirebaseAuthException للصفحة
     } catch (e) {
-      print("❌ [DEBUG] خطأ عام في FirebaseAuthProvider.register(): $e");
+      print("❌ [DEBUG] خطأ عام في authProvider.register(): $e");
       _setError(e.toString());
       return false;
     } finally {
@@ -188,7 +188,7 @@ class FirebaseAuthProvider with ChangeNotifier {
     _setError(null);
 
     try {
-      print("🔄 [DEBUG] FirebaseAuthProvider.signInWithGoogle() - بدء العملية");
+      print("🔄 [DEBUG] authProvider.signInWithGoogle() - بدء العملية");
 
       if (!_networkManager.isConnected) {
         print("❌ [DEBUG] لا يوجد اتصال بالإنترنت في Google SignIn");
@@ -221,7 +221,7 @@ class FirebaseAuthProvider with ChangeNotifier {
       _setError(e.toString());
       rethrow;
     } catch (e) {
-      print("❌ [DEBUG] خطأ عام في FirebaseAuthProvider.signInWithGoogle(): $e");
+      print("❌ [DEBUG] خطأ عام في authProvider.signInWithGoogle(): $e");
       _setError(e.toString());
       return false;
     } finally {
@@ -257,9 +257,7 @@ class FirebaseAuthProvider with ChangeNotifier {
       _setError(e.toString());
       rethrow;
     } catch (e) {
-      print(
-        "❌ [DEBUG] خطأ عام في FirebaseAuthProvider.signInWithFacebook(): $e",
-      );
+      print("❌ [DEBUG] خطأ عام في authProvider.signInWithFacebook(): $e");
       _setError(e.toString());
       return false;
     } finally {
@@ -354,6 +352,116 @@ class FirebaseAuthProvider with ChangeNotifier {
       notifyListeners();
     } catch (e) {
       _setError(e.toString());
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> fetchAllUsers() async {
+    await loadAllUsers();
+  }
+
+  // ===== الطرق المفقودة =====
+  Future<bool> updatePassword(
+    String currentPassword,
+    String newPassword,
+  ) async {
+    try {
+      _setLoading(true);
+      _setError(null);
+      return await _firebaseAuthService.updatePassword(
+        currentPassword,
+        newPassword,
+      );
+    } catch (e) {
+      _setError(e.toString());
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<UserModel?> updateUser(UserModel updatedUser) async {
+    try {
+      _setLoading(true);
+      _setError(null);
+      // حفظ المستخدم محلياً مؤقتاً
+      _user = updatedUser;
+      notifyListeners();
+      return updatedUser;
+    } catch (e) {
+      _setError(e.toString());
+      return null;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<UserModel?> updateProfile(UserModel updatedUser) async {
+    return await updateUser(updatedUser);
+  }
+
+  Future<bool> deleteUser() async {
+    try {
+      _setLoading(true);
+      _setError(null);
+      // استخدام firebase auth مباشرة
+      final currentUser = firebase_auth.FirebaseAuth.instance.currentUser;
+      if (currentUser != null) {
+        await currentUser.delete();
+        _user = null;
+        notifyListeners();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      _setError(e.toString());
+      return false;
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<bool> updatePreferredPayment(String paymentMethod) async {
+    try {
+      _setLoading(true);
+      _setError(null);
+      if (_user != null) {
+        // إنشاء نسخة محدثة من المستخدم
+        final updatedUser = UserModel(
+          id: _user!.id,
+          firebaseId: _user!.firebaseId,
+          name: _user!.name,
+          email: _user!.email,
+          phone: _user!.phone,
+          type: _user!.type,
+          avatarUrl: _user!.avatarUrl,
+          createdAt: _user!.createdAt,
+          updatedAt: DateTime.now(),
+          isActive: _user!.isActive,
+          lastLogin: _user!.lastLogin,
+          loginCount: _user!.loginCount,
+          storeId: _user!.storeId,
+          preferredPaymentMethod: paymentMethod,
+          address: _user!.address,
+          storeName: _user!.storeName,
+          storeDescription: _user!.storeDescription,
+          storeLogoUrl: _user!.storeLogoUrl,
+          storeCoverUrl: _user!.storeCoverUrl,
+          storeAddress: _user!.storeAddress,
+          storeLocation: _user!.storeLocation,
+          storeCategory: _user!.storeCategory,
+          storeRating: _user!.storeRating,
+          storeRatingCount: _user!.storeRatingCount,
+        );
+
+        final result = await updateUser(updatedUser);
+        return result != null;
+      }
+      return false;
+    } catch (e) {
+      _setError(e.toString());
+      return false;
     } finally {
       _setLoading(false);
     }
