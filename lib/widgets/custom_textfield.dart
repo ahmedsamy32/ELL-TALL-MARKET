@@ -1,0 +1,98 @@
+import 'package:flutter/material.dart';
+
+class CustomTextField extends StatefulWidget {
+  final TextEditingController? controller;
+  final String label;
+  final String? hintText;
+  final bool isPasswordField; // ← جديد
+  final TextInputType? keyboardType;
+  final int? maxLines;
+  final String? Function(String?)? validator;
+  final void Function(String)? onChanged;
+  final Widget? prefixIcon;
+  final String? prefixText;
+  final Widget? suffixIcon;
+  final bool readOnly;
+  final bool enabled;
+  final void Function()? onTap;
+  final TextInputAction? textInputAction;
+
+  const CustomTextField({
+    super.key,
+    this.controller,
+    required this.label,
+    this.hintText,
+    this.isPasswordField = false, // الافتراضي مش باسورد
+    this.keyboardType,
+    this.maxLines = 1,
+    this.validator,
+    this.onChanged,
+    this.prefixIcon,
+    this.prefixText,
+    this.suffixIcon,
+    this.readOnly = false,
+    this.enabled = true,
+    this.onTap,
+    this.textInputAction,
+  });
+
+  @override
+  State<CustomTextField> createState() => _CustomTextFieldState();
+}
+
+class _CustomTextFieldState extends State<CustomTextField> {
+  bool _obscureText = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _obscureText = widget.isPasswordField; // لو باسورد نخفي النص
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextFormField(
+      controller: widget.controller,
+      obscureText: widget.isPasswordField ? _obscureText : false,
+      keyboardType: widget.keyboardType,
+      maxLines: widget.maxLines,
+      validator: widget.validator,
+      onChanged: widget.onChanged,
+      readOnly: widget.readOnly,
+      enabled: widget.enabled,
+      onTap: widget.onTap,
+      textInputAction: widget.textInputAction,
+      decoration: InputDecoration(
+        labelText: widget.label,
+        hintText: widget.hintText,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: Colors.grey[300]!),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: Theme.of(context).primaryColor),
+        ),
+        filled: true,
+        fillColor: widget.enabled ? Colors.grey[100] : Colors.grey[200],
+        prefixIcon: widget.prefixIcon,
+        prefixText: widget.prefixText,
+        suffixIcon: widget.isPasswordField
+            ? IconButton(
+                icon: Icon(
+                  _obscureText ? Icons.visibility_off : Icons.visibility,
+                ),
+                onPressed: widget.enabled
+                    ? () {
+                        setState(() {
+                          _obscureText = !_obscureText;
+                        });
+                      }
+                    : null,
+              )
+            : widget.suffixIcon,
+      ),
+    );
+  }
+}
