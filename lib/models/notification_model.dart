@@ -1,111 +1,210 @@
-enum NotificationType {
-  orderUpdate,
-  promotion,
-  system,
-  message,
-  deliveryUpdate,
-  payment,
-  review
+/// Notification model that matches the Supabase notifications table
+/// Updated to match the new comprehensive notifications system schema
+library;
+
+import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+/// Base mixin for common model functionality
+mixin BaseModelMixin {
+  String get id;
+  DateTime get createdAt;
+  DateTime? get updatedAt;
+
+  String get createdAtFormatted =>
+      DateFormat('dd/MM/yyyy HH:mm').format(createdAt);
+  String get updatedAtFormatted => updatedAt != null
+      ? DateFormat('dd/MM/yyyy HH:mm').format(updatedAt!)
+      : 'لم يتم التحديث';
+
+  static DateTime parseDateTime(dynamic dateStr) {
+    if (dateStr == null) return DateTime.now();
+    if (dateStr is DateTime) return dateStr;
+    return DateTime.parse(dateStr.toString());
+  }
 }
 
-class NotificationModel {
-  final String id;
-  final String userId;
-  final String title;
-  final String message;
-  final NotificationType type;
-  final String? actionUrl;
-  final String? imageUrl;
-  final Map<String, dynamic>? data;
-  final bool isRead;
-  final DateTime createdAt;
+/// Notification Type Enum
+enum NotificationType {
+  order,
+  promotion,
+  system;
 
-  NotificationModel({
-    required this.id,
-    required this.userId,
-    required this.title,
-    required this.message,
-    required this.type,
-    required this.isRead,
-    required this.createdAt,
-    this.data,
-    this.actionUrl,
-    this.imageUrl,
-  });
-
-  String get timeAgo {
-    final now = DateTime.now();
-    final difference = now.difference(createdAt);
-
-    if (difference.inDays > 7) {
-      return '${createdAt.year}-${createdAt.month}-${createdAt.day}';
-    } else if (difference.inDays > 0) {
-      return '${difference.inDays} يوم${difference.inDays == 1 ? '' : 'ين'} مضت';
-    } else if (difference.inHours > 0) {
-      return '${difference.inHours} ساعة مضت';
-    } else if (difference.inMinutes > 0) {
-      return '${difference.inMinutes} دقيقة مضت';
-    } else {
-      return 'الآن';
+  static NotificationType fromString(String type) {
+    switch (type.toLowerCase()) {
+      case 'order':
+        return NotificationType.order;
+      case 'promotion':
+        return NotificationType.promotion;
+      case 'system':
+        return NotificationType.system;
+      default:
+        return NotificationType.system;
     }
   }
 
-  factory NotificationModel.fromJson(Map<String, dynamic> json) {
+  String get value {
+    switch (this) {
+      case NotificationType.order:
+        return 'order';
+      case NotificationType.promotion:
+        return 'promotion';
+      case NotificationType.system:
+        return 'system';
+    }
+  }
+
+  String get displayName {
+    switch (this) {
+      case NotificationType.order:
+        return 'طلب';
+      case NotificationType.promotion:
+        return 'عرض';
+      case NotificationType.system:
+        return 'نظام';
+    }
+  }
+}
+
+/// Notification model that matches the Supabase notifications table
+class NotificationModel with BaseModelMixin {
+  static const String tableName = 'notifications';
+  static const String schema = 'public';
+
+  @override
+  final String id; // UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  final String? userId; // UUID REFERENCES auth.users(id) ON DELETE CASCADE
+  final String title; // TEXT NOT NULL
+  final String body; // TEXT NOT NULL
+  final NotificationType?
+  type; // TEXT CHECK (type IN ('order', 'promotion', 'system'))
+  final Map<String, dynamic>? data; // JSONB DEFAULT '{}'
+  final bool isRead; // BOOLEAN DEFAULT FALSE
+  @override
+  final DateTime createdAt;
+  @override
+  final DateTime? updatedAt;
+
+  const NotificationModel({
+    required this.id,
+    this.userId,
+    required this.title,
+    required this.body,
+    this.type,
+    this.data,
+    required this.isRead,
+    required this.createdAt,
+    this.updatedAt,
+  });
+
+  factory NotificationModel.fromMap(Map<String, dynamic> map) {
     return NotificationModel(
-      id: json['id'],
-      userId: json['user_id'],
-      title: json['title'],
-      message: json['message'],
-      type: NotificationType.values.firstWhere(
-        (e) => e.toString() == 'NotificationType.${json['type']}',
-        orElse: () => NotificationType.system,
-      ),
-      actionUrl: json['action_url'],
-      imageUrl: json['image_url'],
-      data: json['data'],
-      isRead: json['is_read'] ?? false,
-      createdAt: DateTime.parse(json['created_at']),
+      id: map['id'] as String,
+      userId: map['user_id'] as String?,
+      title: map['title'] as String,
+      body: map['body'] as String,
+      type: map['type'] != null
+          ? NotificationType.fromString(map['type'] as String)
+          : null,
+      data: map['data'] as Map<String, dynamic>?,
+      isRead: (map['is_read'] as bool?) ?? false,
+      createdAt: BaseModelMixin.parseDateTime(map['created_at']),
+      updatedAt: null, // notifications table doesn't have updated_at
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'user_id': userId,
-      'title': title,
-      'message': message,
-      'type': type.toString().split('.').last,
-      'action_url': actionUrl,
-      'image_url': imageUrl,
-      'data': data,
-      'is_read': isRead,
-      'created_at': createdAt.toIso8601String(),
-    };
+  // Helper methods
+  String get typeDisplayName => type?.displayName ?? 'غير محدد';
+  bool get hasData => data != null && data!.isNotEmpty;
+
+  String get createdAtRelative {
+    final now = DateTime.now();
+    final difference = now.difference(createdAt);
+
+    if (difference.inMinutes < 1) {
+      return 'الآن';
+    } else if (difference.inMinutes < 60) {
+      return 'منذ ${difference.inMinutes} دقيقة';
+    } else if (difference.inHours < 24) {
+      return 'منذ ${difference.inHours} ساعة';
+    } else if (difference.inDays < 7) {
+      return 'منذ ${difference.inDays} يوم';
+    } else {
+      return DateFormat('dd/MM/yyyy').format(createdAt);
+    }
   }
 
   NotificationModel copyWith({
     String? id,
     String? userId,
     String? title,
-    String? message,
+    String? body,
     NotificationType? type,
-    String? actionUrl,
-    String? imageUrl,
     Map<String, dynamic>? data,
     bool? isRead,
     DateTime? createdAt,
+    DateTime? updatedAt,
   }) {
     return NotificationModel(
       id: id ?? this.id,
       userId: userId ?? this.userId,
       title: title ?? this.title,
-      message: message ?? this.message,
+      body: body ?? this.body,
       type: type ?? this.type,
-      actionUrl: actionUrl ?? this.actionUrl,
-      imageUrl: imageUrl ?? this.imageUrl,
       data: data ?? this.data,
       isRead: isRead ?? this.isRead,
       createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
+  }
+
+  @override
+  String toString() {
+    return 'NotificationModel(id: $id, title: $title, type: ${type?.value})';
+  }
+}
+
+/// Service class for notification operations
+class NotificationService {
+  static final SupabaseClient _client = Supabase.instance.client;
+
+  /// الحصول على إشعارات المستخدم
+  static Future<List<NotificationModel>> getUserNotifications({
+    String? userId,
+  }) async {
+    try {
+      final currentUserId = userId ?? _client.auth.currentUser?.id;
+      if (currentUserId == null) return [];
+
+      final response = await _client
+          .from(NotificationModel.tableName)
+          .select()
+          .eq('user_id', currentUserId)
+          .order('created_at', ascending: false);
+
+      return response
+          .map<NotificationModel>(
+            (notification) => NotificationModel.fromMap(notification),
+          )
+          .toList();
+    } catch (e) {
+      print('Error getting user notifications: $e');
+      return [];
+    }
+  }
+
+  /// تحديد إشعار كمقروء
+  static Future<bool> markAsRead(String notificationId) async {
+    try {
+      await _client
+          .from(NotificationModel.tableName)
+          .update({'is_read': true})
+          .eq('id', notificationId);
+
+      return true;
+    } catch (e) {
+      print('Error marking notification as read: $e');
+      return false;
+    }
   }
 }

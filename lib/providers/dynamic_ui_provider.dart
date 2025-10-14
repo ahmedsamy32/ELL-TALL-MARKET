@@ -1,129 +1,84 @@
-import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import 'package:flutter/material.dart';
 
-class DynamicUIProvider with ChangeNotifier {
-  final Map<String, dynamic> _uiConfig = {};
+class DynamicUIProvider extends ChangeNotifier {
+  // القائمة الافتراضية للواجهات الديناميكية
+  final List<Map<String, dynamic>> _uiComponents = [];
+
+  List<Map<String, dynamic>> get uiComponents => _uiComponents;
+
+  // إضافة مكون واجهة جديد
+  void addUIComponent(Map<String, dynamic> component) {
+    _uiComponents.add(component);
+    notifyListeners();
+  }
+
+  // حذف مكون واجهة
+  void removeUIComponent(int index) {
+    if (index >= 0 && index < _uiComponents.length) {
+      _uiComponents.removeAt(index);
+      notifyListeners();
+    }
+  }
+
+  // تحديث مكون واجهة
+  void updateUIComponent(int index, Map<String, dynamic> component) {
+    if (index >= 0 && index < _uiComponents.length) {
+      _uiComponents[index] = component;
+      notifyListeners();
+    }
+  }
+
+  // إعادة ترتيب المكونات
+  void reorderComponents(int oldIndex, int newIndex) {
+    if (oldIndex < newIndex) {
+      newIndex -= 1;
+    }
+    final component = _uiComponents.removeAt(oldIndex);
+    _uiComponents.insert(newIndex, component);
+    notifyListeners();
+  }
+
+  // مسح جميع المكونات
+  void clearComponents() {
+    _uiComponents.clear();
+    notifyListeners();
+  }
+
+  // طرق إضافية مطلوبة للتوافق
   bool _isLoading = false;
-  String? _error;
+  Map<String, dynamic> _uiConfig = {};
 
-  Map<String, dynamic> get uiConfig => _uiConfig;
   bool get isLoading => _isLoading;
-  String? get error => _error;
+  Map<String, dynamic> get uiConfig => _uiConfig;
 
   Future<void> loadUIConfig() async {
     _isLoading = true;
-    _error = null;
     notifyListeners();
 
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final configJson = prefs.getString('ui_config');
+    // محاكاة تحميل البيانات
+    await Future.delayed(const Duration(seconds: 1));
 
-      if (configJson != null) {
-        _uiConfig.clear();
-        _uiConfig.addAll(Map<String, dynamic>.from(json.decode(configJson)));
-      } else {
-        // استخدام الإعدادات الافتراضية
-        _setDefaultConfig();
-      }
-
-      _isLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _error = e.toString();
-      _isLoading = false;
-      notifyListeners();
-    }
+    _isLoading = false;
+    notifyListeners();
   }
 
-  void _setDefaultConfig() {
+  dynamic getConfigValue(String key) {
+    return _uiConfig[key];
+  }
+
+  void updateConfigValue(String key, dynamic value) {
+    _uiConfig[key] = value;
+    notifyListeners();
+  }
+
+  void updateUIConfig(Map<String, dynamic> config) {
+    _uiConfig = config;
+    notifyListeners();
+  }
+
+  void resetToDefault() {
     _uiConfig.clear();
-    _uiConfig.addAll({
-      'theme': 'light',
-      'primaryColor': '#2A6DE5',
-      'secondaryColor': '#FF6E40',
-      'fontFamily': 'Cairo',
-      'fontSize': 'medium',
-      'language': 'ar',
-      'layout': 'grid',
-      'showBanners': true,
-      'showCategories': true,
-      'showFeaturedProducts': true,
-      'showReviews': true,
-      'animationEnabled': true,
-      'transitionSpeed': 'normal',
-    });
-  }
-
-  Future<void> updateUIConfig(Map<String, dynamic> newConfig) async {
-    _isLoading = true;
-    _error = null;
+    _uiComponents.clear();
     notifyListeners();
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final configJson = json.encode(newConfig);
-      await prefs.setString('ui_config', configJson);
-
-      _uiConfig.clear();
-      _uiConfig.addAll(newConfig);
-
-      _isLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _error = e.toString();
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  Future<void> updateConfigValue(String key, dynamic value) async {
-    try {
-      final newConfig = Map<String, dynamic>.from(_uiConfig);
-      newConfig[key] = value;
-      await updateUIConfig(newConfig);
-    } catch (e) {
-      throw Exception('فشل تحديث إعداد الواجهة: ${e.toString()}');
-    }
-  }
-
-  dynamic getConfigValue(String key, {dynamic defaultValue}) {
-    return _uiConfig[key] ?? defaultValue;
-  }
-
-  Future<void> resetToDefault() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('ui_config');
-      _setDefaultConfig();
-      notifyListeners();
-    } catch (e) {
-      throw Exception('فشل إعادة تعيين إعدادات الواجهة: ${e.toString()}');
-    }
-  }
-
-  String getPrimaryColor() {
-    return _uiConfig['primaryColor'] ?? '#2A6DE5';
-  }
-
-  String getTheme() {
-    return _uiConfig['theme'] ?? 'light';
-  }
-
-  String getLayout() {
-    return _uiConfig['layout'] ?? 'grid';
-  }
-
-  bool shouldShowBanners() {
-    return _uiConfig['showBanners'] ?? true;
-  }
-
-  bool shouldShowCategories() {
-    return _uiConfig['showCategories'] ?? true;
-  }
-
-  bool isAnimationEnabled() {
-    return _uiConfig['animationEnabled'] ?? true;
   }
 }

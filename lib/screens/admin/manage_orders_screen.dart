@@ -185,7 +185,7 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         subtitle: Text(
-          "العميل: ${order.userName}\nالإجمالي: ${order.finalAmount} ر.س",
+          "العميل: ${order.clientId}\nالإجمالي: ${order.totalAmount} ر.س",
         ),
         trailing: PopupMenuButton<String>(
           onSelected: (value) {
@@ -224,8 +224,8 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text("رقم الطلب: ${order.id}"),
-            Text("اسم العميل: ${order.userName}"),
-            Text("الإجمالي: ${order.finalAmount} ر.س"),
+            Text("العميل: ${order.clientId}"),
+            Text("الإجمالي: ${order.totalAmount} ر.س"),
             Text("الحالة: ${order.status}"),
           ],
         ),
@@ -247,14 +247,21 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         title: const Text('تغيير حالة الطلب'),
         content: DropdownButtonFormField<String>(
-          initialValue: order.status.name,
+          initialValue: order.status.value,
           items: const [
             DropdownMenuItem(value: "pending", child: Text("قيد التنفيذ")),
-            DropdownMenuItem(value: "completed", child: Text("مكتمل")),
-            DropdownMenuItem(value: "canceled", child: Text("ملغي")),
+            DropdownMenuItem(value: "confirmed", child: Text("مؤكد")),
+            DropdownMenuItem(
+              value: "in_preparation",
+              child: Text("قيد التحضير"),
+            ),
+            DropdownMenuItem(value: "ready", child: Text("جاهز")),
+            DropdownMenuItem(value: "on_the_way", child: Text("في الطريق")),
+            DropdownMenuItem(value: "delivered", child: Text("تم التوصيل")),
+            DropdownMenuItem(value: "cancelled", child: Text("ملغي")),
           ],
           onChanged: (value) {
-            // TODO: تحديث الحالة في Firebase
+            // TODO: تحديث الحالة في قاعدة البيانات
           },
         ),
         actions: [

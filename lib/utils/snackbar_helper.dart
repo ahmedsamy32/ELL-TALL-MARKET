@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'validators.dart';
 
 /// مساعد عرض رسائل SnackBar محسنة
 class SnackBarHelper {
@@ -179,12 +180,9 @@ class SnackBarHelper {
 
   /// التحقق من صحة البريد الإلكتروني مع SnackBar
   static bool validateEmail(BuildContext context, String email) {
-    if (email.isEmpty) {
-      showError(context, '📧 يرجى إدخال البريد الإلكتروني');
-      return false;
-    }
-    if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(email)) {
-      showError(context, '📧 صيغة البريد الإلكتروني غير صحيحة');
+    final error = Validators.validateEmail(email);
+    if (error != null) {
+      showError(context, '📧 $error');
       return false;
     }
     return true;
@@ -192,12 +190,9 @@ class SnackBarHelper {
 
   /// التحقق من كلمة المرور مع SnackBar
   static bool validatePassword(BuildContext context, String password) {
-    if (password.isEmpty) {
-      showError(context, '🔒 يرجى إدخال كلمة المرور');
-      return false;
-    }
-    if (password.length < 6) {
-      showError(context, '🔒 كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+    final error = Validators.validatePassword(password);
+    if (error != null) {
+      showError(context, '🔒 $error');
       return false;
     }
     return true;
@@ -209,12 +204,9 @@ class SnackBarHelper {
     String password,
     String confirmPassword,
   ) {
-    if (confirmPassword.isEmpty) {
-      showError(context, '🔒 يرجى تأكيد كلمة المرور');
-      return false;
-    }
-    if (password != confirmPassword) {
-      showError(context, '🔒 كلمات المرور غير متطابقة');
+    final error = Validators.validateConfirmPassword(confirmPassword, password);
+    if (error != null) {
+      showError(context, '🔒 $error');
       return false;
     }
     return true;
@@ -222,12 +214,9 @@ class SnackBarHelper {
 
   /// التحقق من الاسم مع SnackBar
   static bool validateName(BuildContext context, String name) {
-    if (name.isEmpty) {
-      showError(context, '👤 يرجى إدخال الاسم');
-      return false;
-    }
-    if (name.length < 2) {
-      showError(context, '👤 الاسم يجب أن يكون حرفين على الأقل');
+    final error = Validators.validateName(name);
+    if (error != null) {
+      showError(context, '👤 $error');
       return false;
     }
     return true;
@@ -235,14 +224,9 @@ class SnackBarHelper {
 
   /// التحقق من رقم الهاتف مع SnackBar
   static bool validatePhone(BuildContext context, String phone) {
-    if (phone.isEmpty) {
-      showError(context, '📱 يرجى إدخال رقم الهاتف');
-      return false;
-    }
-    if (!RegExp(
-      r'^[0-9]{10,15}$',
-    ).hasMatch(phone.replaceAll(RegExp(r'[^\d]'), ''))) {
-      showError(context, '📱 رقم الهاتف غير صحيح');
+    final error = Validators.validatePhone(phone);
+    if (error != null) {
+      showError(context, '📱 $error');
       return false;
     }
     return true;

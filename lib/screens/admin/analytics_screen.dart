@@ -33,7 +33,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   ];
 
   final List<Activity> _activities = [
-    Activity('طلب جديد #1234', 'تم إنشاء طلب جديد', 'منذ دقيقتين', Colors.green),
+    Activity(
+      'طلب جديد #1234',
+      'تم إنشاء طلب جديد',
+      'منذ دقيقتين',
+      Colors.green,
+    ),
     Activity('دفع ناجح', 'تم دفع 250 ر.س', 'منذ 5 دقائق', Colors.blue),
     Activity('مستخدم جديد', 'تسجيل حساب جديد', 'منذ 10 دقائق', Colors.orange),
     Activity('تحديث منتج', 'هاتف Samsung محدث', 'منذ 15 دقيقة', Colors.purple),
@@ -72,20 +77,35 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         childAspectRatio: 1.3,
       ),
       children: [
-        _buildStatCard('إجمالي المبيعات', '125,000 ر.س',
-            Icons.attach_money, Colors.green),
-        _buildStatCard('عدد الطلبات', '1,250',
-            Icons.shopping_cart, Colors.blue),
-        _buildStatCard('العملاء الجدد', '350',
-            Icons.people, Colors.orange),
-        _buildStatCard('متوسط الطلب', '100 ر.س',
-            Icons.trending_up, Colors.purple),
+        _buildStatCard(
+          'إجمالي المبيعات',
+          '125,000 ر.س',
+          Icons.attach_money,
+          Colors.green,
+        ),
+        _buildStatCard(
+          'عدد الطلبات',
+          '1,250',
+          Icons.shopping_cart,
+          Colors.blue,
+        ),
+        _buildStatCard('العملاء الجدد', '350', Icons.people, Colors.orange),
+        _buildStatCard(
+          'متوسط الطلب',
+          '100 ر.س',
+          Icons.trending_up,
+          Colors.purple,
+        ),
       ],
     );
   }
 
   Widget _buildStatCard(
-      String title, String value, IconData icon, Color color) {
+    String title,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
     return Card(
       elevation: 3,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -99,7 +119,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             Text(
               value,
               style: TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.bold, color: color),
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
             ),
             const SizedBox(height: 4),
             Text(title, style: const TextStyle(color: Colors.grey)),
@@ -119,8 +142,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("المبيعات الشهرية",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text(
+              "المبيعات الشهرية",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 16),
             SizedBox(
               height: 300,
@@ -132,8 +157,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     xValueMapper: (SalesData data, _) => data.month,
                     yValueMapper: (SalesData data, _) => data.sales,
                     markerSettings: const MarkerSettings(isVisible: true),
-                    dataLabelSettings:
-                    const DataLabelSettings(isVisible: true),
+                    dataLabelSettings: const DataLabelSettings(isVisible: true),
                   ),
                 ],
               ),
@@ -154,22 +178,25 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("توزيع المبيعات حسب الفئة",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text(
+              "توزيع المبيعات حسب الفئة",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 16),
             SizedBox(
               height: 300,
               child: SfCircularChart(
                 legend: const Legend(
-                    isVisible: true, overflowMode: LegendItemOverflowMode.wrap),
+                  isVisible: true,
+                  overflowMode: LegendItemOverflowMode.wrap,
+                ),
                 series: <CircularSeries>[
                   DoughnutSeries<CategoryData, String>(
                     dataSource: _categoryData,
                     xValueMapper: (CategoryData data, _) => data.category,
                     yValueMapper: (CategoryData data, _) => data.percentage,
                     pointColorMapper: (CategoryData data, _) => data.color,
-                    dataLabelSettings:
-                    const DataLabelSettings(isVisible: true),
+                    dataLabelSettings: const DataLabelSettings(isVisible: true),
                   ),
                 ],
               ),
@@ -190,8 +217,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("النشاطات الأخيرة",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text(
+              "النشاطات الأخيرة",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 12),
             ..._activities.map((activity) => _buildActivityItem(activity)),
           ],
@@ -203,13 +232,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Widget _buildActivityItem(Activity activity) {
     return ListTile(
       leading: CircleAvatar(
-        backgroundColor: activity.color.withOpacity(0.1),
+        backgroundColor: activity.color.withValues(alpha: 0.1),
         child: Icon(Icons.circle, color: activity.color, size: 14),
       ),
       title: Text(activity.title),
       subtitle: Text(activity.description),
-      trailing: Text(activity.time,
-          style: const TextStyle(color: Colors.grey, fontSize: 12)),
+      trailing: Text(
+        activity.time,
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
     );
   }
 }

@@ -1,28 +1,27 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/product_model.dart';
-import 'package:ell_tall_market/core/api_client.dart';
 
+/// ProductProvider - إدارة المنتجات مع Supabase
+/// يتبع التوثيق الرسمي لـ Supabase
 class ProductProvider with ChangeNotifier {
-  final ApiClient _apiClient = ApiClient();
   final _supabase = Supabase.instance.client;
 
+  // الحالة الداخلية
   List<ProductModel> _products = [];
   List<ProductModel> _filteredProducts = [];
+  List<ProductModel> _featuredProducts = [];
   bool _isLoading = false;
   String? _error;
-  int _page = 1;
-  bool _hasMore = true;
-  String? _currentCategoryId;
-  String? _currentMerchantId;
-  final int _limit = 20;
+  final bool _hasMore = true;
 
+  // Getters
   List<ProductModel> get products =>
       _filteredProducts.isNotEmpty ? _filteredProducts : _products;
+  List<ProductModel> get featuredProducts => _featuredProducts;
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get hasMore => _hasMore;
-  bool get isLoadingMore => _isLoading && _page > 1;
 
   void _setLoading(bool value) {
     _isLoading = value;
@@ -34,372 +33,334 @@ class ProductProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // ===== جلب كل المنتجات =====
+  /// جلب جميع المنتجات
   Future<void> fetchProducts() async {
     _setLoading(true);
-    _error = null;
-    _page = 1;
-    _hasMore = true;
-    _currentCategoryId = null;
-    _currentMerchantId = null;
+    _setError(null);
 
     try {
-      final products = await _apiClient.getProducts(limit: _limit, offset: 0);
+      final response = await _supabase
+          .from('products')
+          .select()
+          .eq('is_active', true)
+          .eq('in_stock', true)
+          .order('created_at', ascending: false);
 
-      _products = products.map((p) => ProductModel.fromJson(p)).toList();
-
-      // إذا لم توجد منتجات، إنشاء منتجات تجريبية
-      if (_products.isEmpty) {
-        _products = _createSampleProducts();
-      }
-
-      _filteredProducts = [];
-    } catch (e) {
-      if (kDebugMode) print('❌ Error fetching products: $e');
-      // في حالة فشل الـ API، إنشاء منتجات تجريبية
-      _products = _createSampleProducts();
-      _setError('تم تحميل البيانات التجريبية - ${e.toString()}');
-    } finally {
-      _setLoading(false);
-    }
-  }
-
-  // ===== إنشاء منتجات تجريبية =====
-  List<ProductModel> _createSampleProducts() {
-    return [
-      // منتجات سوبر ماركت
-      ProductModel(
-        id: '1',
-        name: 'أرز بسمتي هندي',
-        description: 'أرز بسمتي عالي الجودة من الهند',
-        price: 25.50,
-        salePrice: 22.99,
-        categoryId: '1',
-        storeId: 'store1',
-        images: ['https://via.placeholder.com/300/4CAF50/white?text=أرز+بسمتي'],
-        stockQuantity: 100,
-        unit: 'كيس 5 كيلو',
-        rating: 4.5,
-        ratingCount: 120,
-        createdAt: DateTime.now(),
-        categoryName: 'سوبر ماركت',
-        storeName: 'سوبر ماركت الخير',
-      ),
-      ProductModel(
-        id: '2',
-        name: 'زيت زيتون بكر',
-        description: 'زيت زيتون بكر ممتاز من فلسطين',
-        price: 45.00,
-        categoryId: '1',
-        storeId: 'store1',
-        images: ['https://via.placeholder.com/300/4CAF50/white?text=زيت+زيتون'],
-        stockQuantity: 50,
-        unit: 'زجاجة 750 مل',
-        rating: 4.8,
-        ratingCount: 85,
-        createdAt: DateTime.now(),
-        categoryName: 'سوبر ماركت',
-        storeName: 'سوبر ماركت الخير',
-      ),
-
-      // منتجات صيدلية
-      ProductModel(
-        id: '3',
-        name: 'فيتامين د3',
-        description: 'مكمل غذائي فيتامين د3 1000 وحدة',
-        price: 35.00,
-        salePrice: 29.99,
-        categoryId: '2',
-        storeId: 'pharmacy1',
-        images: [
-          'https://via.placeholder.com/300/2196F3/white?text=فيتامين+د3',
-        ],
-        stockQuantity: 30,
-        unit: 'علبة 30 قرص',
-        rating: 4.3,
-        ratingCount: 65,
-        createdAt: DateTime.now(),
-        categoryName: 'صيدلية',
-        storeName: 'صيدلية الشفاء',
-      ),
-      ProductModel(
-        id: '4',
-        name: 'شامبو طبي',
-        description: 'شامبو طبي لعلاج قشرة الشعر',
-        price: 28.50,
-        categoryId: '2',
-        storeId: 'pharmacy1',
-        images: ['https://via.placeholder.com/300/2196F3/white?text=شامبو+طبي'],
-        stockQuantity: 25,
-        unit: 'زجاجة 200 مل',
-        rating: 4.1,
-        ratingCount: 42,
-        createdAt: DateTime.now(),
-        categoryName: 'صيدلية',
-        storeName: 'صيدلية الشفاء',
-      ),
-
-      // منتجات مطاعم
-      ProductModel(
-        id: '5',
-        name: 'شاورما دجاج',
-        description: 'شاورما دجاج طازجة مع الخضار والصلصة',
-        price: 18.00,
-        categoryId: '3',
-        storeId: 'restaurant1',
-        images: [
-          'https://via.placeholder.com/300/FF9800/white?text=شاورما+دجاج',
-        ],
-        stockQuantity: 20,
-        unit: 'سندويش كبير',
-        rating: 4.6,
-        ratingCount: 200,
-        createdAt: DateTime.now(),
-        categoryName: 'مطاعم',
-        storeName: 'مطعم الأصالة',
-      ),
-      ProductModel(
-        id: '6',
-        name: 'برجر لحم',
-        description: 'برجر لحم بقري مشوي مع البطاطس',
-        price: 22.00,
-        salePrice: 19.99,
-        categoryId: '3',
-        storeId: 'restaurant1',
-        images: ['https://via.placeholder.com/300/FF9800/white?text=برجر+لحم'],
-        stockQuantity: 15,
-        unit: 'وجبة كاملة',
-        rating: 4.4,
-        ratingCount: 150,
-        createdAt: DateTime.now(),
-        categoryName: 'مطاعم',
-        storeName: 'مطعم الأصالة',
-      ),
-
-      // منتجات خضروات وفواكه
-      ProductModel(
-        id: '7',
-        name: 'تفاح أحمر',
-        description: 'تفاح أحمر طازج ومقرمش',
-        price: 12.00,
-        categoryId: '6',
-        storeId: 'vegetables1',
-        images: ['https://via.placeholder.com/300/8BC34A/white?text=تفاح+أحمر'],
-        stockQuantity: 80,
-        unit: 'كيلو',
-        rating: 4.7,
-        ratingCount: 95,
-        createdAt: DateTime.now(),
-        categoryName: 'خضروات وفواكه',
-        storeName: 'خضروات وفواكه الطازجة',
-      ),
-      ProductModel(
-        id: '8',
-        name: 'طماطم طازجة',
-        description: 'طماطم طازجة حمراء للسلطات والطبخ',
-        price: 8.50,
-        categoryId: '6',
-        storeId: 'vegetables1',
-        images: ['https://via.placeholder.com/300/8BC34A/white?text=طماطم'],
-        stockQuantity: 120,
-        unit: 'كيلو',
-        rating: 4.2,
-        ratingCount: 78,
-        createdAt: DateTime.now(),
-        categoryName: 'خضروات وفواكه',
-        storeName: 'خضروات وفواكه الطازجة',
-      ),
-    ];
-  }
-
-  // ===== جلب المزيد من المنتجات =====
-  Future<void> fetchMoreProducts() async {
-    if (!_hasMore || _isLoading) return;
-
-    _setLoading(true);
-
-    try {
-      final products = await _apiClient.getProducts(
-        category: _currentCategoryId,
-        storeId: _currentMerchantId,
-        limit: _limit,
-        offset: _page * _limit,
-      );
-
-      final newProducts = products
-          .map((p) => ProductModel.fromJson(p))
+      _products = (response as List)
+          .map((data) => ProductModel.fromMap(data))
           .toList();
 
-      if (newProducts.isEmpty) {
-        _hasMore = false;
-      } else {
-        _products.addAll(newProducts);
-        _page++;
+      if (kDebugMode) {
+        print('✅ تم جلب ${_products.length} منتج بنجاح');
       }
     } catch (e) {
-      if (kDebugMode) print('❌ Error fetching more products: $e');
+      if (kDebugMode) {
+        print('❌ خطأ في جلب المنتجات: $e');
+      }
       _setError(e.toString());
     } finally {
       _setLoading(false);
     }
   }
 
-  // ===== جلب منتجات حسب الفئة =====
-  Future<void> fetchProductsByCategory(String categoryId) async {
+  /// جلب منتجات متجر محدد
+  Future<void> fetchProductsByStore(String storeId) async {
     _setLoading(true);
-    _error = null;
-    _page = 1;
-    _hasMore = true;
-    _currentCategoryId = categoryId;
-    _currentMerchantId = null;
+    _setError(null);
 
     try {
-      final products = await _apiClient.getProducts(
-        category: categoryId,
-        limit: _limit,
-        offset: 0,
-      );
+      final response = await _supabase
+          .from('products')
+          .select()
+          .eq('store_id', storeId)
+          .eq('is_active', true)
+          .order('created_at', ascending: false);
 
-      _products = products.map((p) => ProductModel.fromJson(p)).toList();
-
-      // إذا لم توجد منتجات، إنشاء منتجات تجريبية مفلترة
-      if (_products.isEmpty) {
-        final allSampleProducts = _createSampleProducts();
-        _products = allSampleProducts
-            .where((p) => p.categoryId == categoryId)
-            .toList();
-      }
-
+      _products = (response as List)
+          .map((data) => ProductModel.fromMap(data))
+          .toList();
       _filteredProducts = [];
-    } catch (e) {
-      if (kDebugMode) print('❌ Error fetching products by category: $e');
-      // في حالة فشل الـ API، إنشاء منتجات تجريبية مفلترة
-      final allSampleProducts = _createSampleProducts();
-      _products = allSampleProducts
-          .where((p) => p.categoryId == categoryId)
-          .toList();
-      _setError('تم تحميل البيانات التجريبية - ${e.toString()}');
-    } finally {
-      _setLoading(false);
-    }
-  }
 
-  // ===== تحميل المزيد من منتجات الفئة =====
-  Future<void> loadMoreProductsByCategory() async {
-    if (!_hasMore || _isLoading || _currentCategoryId == null) return;
-
-    _setLoading(true);
-
-    try {
-      final products = await _apiClient.getProducts(
-        category: _currentCategoryId,
-        limit: _limit,
-        offset: _page * _limit,
-      );
-
-      final newProducts = products
-          .map((p) => ProductModel.fromJson(p))
-          .toList();
-
-      if (newProducts.isEmpty) {
-        _hasMore = false;
-      } else {
-        _products.addAll(newProducts);
-        _page++;
+      if (kDebugMode) {
+        print('🏪 منتجات المتجر "$storeId": ${_products.length} منتج');
       }
+
+      notifyListeners();
     } catch (e) {
-      if (kDebugMode) print('❌ Error loading more products by category: $e');
-      _hasMore = false;
+      if (kDebugMode) {
+        print('❌ خطأ في جلب منتجات المتجر: $e');
+      }
       _setError(e.toString());
     } finally {
       _setLoading(false);
     }
   }
 
-  // ===== تحميل المزيد من المنتجات =====
-  Future<void> loadMoreProducts() async {
-    await fetchMoreProducts();
-  }
-
-  // ===== تحديث منتجات الفئة =====
-  Future<void> refreshProductsByCategory(String categoryId) async {
-    await fetchProductsByCategory(categoryId);
-  }
-
-  // ===== تحديث كل المنتجات =====
-  Future<void> refreshProducts() async {
-    await fetchProducts();
-  }
-
-  // ===== جلب منتجات حسب التاجر =====
+  /// جلب منتجات تاجر محدد (deprecated - استخدم fetchProductsByStore)
+  @Deprecated('Use fetchProductsByStore instead')
   Future<void> fetchProductsByMerchant(String merchantId) async {
+    // يجب جلب المتاجر للتاجر أولاً ثم جلب المنتجات
     _setLoading(true);
-    _error = null;
-    _page = 1;
-    _hasMore = true;
-    _currentCategoryId = null;
-    _currentMerchantId = merchantId;
+    _setError(null);
 
     try {
-      final products = await _apiClient.getProducts(
-        storeId: merchantId,
-        limit: _limit,
-        offset: 0,
-      );
+      // جلب متاجر التاجر
+      final storesResponse = await _supabase
+          .from('stores')
+          .select('id')
+          .eq('merchant_id', merchantId);
 
-      _products = products.map((p) => ProductModel.fromJson(p)).toList();
+      final storeIds = (storesResponse as List)
+          .map((store) => store['id'] as String)
+          .toList();
+
+      if (storeIds.isEmpty) {
+        _products = [];
+        _filteredProducts = [];
+        if (kDebugMode) {
+          print('⚠️ لا توجد متاجر للتاجر "$merchantId"');
+        }
+        return;
+      }
+
+      // جلب منتجات جميع متاجر التاجر
+      final response = await _supabase
+          .from('products')
+          .select()
+          .inFilter('store_id', storeIds)
+          .eq('is_active', true)
+          .order('created_at', ascending: false);
+
+      _products = (response as List)
+          .map((data) => ProductModel.fromMap(data))
+          .toList();
       _filteredProducts = [];
+
+      if (kDebugMode) {
+        print('🏪 منتجات التاجر "$merchantId": ${_products.length} منتج');
+      }
+
+      notifyListeners();
     } catch (e) {
-      if (kDebugMode) print('❌ Error fetching products by merchant: $e');
+      if (kDebugMode) {
+        print('❌ خطأ في جلب منتجات التاجر: $e');
+      }
       _setError(e.toString());
     } finally {
       _setLoading(false);
     }
   }
 
-  // ===== البحث في المنتجات =====
-  Future<void> searchProducts(String query, {String? categoryId}) async {
+  /// جلب المنتجات المميزة
+  Future<void> fetchFeaturedProducts() async {
+    try {
+      final response = await _supabase
+          .from('products')
+          .select()
+          .eq('is_active', true)
+          .eq('in_stock', true)
+          .order('created_at', ascending: false)
+          .limit(10);
+
+      _featuredProducts = (response as List)
+          .map((data) => ProductModel.fromMap(data))
+          .toList();
+
+      notifyListeners();
+
+      if (kDebugMode) {
+        print('✅ تم جلب ${_featuredProducts.length} منتج مميز');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ خطأ في جلب المنتجات المميزة: $e');
+      }
+    }
+  }
+
+  /// البحث في المنتجات
+  Future<void> searchProducts(String query) async {
     if (query.isEmpty) {
-      await fetchProducts();
+      _filteredProducts = [];
+      notifyListeners();
       return;
     }
 
     _setLoading(true);
-    _error = null;
-    _page = 1;
-    _hasMore = false;
 
     try {
-      final products = await _apiClient.getProducts(
-        search: query,
-        category: categoryId,
-        limit: 50,
-      );
+      final response = await _supabase
+          .from('products')
+          .select()
+          .eq('is_active', true)
+          .ilike('name', '%$query%')
+          .order('name');
 
-      _products = products.map((p) => ProductModel.fromJson(p)).toList();
-      _filteredProducts = [];
+      _filteredProducts = (response as List)
+          .map((data) => ProductModel.fromMap(data))
+          .toList();
+
+      if (kDebugMode) {
+        print('🔍 نتائج البحث لـ "$query": ${_filteredProducts.length} منتج');
+      }
     } catch (e) {
-      if (kDebugMode) print('❌ Error searching products: $e');
+      if (kDebugMode) {
+        print('❌ خطأ في البحث: $e');
+      }
       _setError(e.toString());
     } finally {
       _setLoading(false);
     }
   }
 
-  // ===== إضافة منتج =====
+  /// فلترة المنتجات حسب الفئة
+  Future<void> filterByCategory(String categoryId) async {
+    _setLoading(true);
+
+    try {
+      final response = await _supabase
+          .from('products')
+          .select()
+          .eq('is_active', true)
+          .eq('category_id', categoryId)
+          .order('created_at', ascending: false);
+
+      _filteredProducts = (response as List)
+          .map((data) => ProductModel.fromMap(data))
+          .toList();
+
+      if (kDebugMode) {
+        print(
+          '📂 منتجات الفئة "$categoryId": ${_filteredProducts.length} منتج',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ خطأ في فلترة الفئة: $e');
+      }
+      _setError(e.toString());
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  /// فلترة المنتجات حسب المتجر
+  Future<void> filterByStore(String storeId) async {
+    _setLoading(true);
+
+    try {
+      final response = await _supabase
+          .from('products')
+          .select()
+          .eq('is_active', true)
+          .eq('store_id', storeId)
+          .order('created_at', ascending: false);
+
+      _filteredProducts = (response as List)
+          .map((data) => ProductModel.fromMap(data))
+          .toList();
+
+      if (kDebugMode) {
+        print('🏪 منتجات المتجر "$storeId": ${_filteredProducts.length} منتج');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ خطأ في فلترة المتجر: $e');
+      }
+      _setError(e.toString());
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  /// فلترة المنتجات حسب النطاق السعري
+  Future<void> filterByPriceRange(double minPrice, double maxPrice) async {
+    _setLoading(true);
+
+    try {
+      final response = await _supabase
+          .from('products')
+          .select()
+          .eq('is_active', true)
+          .gte('price', minPrice)
+          .lte('price', maxPrice)
+          .order('price');
+
+      _filteredProducts = (response as List)
+          .map((data) => ProductModel.fromMap(data))
+          .toList();
+
+      if (kDebugMode) {
+        print(
+          '💰 منتجات النطاق السعري $minPrice-$maxPrice: ${_filteredProducts.length} منتج',
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ خطأ في فلترة السعر: $e');
+      }
+      _setError(e.toString());
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  /// ترتيب المنتجات
+  void sortProducts(String sortBy) {
+    final productsToSort = _filteredProducts.isNotEmpty
+        ? _filteredProducts
+        : _products;
+
+    switch (sortBy) {
+      case 'name_asc':
+        productsToSort.sort((a, b) => a.name.compareTo(b.name));
+        break;
+      case 'name_desc':
+        productsToSort.sort((a, b) => b.name.compareTo(a.name));
+        break;
+      case 'price_asc':
+        productsToSort.sort((a, b) => a.price.compareTo(b.price));
+        break;
+      case 'price_desc':
+        productsToSort.sort((a, b) => b.price.compareTo(a.price));
+        break;
+      case 'rating':
+        // Since rating doesn't exist, sort by name as fallback
+        productsToSort.sort((a, b) => a.name.compareTo(b.name));
+        break;
+      case 'newest':
+        productsToSort.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        break;
+    }
+
+    notifyListeners();
+
+    if (kDebugMode) {
+      print('🔄 تم ترتيب المنتجات حسب: $sortBy');
+    }
+  }
+
+  /// إضافة منتج جديد
   Future<bool> addProduct(ProductModel product) async {
     try {
       await _supabase.from('products').insert(product.toJson());
-      await fetchProducts();
+      await fetchProducts(); // إعادة تحميل المنتجات
+
+      if (kDebugMode) {
+        print('✅ تم إضافة المنتج: ${product.name}');
+      }
+
       return true;
     } catch (e) {
-      if (kDebugMode) print('❌ Error adding product: $e');
+      if (kDebugMode) {
+        print('❌ خطأ في إضافة المنتج: $e');
+      }
       _setError(e.toString());
       return false;
     }
   }
 
-  // ===== تحديث منتج =====
+  /// تحديث منتج
   Future<bool> updateProduct(ProductModel product) async {
     try {
       await _supabase
@@ -407,52 +368,84 @@ class ProductProvider with ChangeNotifier {
           .update(product.toJson())
           .eq('id', product.id);
 
+      // تحديث المنتج في القائمة المحلية
       final index = _products.indexWhere((p) => p.id == product.id);
       if (index != -1) {
         _products[index] = product;
         notifyListeners();
       }
 
+      if (kDebugMode) {
+        print('✅ تم تحديث المنتج: ${product.name}');
+      }
+
       return true;
     } catch (e) {
-      if (kDebugMode) print('❌ Error updating product: $e');
+      if (kDebugMode) {
+        print('❌ خطأ في تحديث المنتج: $e');
+      }
       _setError(e.toString());
       return false;
     }
   }
 
-  // ===== حذف منتج =====
+  /// حذف منتج
   Future<bool> deleteProduct(String productId) async {
     try {
       await _supabase.from('products').delete().eq('id', productId);
+
       _products.removeWhere((p) => p.id == productId);
       _filteredProducts.removeWhere((p) => p.id == productId);
+      _featuredProducts.removeWhere((p) => p.id == productId);
+
       notifyListeners();
+
+      if (kDebugMode) {
+        print('✅ تم حذف المنتج: $productId');
+      }
+
       return true;
     } catch (e) {
-      if (kDebugMode) print('❌ Error deleting product: $e');
+      if (kDebugMode) {
+        print('❌ خطأ في حذف المنتج: $e');
+      }
       _setError(e.toString());
       return false;
     }
   }
 
-  // ===== تصفية المنتجات =====
-  void filterProducts(String query) {
-    if (query.isEmpty) {
-      _filteredProducts = [];
-      notifyListeners();
-      return;
+  /// جلب منتج بالمعرف
+  Future<ProductModel?> getProductById(String productId) async {
+    try {
+      final response = await _supabase
+          .from('products')
+          .select()
+          .eq('id', productId)
+          .single();
+
+      return ProductModel.fromMap(response);
+    } catch (e) {
+      if (kDebugMode) {
+        print('❌ خطأ في جلب المنتج: $e');
+      }
+      return null;
     }
+  }
 
-    final lowercaseQuery = query.toLowerCase();
-    _filteredProducts = _products.where((product) {
-      return product.name.toLowerCase().contains(lowercaseQuery) ||
-          product.description.toLowerCase().contains(lowercaseQuery) ||
-          (product.categoryName?.toLowerCase().contains(lowercaseQuery) ??
-              false) ||
-          (product.storeName?.toLowerCase().contains(lowercaseQuery) ?? false);
-    }).toList();
-
+  /// إزالة الفلاتر
+  void clearFilters() {
+    _filteredProducts = [];
+    _setError(null);
     notifyListeners();
+
+    if (kDebugMode) {
+      print('🧹 تم مسح الفلاتر');
+    }
+  }
+
+  /// إعادة تحميل البيانات
+  Future<void> refresh() async {
+    await fetchProducts();
+    await fetchFeaturedProducts();
   }
 }

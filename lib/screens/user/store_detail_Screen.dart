@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/cart_provider.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/models/store_model.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
@@ -52,7 +52,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
   }
 
   void _checkLoginAndNavigate(Function action) {
-    final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
+    final authProvider = Provider.of<SupabaseProvider>(context, listen: false);
     if (authProvider.isLoggedIn) {
       action();
     } else {
@@ -60,16 +60,26 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
     }
   }
 
-  void _addToCart(ProductModel product) {
-    _checkLoginAndNavigate(() {
+  void _addToCart(ProductModel product) async {
+    _checkLoginAndNavigate(() async {
       final cartProvider = Provider.of<CartProvider>(context, listen: false);
-      cartProvider.addItem(product);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('تمت إضافة ${product.name} إلى السلة'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      final success = await cartProvider.addToCart(productId: product.id);
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تمت إضافة ${product.name} إلى السلة'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('فشل إضافة المنتج إلى السلة'),
+            backgroundColor: Colors.red,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
     });
   }
 
@@ -91,7 +101,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
             children: [
               // صورة الخلفية
               CachedNetworkImage(
-                imageUrl: store.imageUrl,
+                imageUrl: store.imageUrl ?? '',
                 width: double.infinity,
                 height: double.infinity,
                 fit: BoxFit.cover,
@@ -112,8 +122,8 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      Colors.black.withOpacity(0.3),
-                      Colors.black.withOpacity(0.6),
+                      Colors.black.withValues(alpha: 0.3),
+                      Colors.black.withValues(alpha: 0.6),
                     ],
                   ),
                 ),
@@ -137,7 +147,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      store.category,
+                      store.category ?? 'متجر',
                       style: TextStyle(fontSize: 16, color: Colors.white70),
                     ),
                     SizedBox(height: 8),
@@ -169,7 +179,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.black.withOpacity(0.5),
+                    color: Colors.black.withValues(alpha: 0.5),
                   ),
                   child: IconButton(
                     icon: Icon(Icons.arrow_back, color: Colors.white),
@@ -286,46 +296,30 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
           ),
           SizedBox(height: 8),
           Text(
-            store.description,
+            store.description ?? 'لا يوجد وصف متاح',
             style: TextStyle(fontSize: 14, color: Colors.grey[700]),
           ),
           SizedBox(height: 16),
           _buildInfoRow(Icons.location_on, 'العنوان', store.address),
-          _buildInfoRow(Icons.phone, 'الهاتف', store.phone),
-          SizedBox(height: 16),
-          Text(
-            'أوقات العمل',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 8),
-          Column(
-            children: store.openingHours.asMap().entries.map((entry) {
-              final index = entry.key;
-              final time = entry.value;
-              final days = [
-                'الإثنين',
-                'الثلاثاء',
-                'الأربعاء',
-                'الخميس',
-                'الجمعة',
-                'السبت',
-                'الأحد',
-              ];
-              return Padding(
-                padding: EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      days[index],
-                      style: TextStyle(color: Colors.grey[600]),
-                    ),
-                    Text(time, style: TextStyle(fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              );
-            }).toList(),
-          ),
+          _buildInfoRow(Icons.phone, 'الهاتف', store.phone ?? 'غير محدد'),
+          if (store.hasOpeningHours) ...[
+            SizedBox(height: 16),
+            Text(
+              'أوقات العمل',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            SizedBox(height: 8),
+            Column(
+              children: (store.openingHours ?? {}).entries.map((entry) {
+                return ListTile(
+                  dense: true,
+                  leading: Icon(Icons.access_time, size: 20),
+                  title: Text(entry.key),
+                  trailing: Text(entry.value.toString()),
+                );
+              }).toList(),
+            ),
+          ],
         ],
       ),
     );
@@ -352,7 +346,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
     );
   }
 
-  /// 🏷️ تصنيفات المنتجات
+  /// 🏷️ تصنيفات المنتجات (تم إعادته)
   Widget _buildCategoryFilter(List<String> categories) {
     return SizedBox(
       height: 50,
@@ -369,15 +363,9 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
               selected: _selectedCategory == category,
               onSelected: (selected) {
                 setState(() {
-                  _selectedCategory = selected ? category : 'الكل';
+                  _selectedCategory = category;
                 });
               },
-              selectedColor: Theme.of(context).primaryColor,
-              labelStyle: TextStyle(
-                color: _selectedCategory == category
-                    ? Colors.white
-                    : Colors.black,
-              ),
             ),
           );
         },
@@ -385,7 +373,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
     );
   }
 
-  /// 🛒 قائمة المنتجات
+  /// 🛒 قائمة المنتجات (تم إعادتها)
   Widget _buildProductsList(List<ProductModel> products) {
     if (products.isEmpty) {
       return Center(
@@ -395,7 +383,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
             Icon(Icons.inventory, size: 64, color: Colors.grey),
             SizedBox(height: 16),
             Text(
-              'لا توجد منتجات',
+              'لا توجد منتجات متاحة',
               style: TextStyle(fontSize: 18, color: Colors.grey),
             ),
           ],
@@ -423,12 +411,12 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
     );
   }
 
-  /// 🎬 Banner للعروض
+  /// 🎬 Banner للعروض (تم إعادته)
   Widget _buildPromoBanner() {
     final List<String> promoImages = [
-      'https://via.placeholder.com/400x120?text=خصم%2020%25%20على%20الطلبات%20أول%20طلب',
-      'https://via.placeholder.com/400x120?text=توصيل%20مجاني%20للطلبات%20أكثر%20من%20100%20ر.س',
-      'https://via.placeholder.com/400x120?text=عروض%20خاصة%20للموسم',
+      '', // إزالة الرابط الخارجي
+      '', // إزالة الرابط الخارجي
+      '', // إزالة الرابط الخارجي
     ];
 
     return Container(
@@ -442,17 +430,9 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
         itemBuilder: (context, index) {
           return ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: CachedNetworkImage(
-              imageUrl: promoImages[index],
-              fit: BoxFit.cover,
-              placeholder: (context, url) => Container(
-                color: Colors.grey[200],
-                child: Center(child: CircularProgressIndicator()),
-              ),
-              errorWidget: (context, url, error) => Container(
-                color: Colors.grey[200],
-                child: Icon(Icons.local_offer, size: 40, color: Colors.grey),
-              ),
+            child: Container(
+              color: Colors.grey[300],
+              child: Icon(Icons.image, size: 50, color: Colors.grey[600]),
             ),
           );
         },
@@ -471,7 +451,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
     // الحصول على التصنيفات الفريدة
     final categories = [
       'الكل',
-      ...storeProducts.map((p) => p.categoryId).toSet(),
+      ...storeProducts.map((p) => p.categoryId ?? 'غير مصنف').toSet(),
     ];
 
     // تصفية المنتجات حسب التصنيف المختار
@@ -486,8 +466,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
         headerSliverBuilder: (context, innerBoxIsScrolled) {
           return [
             SliverAppBar(
-              expandedHeight: 300,
-              floating: false,
+              expandedHeight: 200,
               pinned: true,
               flexibleSpace: FlexibleSpaceBar(
                 background: _buildStoreHeader(store),
@@ -498,17 +477,12 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
         body: ListView(
           children: [
             _buildStoreInfo(store),
-            _buildPromoBanner(),
             SizedBox(height: 16),
-            Text(
-              'منتجات المتجر',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
+            _buildPromoBanner(),
             SizedBox(height: 16),
             _buildCategoryFilter(categories),
             SizedBox(height: 16),
-            _buildProductsList(filteredProducts),
+            SizedBox(height: 500, child: _buildProductsList(filteredProducts)),
           ],
         ),
       ),
@@ -518,13 +492,7 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
           ? FloatingActionButton.extended(
               onPressed: () {
                 _checkLoginAndNavigate(() {
-                  if (filteredProducts.isNotEmpty) {
-                    Navigator.pushNamed(
-                      context,
-                      AppRoutes.checkout,
-                      arguments: {'store': store, 'products': filteredProducts},
-                    );
-                  }
+                  Navigator.pushNamed(context, AppRoutes.cart);
                 });
               },
               icon: Icon(Icons.shopping_cart),

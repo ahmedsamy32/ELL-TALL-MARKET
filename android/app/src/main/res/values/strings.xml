@@ -2,4 +2,12 @@
 <resources>
     <string name="app_name">سوق التل</string>
     <string name="default_notification_channel_id">high_importance_channel</string>
+    
+    <!-- Google Sign-In Configuration -->
+    <string name="google_android_client_id">941471556278-g0d409tmu6qv6oskauhkgbu04ko9faci.apps.googleusercontent.com</string>
+    
+    <!-- Facebook placeholders: ضع القيم الحقيقية من إعدادات تطبيق فيسبوك -->
+    <string name="facebook_app_id">1282194797038347</string>
+    <string name="facebook_client_token">796c1199a358fba415428df390a7f631</string>
+    <string name="fb_login_protocol_scheme">fb1282194797038347</string>
 </resources>

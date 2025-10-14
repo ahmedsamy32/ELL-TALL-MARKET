@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/user_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
@@ -43,7 +43,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<FirebaseAuthProvider>(context);
+    final authProvider = Provider.of<SupabaseProvider>(context);
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -54,22 +54,33 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ],
         ),
         actions: [
-          IconButton(icon: const Icon(Icons.notifications), onPressed: () {}),
+          IconButton(
+            icon: const Icon(Icons.notifications),
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('ميزة الإشعارات قريباً')),
+              );
+            },
+          ),
           PopupMenuButton(
             itemBuilder: (context) => [
               PopupMenuItem(
                 child: ListTile(
                   leading: const Icon(Icons.person),
-                  title: Text(authProvider.user?.name ?? 'المسؤول'),
+                  title: Text(
+                    authProvider.currentUserProfile?.fullName ?? 'المسؤول',
+                  ),
                 ),
               ),
               PopupMenuItem(
                 child: ListTile(
                   leading: const Icon(Icons.logout),
                   title: const Text('تسجيل الخروج'),
-                  onTap: () {
-                    authProvider.logout();
-                    Navigator.pushReplacementNamed(context, AppRoutes.login);
+                  onTap: () async {
+                    await authProvider.signOut();
+                    if (context.mounted) {
+                      Navigator.pushReplacementNamed(context, AppRoutes.login);
+                    }
                   },
                 ),
               ),
@@ -404,25 +415,33 @@ class DashboardHome extends StatelessWidget {
           .map(
             (user) => ListTile(
               leading: CircleAvatar(
-                backgroundImage: user.imageUrl != null
-                    ? NetworkImage(user.imageUrl!)
+                backgroundImage: user.avatarUrl != null
+                    ? NetworkImage(user.avatarUrl!)
                     : null,
-                child: user.imageUrl == null ? Text(user.name[0]) : null,
+                child: user.avatarUrl == null
+                    ? Text(
+                        user.fullName?.isNotEmpty == true
+                            ? user.fullName![0]
+                            : 'U',
+                      )
+                    : null,
               ),
-              title: Text(user.name),
-              subtitle: Text(user.email),
-              trailing: Text(_getUserTypeText(user.type)),
+              title: Text(user.fullName ?? 'بدون اسم'),
+              subtitle: Text(user.email ?? 'بدون بريد'),
+              trailing: Text(_getUserTypeText(user.role)),
             ),
           )
           .toList(),
     );
   }
 
-  String _getUserTypeText(dynamic type) {
-    if (type.toString().contains('customer')) return 'عميل';
-    if (type.toString().contains('merchant')) return 'تاجر';
-    if (type.toString().contains('captain')) return 'كابتن';
-    if (type.toString().contains('admin')) return 'مسؤول';
+  String _getUserTypeText(dynamic role) {
+    if (role == null) return 'عميل';
+    final roleStr = role.toString().toLowerCase();
+    if (roleStr.contains('client')) return 'عميل';
+    if (roleStr.contains('merchant')) return 'تاجر';
+    if (roleStr.contains('captain')) return 'كابتن';
+    if (roleStr.contains('admin')) return 'مسؤول';
     return 'عميل';
   }
 }
@@ -433,7 +452,7 @@ class AdminDashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<FirebaseAuthProvider>(context);
+    final authProvider = Provider.of<SupabaseProvider>(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -443,8 +462,10 @@ class AdminDashboardScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
-              await authProvider.logout();
-              Navigator.pushReplacementNamed(context, '/login');
+              await authProvider.signOut();
+              if (context.mounted) {
+                Navigator.pushReplacementNamed(context, '/login');
+              }
             },
           ),
         ],

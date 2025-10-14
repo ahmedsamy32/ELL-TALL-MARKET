@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
-import 'package:ell_tall_market/models/order_model.dart';
+import 'package:ell_tall_market/models/order_model.dart' hide OrderStatus;
+import 'package:ell_tall_market/models/order_enums.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 
 class CaptainDashboard extends StatefulWidget {
   const CaptainDashboard({super.key});
 
   @override
-  _CaptainDashboardState createState() => _CaptainDashboardState();
+  State<CaptainDashboard> createState() => _CaptainDashboardState();
 }
 
 class _CaptainDashboardState extends State<CaptainDashboard> {
@@ -35,7 +37,7 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // إحصائيات سريع��
+            // إحصائيات سريعة
             _buildQuickStats(orderProvider),
             SizedBox(height: 24),
 
@@ -54,7 +56,7 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
   Widget _buildQuickStats(OrderProvider orderProvider) {
     final activeOrders = orderProvider.currentOrders;
     final completedOrders = orderProvider.pastOrders
-        .where((order) => order.status == OrderStatus.delivered)
+        .where((order) => order.status == 'delivered')
         .toList();
 
     return GridView(
@@ -98,8 +100,8 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
   double _calculateTotalEarnings(List<OrderModel> orders) {
     return orders.fold(
       0.0,
-      (sum, order) => sum + (order.deliveryFee * 0.8),
-    ); // 80% للكابتن
+      (sum, order) => sum + (order.totalAmount * 0.1), // 10% عمولة للكابتن
+    );
   }
 
   Widget _buildStatCard({
@@ -180,6 +182,9 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
   }
 
   Widget _buildOrderCard(OrderModel order) {
+    // Convert OrderModel.OrderStatus to OrderEnums.OrderStatus
+    final orderStatus = _parseOrderStatus(order.status.value);
+
     return Card(
       margin: EdgeInsets.only(bottom: 16),
       child: Padding(
@@ -196,37 +201,37 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
                 ),
                 Chip(
                   label: Text(
-                    _getStatusText(order.status),
+                    _getStatusText(orderStatus),
                     style: TextStyle(color: Colors.white, fontSize: 12),
                   ),
-                  backgroundColor: _getStatusColor(order.status),
+                  backgroundColor: _getStatusColor(orderStatus),
                 ),
               ],
             ),
             SizedBox(height: 12),
-            Text('العنوان: ${order.shippingAddress.formattedAddress}'),
+            Text('العنوان: ${order.deliveryAddress}'),
             SizedBox(height: 8),
-            Text('الهاتف: ${order.shippingAddress.phone}'),
+            Text('الملاحظات: ${order.notes ?? 'لا توجد'}'),
             SizedBox(height: 8),
-            Text('قيمة التوصيل: ${order.deliveryFee.toStringAsFixed(2)} ر.س'),
+            Text('إجمالي الطلب: ${order.totalAmount.toStringAsFixed(2)} ر.س'),
             SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () =>
-                        _updateOrderStatus(order, _getNextStatus(order.status)),
+                        _updateOrderStatus(order, _getNextStatus(orderStatus)),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
                       foregroundColor: Colors.white,
                     ),
-                    child: Text(_getActionText(order.status)),
+                    child: Text(_getActionText(orderStatus)),
                   ),
                 ),
                 SizedBox(width: 8),
                 IconButton(
                   icon: Icon(Icons.phone),
-                  onPressed: () => _callCustomer(order.shippingAddress.phone),
+                  onPressed: () => _callCustomer(''),
                   style: IconButton.styleFrom(
                     backgroundColor: Colors.green,
                     foregroundColor: Colors.white,
@@ -274,54 +279,93 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
     );
   }
 
+  OrderStatus _parseOrderStatus(String status) {
+    switch (status) {
+      case 'pending':
+        return OrderStatus.pending;
+      case 'confirmed':
+        return OrderStatus.confirmed;
+      case 'in_preparation':
+        return OrderStatus.inPreparation;
+      case 'ready':
+        return OrderStatus.ready;
+      case 'on_the_way':
+        return OrderStatus.onTheWay;
+      case 'delivered':
+        return OrderStatus.delivered;
+      case 'cancelled':
+        return OrderStatus.cancelled;
+      default:
+        return OrderStatus.pending;
+    }
+  }
+
   Color _getStatusColor(OrderStatus status) {
     switch (status) {
-      case OrderStatus.assignedToCaptain:
+      case OrderStatus.pending:
+        return Colors.grey;
+      case OrderStatus.confirmed:
         return Colors.blue;
-      case OrderStatus.pickedUp:
+      case OrderStatus.inPreparation:
         return Colors.orange;
-      case OrderStatus.onTheWay:
+      case OrderStatus.ready:
         return Colors.purple;
+      case OrderStatus.onTheWay:
+        return Colors.indigo;
       case OrderStatus.delivered:
         return Colors.green;
-      default:
-        return Colors.grey;
+      case OrderStatus.cancelled:
+        return Colors.red;
     }
   }
 
   String _getStatusText(OrderStatus status) {
     switch (status) {
-      case OrderStatus.assignedToCaptain:
-        return 'تم التعيين';
-      case OrderStatus.pickedUp:
-        return 'تم الاستلام';
+      case OrderStatus.pending:
+        return 'في الانتظار';
+      case OrderStatus.confirmed:
+        return 'تم التأكيد';
+      case OrderStatus.inPreparation:
+        return 'يتم التحضير';
+      case OrderStatus.ready:
+        return 'جاهز للاستلام';
       case OrderStatus.onTheWay:
         return 'في الطريق';
       case OrderStatus.delivered:
         return 'تم التوصيل';
-      default:
-        return 'غير معروف';
+      case OrderStatus.cancelled:
+        return 'ملغي';
     }
   }
 
   String _getActionText(OrderStatus status) {
     switch (status) {
-      case OrderStatus.assignedToCaptain:
-        return 'تم استلام الطلب';
-      case OrderStatus.pickedUp:
+      case OrderStatus.pending:
+        return 'تأكيد الطلب';
+      case OrderStatus.confirmed:
+        return 'بدء التحضير';
+      case OrderStatus.inPreparation:
+        return 'جاهز للاستلام';
+      case OrderStatus.ready:
         return 'بدء التوصيل';
       case OrderStatus.onTheWay:
         return 'تم التسليم';
-      default:
-        return 'تحديث';
+      case OrderStatus.delivered:
+        return 'مكتمل';
+      case OrderStatus.cancelled:
+        return 'ملغي';
     }
   }
 
   OrderStatus _getNextStatus(OrderStatus currentStatus) {
     switch (currentStatus) {
-      case OrderStatus.assignedToCaptain:
-        return OrderStatus.pickedUp;
-      case OrderStatus.pickedUp:
+      case OrderStatus.pending:
+        return OrderStatus.confirmed;
+      case OrderStatus.confirmed:
+        return OrderStatus.inPreparation;
+      case OrderStatus.inPreparation:
+        return OrderStatus.ready;
+      case OrderStatus.ready:
         return OrderStatus.onTheWay;
       case OrderStatus.onTheWay:
         return OrderStatus.delivered;
@@ -333,7 +377,10 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
   void _updateOrderStatus(OrderModel order, OrderStatus newStatus) async {
     try {
       // await Provider.of<OrderProvider>(context, listen: false)
-      //     .updateOrderStatus(order.id, newStatus);
+      //     .updateOrderStatus(order.id, newStatus.dbValue);
+      if (kDebugMode) {
+        print('تحديث حالة الطلب: ${order.id} إلى ${newStatus.dbValue}');
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('تم تحديث حالة الطلب بنجاح'),
@@ -341,6 +388,9 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
         ),
       );
     } catch (e) {
+      if (kDebugMode) {
+        print('فشل تحديث حالة الطلب: $e');
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('فشل تحديث حالة الطلب: ${e.toString()}'),
@@ -352,5 +402,8 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
 
   void _callCustomer(String phoneNumber) {
     // تنفيذ الاتصال بالعميل
+    if (kDebugMode) {
+      print('اتصال بالعميل: $phoneNumber');
+    }
   }
 }

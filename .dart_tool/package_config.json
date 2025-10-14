@@ -3,7 +3,7 @@
   "packages": [
     {
       "name": "_fe_analyzer_shared",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/_fe_analyzer_shared-89.0.0",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/_fe_analyzer_shared-90.0.0",
       "packageUri": "lib/",
       "languageVersion": "3.9"
     },
@@ -15,7 +15,7 @@
     },
     {
       "name": "analyzer",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/analyzer-8.2.0",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/analyzer-8.3.0",
       "packageUri": "lib/",
       "languageVersion": "3.9"
     },
@@ -69,7 +69,7 @@
     },
     {
       "name": "build",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/build-4.0.0",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/build-4.0.2",
       "packageUri": "lib/",
       "languageVersion": "3.7"
     },
@@ -87,7 +87,7 @@
     },
     {
       "name": "build_runner",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/build_runner-2.8.0",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/build_runner-2.9.0",
       "packageUri": "lib/",
       "languageVersion": "3.7"
     },
@@ -142,6 +142,24 @@
     {
       "name": "clock",
       "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/clock-1.1.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.4"
+    },
+    {
+      "name": "cloud_firestore",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/cloud_firestore-6.0.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.2"
+    },
+    {
+      "name": "cloud_firestore_platform_interface",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/cloud_firestore_platform_interface-7.0.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.2"
+    },
+    {
+      "name": "cloud_firestore_web",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/cloud_firestore_web-5.0.2",
       "packageUri": "lib/",
       "languageVersion": "3.4"
     },
@@ -429,7 +447,7 @@
     },
     {
       "name": "flutter_plugin_android_lifecycle",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.30",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.31",
       "packageUri": "lib/",
       "languageVersion": "3.7"
     },
@@ -500,14 +518,8 @@
       "languageVersion": "3.0"
     },
     {
-      "name": "frontend_server_client",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/frontend_server_client-4.0.0",
-      "packageUri": "lib/",
-      "languageVersion": "3.0"
-    },
-    {
       "name": "functions_client",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/functions_client-2.4.4",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/functions_client-2.5.0",
       "packageUri": "lib/",
       "languageVersion": "3.0"
     },
@@ -609,7 +621,7 @@
     },
     {
       "name": "google_maps_flutter_android",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/google_maps_flutter_android-2.18.2",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/google_maps_flutter_android-2.18.3",
       "packageUri": "lib/",
       "languageVersion": "3.7"
     },
@@ -639,7 +651,7 @@
     },
     {
       "name": "google_sign_in_android",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/google_sign_in_android-7.1.0",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/google_sign_in_android-7.2.1",
       "packageUri": "lib/",
       "languageVersion": "3.7"
     },
@@ -663,7 +675,7 @@
     },
     {
       "name": "gotrue",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/gotrue-2.15.0",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/gotrue-2.16.0",
       "packageUri": "lib/",
       "languageVersion": "3.3"
     },
@@ -723,7 +735,7 @@
     },
     {
       "name": "image_picker_android",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/image_picker_android-0.8.13+3",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/image_picker_android-0.8.13+4",
       "packageUri": "lib/",
       "languageVersion": "3.9"
     },
@@ -819,7 +831,7 @@
     },
     {
       "name": "logger",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/logger-2.6.1",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/logger-2.6.2",
       "packageUri": "lib/",
       "languageVersion": "2.17"
     },
@@ -903,7 +915,7 @@
     },
     {
       "name": "path_provider_android",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/path_provider_android-2.2.18",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/path_provider_android-2.2.19",
       "packageUri": "lib/",
       "languageVersion": "3.7"
     },
@@ -963,7 +975,7 @@
     },
     {
       "name": "postgrest",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/postgrest-2.4.2",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/postgrest-2.5.0",
       "packageUri": "lib/",
       "languageVersion": "3.0"
     },
@@ -987,7 +999,7 @@
     },
     {
       "name": "realtime_client",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/realtime_client-2.5.2",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/realtime_client-2.6.0",
       "packageUri": "lib/",
       "languageVersion": "3.0"
     },
@@ -1017,9 +1029,9 @@
     },
     {
       "name": "shared_preferences_android",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/shared_preferences_android-2.4.13",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/shared_preferences_android-2.4.15",
       "packageUri": "lib/",
-      "languageVersion": "3.7"
+      "languageVersion": "3.9"
     },
     {
       "name": "shared_preferences_foundation",
@@ -1062,6 +1074,12 @@
       "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/shelf_web_socket-3.0.0",
       "packageUri": "lib/",
       "languageVersion": "3.5"
+    },
+    {
+      "name": "shimmer",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/shimmer-3.0.0",
+      "packageUri": "lib/",
+      "languageVersion": "2.17"
     },
     {
       "name": "sky_engine",
@@ -1161,25 +1179,25 @@
     },
     {
       "name": "supabase",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/supabase-2.9.1",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/supabase-2.10.0",
       "packageUri": "lib/",
       "languageVersion": "3.3"
     },
     {
       "name": "supabase_flutter",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/supabase_flutter-2.10.1",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/supabase_flutter-2.10.3",
       "packageUri": "lib/",
       "languageVersion": "3.3"
     },
     {
       "name": "syncfusion_flutter_charts",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/syncfusion_flutter_charts-31.1.21",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/syncfusion_flutter_charts-31.1.23",
       "packageUri": "lib/",
       "languageVersion": "3.7"
     },
     {
       "name": "syncfusion_flutter_core",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/syncfusion_flutter_core-31.1.21",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/syncfusion_flutter_core-31.1.23",
       "packageUri": "lib/",
       "languageVersion": "3.7"
     },
@@ -1221,7 +1239,7 @@
     },
     {
       "name": "url_launcher_android",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/url_launcher_android-6.3.22",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/url_launcher_android-6.3.24",
       "packageUri": "lib/",
       "languageVersion": "3.9"
     },
@@ -1281,7 +1299,7 @@
     },
     {
       "name": "watcher",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/watcher-1.1.3",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/watcher-1.1.4",
       "packageUri": "lib/",
       "languageVersion": "3.1"
     },
@@ -1305,7 +1323,7 @@
     },
     {
       "name": "win32",
-      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/win32-5.14.0",
+      "rootUri": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache/hosted/pub.dev/win32-5.15.0",
       "packageUri": "lib/",
       "languageVersion": "3.8"
     },
@@ -1343,6 +1361,6 @@
   "generator": "pub",
   "generatorVersion": "3.9.2",
   "flutterRoot": "file:///C:/src/flutter",
-  "flutterVersion": "3.35.3",
+  "flutterVersion": "3.35.5",
   "pubCache": "file:///C:/Users/Ahmed/AppData/Local/Pub/Cache"
 }

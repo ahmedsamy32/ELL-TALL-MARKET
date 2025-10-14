@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
-import 'package:ell_tall_market/models/order_model.dart';
-import 'package:ell_tall_market/widgets/order_card.dart';
+import 'package:ell_tall_market/models/order_model.dart' hide OrderStatus;
+import 'package:ell_tall_market/models/order_enums.dart';
 
 class CaptainOrdersScreen extends StatefulWidget {
   final String captainId;
@@ -15,11 +16,11 @@ class CaptainOrdersScreen extends StatefulWidget {
   });
 
   @override
-  _CaptainOrdersScreenState createState() => _CaptainOrdersScreenState();
+  State<CaptainOrdersScreen> createState() => _CaptainOrdersScreenState();
 }
 
 class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
-  OrderStatus _selectedFilter = OrderStatus.assignedToCaptain;
+  OrderStatus _selectedFilter = OrderStatus.confirmed;
 
   @override
   void initState() {
@@ -49,8 +50,10 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
 
   Widget _buildFilterBar() {
     final statuses = [
-      OrderStatus.assignedToCaptain,
-      OrderStatus.pickedUp,
+      OrderStatus.pending,
+      OrderStatus.confirmed,
+      OrderStatus.inPreparation,
+      OrderStatus.ready,
       OrderStatus.onTheWay,
       OrderStatus.delivered,
     ];
@@ -74,7 +77,6 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
               ),
             );
           }).toList(),
-
         ),
       ),
     );
@@ -85,7 +87,10 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
       return Center(child: CircularProgressIndicator());
     }
 
-    final filteredOrders = provider.getOrdersByStatus(_selectedFilter);
+    // فلترة الطلبات حسب الحالة المختارة
+    final filteredOrders = provider.currentOrders.where((order) {
+      return _parseOrderStatus(order.status.value) == _selectedFilter;
+    }).toList();
 
     if (filteredOrders.isEmpty) {
       return Center(
@@ -110,17 +115,58 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
       itemCount: filteredOrders.length,
       itemBuilder: (context, index) {
         final order = filteredOrders[index];
-        return OrderCard(
-          order: order,
-          onTap: () {
-            _showOrderDetails(order);
-          },
-        );
+        return _buildOrderCard(order);
       },
     );
   }
 
+  Widget _buildOrderCard(OrderModel order) {
+    final orderStatus = _parseOrderStatus(order.status.value);
+
+    return Card(
+      margin: EdgeInsets.only(bottom: 16),
+      child: InkWell(
+        onTap: () => _showOrderDetails(order),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'طلب #${order.id.substring(0, 8)}',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  Chip(
+                    label: Text(
+                      _getStatusText(orderStatus),
+                      style: TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                    backgroundColor: _getStatusColor(orderStatus),
+                  ),
+                ],
+              ),
+              SizedBox(height: 8),
+              Text('العنوان: ${order.deliveryAddress}'),
+              SizedBox(height: 4),
+              Text('الملاحظات: ${order.notes ?? 'لا توجد'}'),
+              SizedBox(height: 4),
+              Text(
+                'المجموع: ${order.totalAmount.toStringAsFixed(2)} ر.س',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showOrderDetails(OrderModel order) {
+    final orderStatus = _parseOrderStatus(order.status.value);
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -147,37 +193,25 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               SizedBox(height: 16),
-              _buildDetailRow('الحالة:', _getStatusText(order.status)),
-              _buildDetailRow(
-                'العنوان:',
-                order.shippingAddress.formattedAddress,
-              ),
-              _buildDetailRow('الهاتف:', order.shippingAddress.phone),
-              _buildDetailRow(
-                'قيمة التوصيل:',
-                '${order.deliveryFee.toStringAsFixed(2)} ر.س',
-              ),
+              _buildDetailRow('رقم الطلب:', order.id.substring(0, 8)),
+              _buildDetailRow('الحالة:', _getStatusText(orderStatus)),
+              _buildDetailRow('العنوان:', order.deliveryAddress),
+              _buildDetailRow('الملاحظات:', order.notes ?? 'لا توجد'),
               _buildDetailRow(
                 'المجموع:',
-                '${order.total.toStringAsFixed(2)} ر.س',
+                '${order.totalAmount.toStringAsFixed(2)} ر.س',
               ),
-              SizedBox(height: 16),
-              Text('المنتجات:', style: TextStyle(fontWeight: FontWeight.bold)),
-              ...order.items.map(
-                (item) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4.0),
-                  child: Text('• ${item.productName} (×${item.quantity})'),
-                ),
-              ),
+              _buildDetailRow('التاريخ:', order.createdAtFormatted),
               SizedBox(height: 24),
-              if (order.status != OrderStatus.delivered)
+              if (orderStatus != OrderStatus.delivered &&
+                  orderStatus != OrderStatus.cancelled)
                 ElevatedButton(
                   onPressed: () =>
-                      _updateOrderStatus(order, _getNextStatus(order.status)),
+                      _updateOrderStatus(order, _getNextStatus(orderStatus)),
                   style: ElevatedButton.styleFrom(
                     minimumSize: Size(double.infinity, 50),
                   ),
-                  child: Text(_getActionText(order.status)),
+                  child: Text(_getActionText(orderStatus)),
                 ),
               SizedBox(height: 8),
               TextButton(
@@ -197,7 +231,10 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontWeight: FontWeight.bold)),
+          SizedBox(
+            width: 80,
+            child: Text(label, style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
           SizedBox(width: 8),
           Expanded(child: Text(value)),
         ],
@@ -205,29 +242,80 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
     );
   }
 
+  OrderStatus _parseOrderStatus(String status) {
+    switch (status) {
+      case 'pending':
+        return OrderStatus.pending;
+      case 'confirmed':
+        return OrderStatus.confirmed;
+      case 'preparing':
+      case 'in_preparation':
+        return OrderStatus.inPreparation;
+      case 'ready':
+        return OrderStatus.ready;
+      case 'picked_up':
+      case 'in_transit':
+      case 'on_the_way':
+        return OrderStatus.onTheWay;
+      case 'delivered':
+        return OrderStatus.delivered;
+      case 'cancelled':
+        return OrderStatus.cancelled;
+      default:
+        return OrderStatus.pending;
+    }
+  }
+
+  Color _getStatusColor(OrderStatus status) {
+    switch (status) {
+      case OrderStatus.pending:
+        return Colors.grey;
+      case OrderStatus.confirmed:
+        return Colors.blue;
+      case OrderStatus.inPreparation:
+        return Colors.orange;
+      case OrderStatus.ready:
+        return Colors.purple;
+      case OrderStatus.onTheWay:
+        return Colors.indigo;
+      case OrderStatus.delivered:
+        return Colors.green;
+      case OrderStatus.cancelled:
+        return Colors.red;
+    }
+  }
+
   String _getStatusText(OrderStatus status) {
     switch (status) {
-      case OrderStatus.assignedToCaptain:
-        return 'تم التعيين';
-      case OrderStatus.pickedUp:
-        return 'تم الاستلام';
+      case OrderStatus.pending:
+        return 'في الانتظار';
+      case OrderStatus.confirmed:
+        return 'تم التأكيد';
+      case OrderStatus.inPreparation:
+        return 'يتم التحضير';
+      case OrderStatus.ready:
+        return 'جاهز للاستلام';
       case OrderStatus.onTheWay:
         return 'في الطريق';
       case OrderStatus.delivered:
         return 'تم التوصيل';
-      default:
-        return 'غير معروف';
+      case OrderStatus.cancelled:
+        return 'ملغي';
     }
   }
 
   String _getActionText(OrderStatus status) {
     switch (status) {
-      case OrderStatus.assignedToCaptain:
-        return 'تم استلام الطلب من المتجر';
-      case OrderStatus.pickedUp:
-        return 'بدء التوصيل إلى العميل';
+      case OrderStatus.pending:
+        return 'تأكيد الطلب';
+      case OrderStatus.confirmed:
+        return 'بدء التحضير';
+      case OrderStatus.inPreparation:
+        return 'جاهز للاستلام';
+      case OrderStatus.ready:
+        return 'بدء التوصيل';
       case OrderStatus.onTheWay:
-        return 'تم تسليم الطلب';
+        return 'تم التسليم';
       default:
         return 'تحديث';
     }
@@ -235,9 +323,13 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
 
   OrderStatus _getNextStatus(OrderStatus currentStatus) {
     switch (currentStatus) {
-      case OrderStatus.assignedToCaptain:
-        return OrderStatus.pickedUp;
-      case OrderStatus.pickedUp:
+      case OrderStatus.pending:
+        return OrderStatus.confirmed;
+      case OrderStatus.confirmed:
+        return OrderStatus.inPreparation;
+      case OrderStatus.inPreparation:
+        return OrderStatus.ready;
+      case OrderStatus.ready:
         return OrderStatus.onTheWay;
       case OrderStatus.onTheWay:
         return OrderStatus.delivered;
@@ -250,7 +342,10 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
     try {
       Navigator.pop(context);
       // await Provider.of<OrderProvider>(context, listen: false)
-      //     .updateOrderStatus(order.id, newStatus);
+      //     .updateOrderStatus(order.id, newStatus.dbValue);
+      if (kDebugMode) {
+        print('تحديث حالة الطلب: ${order.id} إلى ${newStatus.dbValue}');
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('تم تحديث حالة الطلب بنجاح'),
@@ -258,6 +353,9 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
         ),
       );
     } catch (e) {
+      if (kDebugMode) {
+        print('فشل تحديث حالة الطلب: $e');
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('فشل تحديث حالة الطلب: ${e.toString()}'),

@@ -61,12 +61,12 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
           _buildStatCard("الكل", provider.products.length, Colors.blue),
           _buildStatCard(
             "متوفر",
-            provider.products.where((p) => p.inStock).length,
+            provider.products.where((p) => p.stock > 0).length,
             Colors.green,
           ),
           _buildStatCard(
             "غير متوفر",
-            provider.products.where((p) => !p.inStock).length,
+            provider.products.where((p) => p.stock == 0).length,
             Colors.red,
           ),
         ],
@@ -165,9 +165,9 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
   List<ProductModel> _filterProducts(List<ProductModel> products) {
     switch (_selectedFilter) {
       case 'inStock':
-        return products.where((p) => p.inStock).toList();
+        return products.where((p) => p.stock > 0).toList();
       case 'outOfStock':
-        return products.where((p) => !p.inStock).toList();
+        return products.where((p) => p.stock == 0).toList();
       default:
         return products;
     }
@@ -180,8 +180,9 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
       elevation: 2,
       child: ListTile(
         leading: CircleAvatar(
-          backgroundImage: product.imageUrl.isNotEmpty
-              ? NetworkImage(product.imageUrl)
+          backgroundImage:
+              product.imageUrl != null && product.imageUrl!.isNotEmpty
+              ? NetworkImage(product.imageUrl!)
               : const AssetImage('assets/images/default_product.png')
                     as ImageProvider,
         ),
@@ -194,9 +195,9 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
           children: [
             Text("السعر: ${product.price} ر.س"),
             Text(
-              product.inStock ? "متوفر" : "غير متوفر",
+              product.stock > 0 ? "متوفر (${product.stock})" : "غير متوفر",
               style: TextStyle(
-                color: product.inStock ? Colors.green : Colors.red,
+                color: product.stock > 0 ? Colors.green : Colors.red,
                 fontWeight: FontWeight.bold,
               ),
             ),

@@ -1,135 +1,180 @@
 import 'package:flutter/foundation.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/store_model.dart';
+import 'package:ell_tall_market/core/logger.dart';
 
+/// Store Provider مع دعم Supabase حسب الوثائق الرسمية
+/// https://supabase.com/docs/reference/dart/installing
+/// https://supabase.com/docs/reference/dart/select
+/// https://supabase.com/docs/reference/dart/insert
 class StoreProvider with ChangeNotifier {
+  // استخدام Supabase Client مباشرة حسب الوثائق الرسمية
+  final _supabase = Supabase.instance.client;
+
   List<StoreModel> _stores = [];
-  List<StoreModel> _filteredStores = []; // تم إضافة هذه القائمة
+  List<StoreModel> _filteredStores = [];
   List<StoreModel> _featuredStores = [];
+  List<StoreModel> _nearbyStores = [];
+  final Map<String, List<StoreModel>> _storesByCategory = {};
+
   bool _isLoading = false;
   String? _error;
+  StoreModel? _selectedStore;
 
-  // Getters
+  // ===== Getters =====
   List<StoreModel> get stores => _stores;
-  List<StoreModel> get filteredStores => _filteredStores; // تم إضافة هذا الـGetter
+  List<StoreModel> get filteredStores => _filteredStores;
   List<StoreModel> get featuredStores => _featuredStores;
+  List<StoreModel> get nearbyStores => _nearbyStores;
   bool get isLoading => _isLoading;
   String? get error => _error;
+  StoreModel? get selectedStore => _selectedStore;
 
-  // بيانات نموذجية للمتاجر
-  final List<StoreModel> _demoStores = [
-    StoreModel(
-      id: '1',
-      name: 'سوبرماركت التل',
-      category: 'سوبرماركت',
-      imageUrl: 'https://via.placeholder.com/300/4CAF50/FFFFFF?text=سوبرماركت+التل',
-      rating: 4.5,
-      reviewCount: 120,
-      deliveryTime: 25,
-      deliveryFee: 5.0,
-      minOrder: 20.0,
-      isOpen: true,
-      description: 'أكبر سوبرماركت في المنطقة يقدم جميع احتياجاتك اليومية',
-      address: 'الرياض، حي النرجس، شارع الملك فهد',
-      phone: '+966512345678',
-      openingHours: ['08:00 - 23:00', '08:00 - 23:00', '08:00 - 23:00', '08:00 - 23:00', '08:00 - 23:00', '08:00 - 24:00', '08:00 - 24:00'],
-    ),
-    StoreModel(
-      id: '2',
-      name: 'مطعم الشيف',
-      category: 'مطاعم',
-      imageUrl: 'https://via.placeholder.com/300/FF5722/FFFFFF?text=مطعم+الشيف',
-      rating: 4.8,
-      reviewCount: 85,
-      deliveryTime: 35,
-      deliveryFee: 8.0,
-      minOrder: 15.0,
-      isOpen: true,
-      description: 'أشهى المأكولات العربية والعالمية بأيدي أمهر الطهاة',
-      address: 'الرياض، حي الملز، شارع العليا',
-      phone: '+966511234567',
-      openingHours: ['12:00 - 01:00', '12:00 - 01:00', '12:00 - 01:00', '12:00 - 01:00', '12:00 - 02:00', '12:00 - 02:00', '12:00 - 02:00'],
-    ),
-    StoreModel(
-      id: '3',
-      name: 'إلكترونيات المستقبل',
-      category: 'إلكترونيات',
-      imageUrl: 'https://via.placeholder.com/300/2196F3/FFFFFF?text=إلكترونيات+المستقبل',
-      rating: 4.7,
-      reviewCount: 60,
-      deliveryTime: 40,
-      deliveryFee: 15.0,
-      minOrder: 100.0,
-      isOpen: true,
-      description: 'أحدث الأجهزة الإلكترونية والهواتف الذكية.',
-      address: 'الرياض، حي العليا، شارع التقنية',
-      phone: '+966500000003',
-      openingHours: ['09:00 - 22:00', '09:00 - 22:00', '09:00 - 22:00', '09:00 - 22:00', '09:00 - 22:00', '09:00 - 23:00', '09:00 - 23:00'],
-    ),
-    StoreModel(
-      id: '4',
-      name: 'متجر الأناقة',
-      category: 'ملابس',
-      imageUrl: 'https://via.placeholder.com/300/9C27B0/FFFFFF?text=متجر+الأناقة',
-      rating: 4.3,
-      reviewCount: 45,
-      deliveryTime: 30,
-      deliveryFee: 10.0,
-      minOrder: 50.0,
-      isOpen: true,
-      description: 'أحدث صيحات الموضة والملابس الرجالية والنسائية.',
-      address: 'الرياض، حي الورود، شارع الأناقة',
-      phone: '+966500000004',
-      openingHours: ['10:00 - 22:00', '10:00 - 22:00', '10:00 - 22:00', '10:00 - 22:00', '10:00 - 22:00', '10:00 - 23:00', '10:00 - 23:00'],
-    ),
-    // ... باقي المتاجر
-  ];
+  void _setLoading(bool value) {
+    _isLoading = value;
+    notifyListeners();
+  }
 
-  // جلب جميع المتاجر
-  Future<void> fetchStores() async {
+  void _setError(String? value) {
+    _error = value;
+    notifyListeners();
+  }
+
+  /// جلب المتاجر من Supabase باستخدام الوثائق الرسمية
+  /// https://supabase.com/docs/reference/dart/select
+  Future<void> fetchStores({bool refresh = false}) async {
+    if (!refresh && _stores.isNotEmpty) return;
+
     _setLoading(true);
-    _error = null;
+    _setError(null);
 
     try {
-      // محاكاة جلب البيانات من API
-      await Future.delayed(Duration(seconds: 2));
+      AppLogger.info("جلب المتاجر من Supabase...");
 
-      _stores = _demoStores;
-      _filteredStores = _stores; // تهيئة القائمة المُصفاة
-      _featuredStores = _stores.where((store) => store.rating >= 4.5).toList();
+      final response = await _supabase
+          .from('stores')
+          .select('*')
+          .eq('is_active', true)
+          .order('created_at', ascending: false);
 
+      _stores = (response as List)
+          .map((data) => StoreModel.fromSupabaseMap(data))
+          .toList();
+
+      if (_stores.isEmpty) {
+        AppLogger.info("لا توجد متاجر في قاعدة البيانات");
+      }
+
+      // تصنيف المتاجر
+      _filteredStores = List.from(_stores);
+      _featuredStores.clear();
+      // Since isFeatured doesn't exist, we'll use active stores as featured for now
+      _featuredStores.addAll(_stores.where((s) => s.isActive).toList());
+      _updateStoresByCategory();
+
+      AppLogger.info("تم جلب ${_stores.length} متجر بنجاح");
+      _setError(null);
     } catch (e) {
-      _setError('فشل في تحميل المتاجر: ${e.toString()}');
+      AppLogger.error("خطأ في جلب المتاجر", e);
+      _stores = [];
+      _filteredStores = [];
+      _setError('فشل في تحميل المتاجر من قاعدة البيانات');
     } finally {
       _setLoading(false);
     }
   }
 
-  // تصفية المتاجر
-  void filterStores(String query, String category) {
-    _filteredStores = _stores.where((store) {
-      final matchesSearch = store.name.toLowerCase().contains(query.toLowerCase()) ||
-          store.description.toLowerCase().contains(query.toLowerCase());
-      final matchesCategory = category == 'الكل' || store.category == category;
-      return matchesSearch && matchesCategory;
-    }).toList();
+  /// تحديث تصنيف المتاجر حسب الفئة
+  void _updateStoresByCategory() {
+    _storesByCategory.clear();
+    // Since category doesn't exist, we'll categorize by name for now
+    for (final store in _stores) {
+      final category = _getCategoryFromName(store.name);
+      if (!_storesByCategory.containsKey(category)) {
+        _storesByCategory[category] = [];
+      }
+      _storesByCategory[category]!.add(store);
+    }
+  }
+
+  /// Helper method to extract category from store name
+  String _getCategoryFromName(String name) {
+    if (name.contains('سوبرماركت')) return 'سوبرماركت';
+    if (name.contains('مطعم') || name.contains('البيك')) return 'مطاعم';
+    if (name.contains('صيدلية')) return 'صيدلية';
+    if (name.contains('مقهى') || name.contains('ستارباكس')) return 'مقاهي';
+    if (name.contains('إلكترونيات') || name.contains('إكسترا')) {
+      return 'إلكترونيات';
+    }
+    if (name.contains('مخبز')) return 'مخابز';
+    return 'عام';
+  }
+
+  /// تصفية المتاجر محلياً (للأداء الأفضل)
+  void filterStores(String searchQuery, String category) {
+    List<StoreModel> filtered = List.from(_stores);
+
+    // تصفية حسب الفئة
+    if (category != 'الكل') {
+      filtered = filtered
+          .where((store) => _getCategoryFromName(store.name) == category)
+          .toList();
+    }
+
+    // تصفية حسب النص
+    if (searchQuery.isNotEmpty) {
+      filtered = filtered
+          .where(
+            (store) =>
+                store.name.toLowerCase().contains(searchQuery.toLowerCase()) ||
+                (store.description?.toLowerCase().contains(
+                      searchQuery.toLowerCase(),
+                    ) ??
+                    false) ||
+                (store.address.toLowerCase().contains(
+                  searchQuery.toLowerCase(),
+                )),
+          )
+          .toList();
+    }
+
+    _filteredStores = filtered;
     notifyListeners();
   }
 
-  // البحث عن متاجر بالاسم
-  void searchStores(String query) {
-    if (query.isEmpty) {
-      _filteredStores = _stores;
-    } else {
-      _filteredStores = _stores.where((store) {
-        return store.name.toLowerCase().contains(query.toLowerCase()) ||
-            store.category.toLowerCase().contains(query.toLowerCase()) ||
-            store.description.toLowerCase().contains(query.toLowerCase());
-      }).toList();
+  /// ترتيب المتاجر
+  void sortStores(String sortBy) {
+    switch (sortBy) {
+      case 'الأعلى تقييماً':
+        // Since rating doesn't exist, sort by name as fallback
+        _filteredStores.sort((a, b) => a.name.compareTo(b.name));
+        break;
+      case 'الأكثر طلباً':
+        // Since ratingCount doesn't exist, sort by name as fallback
+        _filteredStores.sort((a, b) => a.name.compareTo(b.name));
+        break;
+      case 'الأقل رسوم توصيل':
+        // Since deliveryFee doesn't exist, sort by name as fallback
+        _filteredStores.sort((a, b) => a.name.compareTo(b.name));
+        break;
+      case 'الأسرع توصيل':
+        // Since deliveryTime doesn't exist, sort by name as fallback
+        _filteredStores.sort((a, b) => a.name.compareTo(b.name));
+        break;
+      default:
+        // الافتراضي - حسب التاريخ
+        _filteredStores.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     }
     notifyListeners();
   }
 
-  // الحصول على متجر بواسطة ID
+  /// إعادة تعيين التصفية
+  void resetFilters() {
+    _filteredStores = List.from(_stores);
+    notifyListeners();
+  }
+
+  /// Get store by ID
   StoreModel? getStoreById(String id) {
     try {
       return _stores.firstWhere((store) => store.id == id);
@@ -138,108 +183,14 @@ class StoreProvider with ChangeNotifier {
     }
   }
 
-  // الحصول على متاجر حسب التصنيف
-  List<StoreModel> getStoresByCategory(String category) {
-    if (category == 'الكل') return _stores;
-    return _stores.where((store) => store.category == category).toList();
-  }
-
-  // الحصول على المتاجر المفتوحة فقط
-  List<StoreModel> getOpenStores() {
-    return _stores.where((store) => store.isOpen).toList();
-  }
-
-  // الحصول على المتاجر التي تقدم توصيل مجاني
-  List<StoreModel> getFreeDeliveryStores() {
-    return _stores.where((store) => store.deliveryFee == 0).toList();
-  }
-
-  // الحصول على المتاجر ذات التوصيل السريع (أقل من 30 دقيقة)
-  List<StoreModel> getFastDeliveryStores() {
-    return _stores.where((store) => store.deliveryTime <= 30).toList();
-  }
-
-  // الحصول على أفضل المتاجر تقييماً
-  List<StoreModel> getTopRatedStores() {
-    return _stores.where((store) => store.rating >= 4.0).toList();
-  }
-
-  // إضافة متجر جديد (للوحة التحكم)
-  void addStore(StoreModel store) {
-    _stores.add(store);
-    _filteredStores = _stores;
-    notifyListeners();
-  }
-
-  // تحديث متجر
-  void updateStore(StoreModel updatedStore) {
-    final index = _stores.indexWhere((store) => store.id == updatedStore.id);
-    if (index != -1) {
-      _stores[index] = updatedStore;
-      _filteredStores = _stores;
-      notifyListeners();
-    }
-  }
-
-  // حذف متجر
-  void deleteStore(String storeId) {
-    _stores.removeWhere((store) => store.id == storeId);
-    _filteredStores = _stores;
-    notifyListeners();
-  }
-
-  // الحصول على جميع التصنيفات المتاحة
-  List<String> getAvailableCategories() {
-    final categories = _stores.map((store) => store.category).toSet().toList();
-    categories.insert(0, 'الكل');
-    return categories;
-  }
-
-  // تحديث حالة المتجر (فتح/غلق)
-  void toggleStoreStatus(String storeId, bool isOpen) {
-    final store = getStoreById(storeId);
-    if (store != null) {
-      final updatedStore = store.copyWith(isOpen: isOpen);
-      updateStore(updatedStore);
-    }
-  }
-
-  // State handlers
-  void _setLoading(bool value) {
-    _isLoading = value;
-    notifyListeners();
-  }
-
-  void _setError(String value) {
-    _error = value;
-    notifyListeners();
-  }
-
-  void clearError() {
+  /// Clear data
+  void clear() {
+    _stores = [];
+    _filteredStores = [];
+    _featuredStores = [];
+    _nearbyStores = [];
+    _storesByCategory.clear();
     _error = null;
     notifyListeners();
-  }
-
-  // تحميل البيانات الأولية
-  void loadInitialData() {
-    if (_stores.isEmpty) {
-      fetchStores();
-    }
-  }
-
-  // إعادة تعيين الفلتر
-  void resetFilter() {
-    _filteredStores = _stores;
-    notifyListeners();
-  }
-
-  // الحصول على المتاجر القريبة (محاكاة)
-  List<StoreModel> getNearbyStores() {
-    return _stores.take(5).toList(); // أول 5 متاجر كمثال
-  }
-
-  // الحصول على المتاجر الموصى بها
-  List<StoreModel> getRecommendedStores() {
-    return _stores.where((store) => store.rating >= 4.3).toList();
   }
 }

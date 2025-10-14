@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/config/supabase_config.dart';
 
 class ReturnItem {
@@ -27,7 +27,9 @@ class ReturnItem {
       productName: data['product_name'] ?? '',
       reason: data['reason'] ?? '',
       status: data['status'] ?? 'pending',
-      date: DateTime.parse(data['created_at'] ?? DateTime.now().toIso8601String()),
+      date: DateTime.parse(
+        data['created_at'] ?? DateTime.now().toIso8601String(),
+      ),
     );
   }
 
@@ -53,8 +55,11 @@ class ReturnsScreen extends StatefulWidget {
 class _ReturnsScreenState extends State<ReturnsScreen> {
   final _supabase = SupabaseConfig.client;
 
-  Future<void> addOrEditReturn(BuildContext context, ReturnItem? existing) async {
-    final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
+  Future<void> addOrEditReturn(
+    BuildContext context,
+    ReturnItem? existing,
+  ) async {
+    final authProvider = Provider.of<SupabaseProvider>(context, listen: false);
     String productName = existing?.productName ?? '';
     String reason = existing?.reason ?? '';
 
@@ -110,16 +115,13 @@ class _ReturnsScreenState extends State<ReturnsScreen> {
         );
         await _supabase
             .from('returns')
-            .insert(newReturn.toMap(authProvider.user!.id));
+            .insert(newReturn.toMap(authProvider.currentUserProfile!.id));
       } else {
         await _supabase
             .from('returns')
-            .update({
-              'product_name': productName,
-              'reason': reason,
-            })
+            .update({'product_name': productName, 'reason': reason})
             .eq('id', existing.id)
-            .eq('user_id', authProvider.user!.id);
+            .eq('user_id', authProvider.currentUserProfile!.id);
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -128,9 +130,9 @@ class _ReturnsScreenState extends State<ReturnsScreen> {
         ),
       );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('حدث خطأ: ${e.toString()}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('حدث خطأ: ${e.toString()}')));
     }
   }
 
@@ -138,18 +140,15 @@ class _ReturnsScreenState extends State<ReturnsScreen> {
     if (item.status != 'pending') return;
 
     try {
-      await _supabase
-          .from('returns')
-          .delete()
-          .eq('id', item.id);
+      await _supabase.from('returns').delete().eq('id', item.id);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حذف الطلب')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تم حذف الطلب')));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('حدث خطأ: ${e.toString()}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('حدث خطأ: ${e.toString()}')));
     }
   }
 
@@ -168,7 +167,7 @@ class _ReturnsScreenState extends State<ReturnsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<FirebaseAuthProvider>(context);
+    final authProvider = Provider.of<SupabaseProvider>(context);
 
     return Scaffold(
       appBar: AppBar(title: const Text('المرتجعات')),
@@ -176,7 +175,7 @@ class _ReturnsScreenState extends State<ReturnsScreen> {
         stream: _supabase
             .from('returns')
             .stream(primaryKey: ['id'])
-            .eq('user_id', authProvider.user!.id)
+            .eq('user_id', authProvider.currentUserProfile!.id)
             .order('created_at', ascending: false),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -232,7 +231,9 @@ class _ReturnsScreenState extends State<ReturnsScreen> {
                               vertical: 4,
                             ),
                             decoration: BoxDecoration(
-                              color: getStatusColor(item.status).withOpacity(0.2),
+                              color: getStatusColor(
+                                item.status,
+                              ).withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
@@ -265,10 +266,6 @@ class _ReturnsScreenState extends State<ReturnsScreen> {
                               onPressed: () => deleteReturn(item),
                             ),
                           ],
-                          TextButton(
-                            onPressed: () {},
-                            child: const Text('عرض التفاصيل'),
-                          ),
                         ],
                       ),
                     ],

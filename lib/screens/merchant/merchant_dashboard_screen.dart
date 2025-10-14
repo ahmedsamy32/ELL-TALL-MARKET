@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 
@@ -8,7 +8,8 @@ class MerchantDashboardScreen extends StatefulWidget {
   const MerchantDashboardScreen({super.key});
 
   @override
-  State<MerchantDashboardScreen> createState() => _MerchantDashboardScreenState();
+  State<MerchantDashboardScreen> createState() =>
+      _MerchantDashboardScreenState();
 }
 
 class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
@@ -16,22 +17,26 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<FirebaseAuthProvider>(context);
-    final user = authProvider.user;
+    final authProvider = Provider.of<SupabaseProvider>(context);
+    final user = authProvider.currentUserProfile;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(user?.name ?? 'لوحة تحكم المتجر'),
+        title: Text(user?.fullName ?? 'لوحة تحكم المتجر'),
         centerTitle: true,
         actions: [
           IconButton(
             icon: const Icon(Icons.notifications),
-            onPressed: () {},
+            onPressed: () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('ميزة الإشعارات قريباً')),
+              );
+            },
           ),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
-              await authProvider.logout();
+              await authProvider.signOut();
               if (mounted) {
                 Navigator.pushReplacementNamed(context, '/login');
               }
@@ -55,37 +60,48 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
         onTap: (index) => setState(() => _selectedIndex = index),
         type: BottomNavigationBarType.fixed,
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'الرئيسية'),
-          BottomNavigationBarItem(icon: Icon(Icons.inventory), label: 'المنتجات'),
-          BottomNavigationBarItem(icon: Icon(Icons.shopping_cart), label: 'الطلبات'),
-          BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: 'التقارير'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'الإعدادات'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.dashboard),
+            label: 'الرئيسية',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.inventory),
+            label: 'المنتجات',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.shopping_cart),
+            label: 'الطلبات',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.bar_chart),
+            label: 'التقارير',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings),
+            label: 'الإعدادات',
+          ),
         ],
       ),
     );
   }
 
   Widget _buildDrawer() {
-    final user = Provider.of<FirebaseAuthProvider>(context).user;
+    final user = Provider.of<SupabaseProvider>(context).currentUserProfile;
 
     return Drawer(
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
           UserAccountsDrawerHeader(
-            accountName: Text(user?.name ?? 'المتجر'),
+            accountName: Text(user?.fullName ?? 'المتجر'),
             accountEmail: Text(user?.email ?? ''),
             currentAccountPicture: CircleAvatar(
-              backgroundImage: user?.storeLogoUrl != null
-                ? NetworkImage(user!.storeLogoUrl!)
-                : null,
-              child: user?.storeLogoUrl == null
-                ? const Icon(Icons.store)
-                : null,
+              backgroundImage: user?.avatarUrl != null
+                  ? NetworkImage(user!.avatarUrl!)
+                  : null,
+              child: user?.avatarUrl == null ? const Icon(Icons.store) : null,
             ),
-            decoration: BoxDecoration(
-              color: Theme.of(context).primaryColor,
-            ),
+            decoration: BoxDecoration(color: Theme.of(context).primaryColor),
           ),
           _buildDrawerItem(0, 'الرئيسية', Icons.dashboard),
           _buildDrawerItem(1, 'المنتجات', Icons.inventory),
@@ -134,22 +150,40 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
             mainAxisSpacing: 16,
             childAspectRatio: 1.5,
             children: [
-              _buildStatCard('المنتجات', '${productProvider.products.length}', Colors.blue),
-              _buildStatCard('الطلبات', '${orderProvider.orders.length}', Colors.green),
-              _buildStatCard('المبيعات', '${_calculateTotalSales()} ر.س', Colors.orange),
+              _buildStatCard(
+                'المنتجات',
+                '${productProvider.products.length}',
+                Colors.blue,
+              ),
+              _buildStatCard(
+                'الطلبات',
+                '${orderProvider.orders.length}',
+                Colors.green,
+              ),
+              _buildStatCard(
+                'المبيعات',
+                '${_calculateTotalSales()} ر.س',
+                Colors.orange,
+              ),
               _buildStatCard('التقييم', '4.5', Colors.purple),
-              _buildStatCard('المحفظة', 'إدارة المعاملات المالية', Colors.green),
+              _buildStatCard(
+                'المحفظة',
+                'إدارة المعاملات المالية',
+                Colors.green,
+              ),
             ],
           ),
           const SizedBox(height: 24),
-          const Text('الطلبات الأخيرة',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+          const Text(
+            'الطلبات الأخيرة',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
           _buildRecentOrders(),
           const SizedBox(height: 24),
-          const Text('إجراءات سريعة',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)
+          const Text(
+            'إجراءات سريعة',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
           _buildQuickActions(),
@@ -188,10 +222,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
           children: [
             Text(
               title,
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 14,
-              ),
+              style: TextStyle(color: Colors.grey[600], fontSize: 14),
             ),
             const SizedBox(height: 8),
             Text(
@@ -231,8 +262,20 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
   }
 
   Widget _buildOrderStatusChip(int index) {
-    final statuses = ['جديد', 'قيد التحضير', 'جاهز للتسليم', 'تم التسليم', 'ملغي'];
-    final colors = [Colors.blue, Colors.orange, Colors.purple, Colors.green, Colors.red];
+    final statuses = [
+      'جديد',
+      'قيد التحضير',
+      'جاهز للتسليم',
+      'تم التسليم',
+      'ملغي',
+    ];
+    final colors = [
+      Colors.blue,
+      Colors.orange,
+      Colors.purple,
+      Colors.green,
+      Colors.red,
+    ];
 
     return Chip(
       label: Text(
@@ -247,12 +290,22 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        _buildActionButton('إضافة منتج', Icons.add_shopping_cart, Colors.green, () {
-          Navigator.pushNamed(context, '/merchant/products/add');
-        }),
-        _buildActionButton('المحفظة', Icons.account_balance_wallet, Colors.blue, () {
-          Navigator.pushNamed(context, '/merchant/wallet');
-        }),
+        _buildActionButton(
+          'إضافة منتج',
+          Icons.add_shopping_cart,
+          Colors.green,
+          () {
+            Navigator.pushNamed(context, '/merchant/products/add');
+          },
+        ),
+        _buildActionButton(
+          'المحفظة',
+          Icons.account_balance_wallet,
+          Colors.blue,
+          () {
+            Navigator.pushNamed(context, '/merchant/wallet');
+          },
+        ),
         _buildActionButton('تحديث المخزون', Icons.update, Colors.orange, () {
           // TODO: Implement update inventory
         }),
@@ -260,7 +313,12 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     );
   }
 
-  Widget _buildActionButton(String label, IconData icon, Color color, VoidCallback onPressed) {
+  Widget _buildActionButton(
+    String label,
+    IconData icon,
+    Color color,
+    VoidCallback onPressed,
+  ) {
     return Column(
       children: [
         ElevatedButton(
@@ -282,7 +340,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     final orderProvider = Provider.of<OrderProvider>(context);
     return orderProvider.orders.fold<double>(
       0.0,
-      (total, order) => total + order.total,
+      (total, order) => total + order.totalAmount,
     );
   }
 }

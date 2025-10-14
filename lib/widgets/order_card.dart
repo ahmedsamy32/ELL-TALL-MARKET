@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:ell_tall_market/models/order_model.dart';
+import 'package:ell_tall_market/models/order_model.dart' hide OrderStatus;
+import 'package:ell_tall_market/models/order_enums.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 
 class OrderCard extends StatelessWidget {
@@ -10,6 +11,11 @@ class OrderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Convert OrderModel.OrderStatus to order_enums.OrderStatus
+    final status = OrderStatusExtension.fromDbValue(order.status.value);
+    final deliveryAddress = order.deliveryAddress;
+    final hasAddress = deliveryAddress.isNotEmpty;
+
     return Card(
       margin: EdgeInsets.only(bottom: 16),
       child: InkWell(
@@ -27,7 +33,7 @@ class OrderCard extends StatelessWidget {
                     'طلب #${order.id.substring(0, 8)}',
                     style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                   ),
-                  _buildStatusBadge(order.status),
+                  _buildStatusBadge(status),
                 ],
               ),
               SizedBox(height: 12),
@@ -39,24 +45,16 @@ class OrderCard extends StatelessWidget {
               ),
               SizedBox(height: 8),
 
-              // المنتجات
-              ...order.items
-                  .take(2)
-                  .map(
-                    (item) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2.0),
-                      child: Text(
-                        '${item.productName} (×${item.quantity})',
-                        style: TextStyle(fontSize: 14),
-                      ),
-                    ),
-                  ),
-
-              if (order.items.length > 2)
+              if (hasAddress)
                 Text(
-                  'و ${order.items.length - 2} منتجات أخرى...',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                  'العنوان: $deliveryAddress',
+                  style: TextStyle(fontSize: 14),
                 ),
+
+              if (order.notes?.isNotEmpty == true) ...[
+                SizedBox(height: 8),
+                Text('ملاحظات: ${order.notes}', style: TextStyle(fontSize: 14)),
+              ],
 
               SizedBox(height: 12),
               Divider(),
@@ -70,7 +68,7 @@ class OrderCard extends StatelessWidget {
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   Text(
-                    '${order.total.toStringAsFixed(2)} ج.م',
+                    order.totalAmountFormatted,
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       color: AppColors.primary,
@@ -86,55 +84,9 @@ class OrderCard extends StatelessWidget {
   }
 
   Widget _buildStatusBadge(OrderStatus status) {
-    Color backgroundColor;
-    String statusText;
-
-    switch (status) {
-      case OrderStatus.pending:
-        backgroundColor = Colors.orange;
-        statusText = 'قيد الانتظار';
-        break;
-      case OrderStatus.confirmed:
-        backgroundColor = Colors.blue;
-        statusText = 'تم التأكيد';
-        break;
-      case OrderStatus.processing:
-        backgroundColor = Colors.blue;
-        statusText = 'جاري التجهيز';
-        break;
-      case OrderStatus.readyForDelivery:
-        backgroundColor = Colors.purple;
-        statusText = 'جاهز للتوصيل';
-        break;
-      case OrderStatus.assignedToCaptain:
-        backgroundColor = Colors.purple;
-        statusText = 'تم التعيين';
-        break;
-      case OrderStatus.pickedUp:
-        backgroundColor = Colors.indigo;
-        statusText = 'تم الاستلام';
-        break;
-      case OrderStatus.onTheWay:
-        backgroundColor = Colors.indigo;
-        statusText = 'في الطريق';
-        break;
-      case OrderStatus.delivered:
-        backgroundColor = Colors.green;
-        statusText = 'تم التوصيل';
-        break;
-      case OrderStatus.cancelled:
-        backgroundColor = Colors.red;
-        statusText = 'ملغي';
-        break;
-      case OrderStatus.refunded:
-        backgroundColor = Colors.grey;
-        statusText = 'تم الاسترداد';
-        break;
-      case OrderStatus.completed:
-        backgroundColor = Colors.green;
-        statusText = 'مكتمل';
-        break;
-    }
+    // Map status to colors
+    final backgroundColor = _getStatusColor(status);
+    final statusText = status.displayName;
 
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -152,6 +104,25 @@ class OrderCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Color _getStatusColor(OrderStatus status) {
+    switch (status) {
+      case OrderStatus.pending:
+        return Colors.orange;
+      case OrderStatus.confirmed:
+        return Colors.blue;
+      case OrderStatus.inPreparation:
+        return Colors.blue;
+      case OrderStatus.ready:
+        return Colors.purple;
+      case OrderStatus.onTheWay:
+        return Colors.indigo;
+      case OrderStatus.delivered:
+        return Colors.green;
+      case OrderStatus.cancelled:
+        return Colors.red;
+    }
   }
 
   String _formatDate(DateTime date) {

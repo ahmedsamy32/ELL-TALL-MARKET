@@ -1,4 +1,5 @@
 import 'package:logger/logger.dart' as logger;
+import 'package:flutter/foundation.dart';
 
 class AppLogger {
   static final AppLogger _instance = AppLogger._internal();
@@ -28,7 +29,11 @@ class AppLogger {
     }
   }
 
-  static void warning(dynamic message, [dynamic error, StackTrace? stackTrace]) {
+  static void warning(
+    dynamic message, [
+    dynamic error,
+    StackTrace? stackTrace,
+  ]) {
     if (AppConfig.enableLogging) {
       _logger.w(message, error: error, stackTrace: stackTrace);
     }
@@ -57,7 +62,12 @@ class AppLogger {
     }
   }
 
-  static void logNetworkRequest(String url, String method, {dynamic body, Map<String, dynamic>? headers}) {
+  static void logNetworkRequest(
+    String url,
+    String method, {
+    dynamic body,
+    Map<String, dynamic>? headers,
+  }) {
     if (AppConfig.enableLogging) {
       _logger.i('Network Request: $method $url');
       if (body != null) {
@@ -76,9 +86,16 @@ class AppLogger {
     }
   }
 
-  static void logDatabaseOperation(String operation, String collection, {String? documentId, dynamic data}) {
+  static void logDatabaseOperation(
+    String operation,
+    String collection, {
+    String? documentId,
+    dynamic data,
+  }) {
     if (AppConfig.enableLogging) {
-      _logger.i('Database $operation: $collection${documentId != null ? '/$documentId' : ''}');
+      _logger.i(
+        'Database $operation: $collection${documentId != null ? '/$documentId' : ''}',
+      );
       if (data != null) {
         _logger.i('Data: $data');
       }
@@ -104,7 +121,11 @@ class AppLogger {
     }
   }
 
-  static void logUserInteraction(String screen, String action, {Map<String, dynamic>? details}) {
+  static void logUserInteraction(
+    String screen,
+    String action, {
+    Map<String, dynamic>? details,
+  }) {
     if (AppConfig.enableLogging) {
       _logger.i('User Interaction: $screen - $action');
       if (details != null) {
@@ -113,9 +134,17 @@ class AppLogger {
     }
   }
 
-  static void logErrorWithContext(String context, dynamic error, [StackTrace? stackTrace]) {
+  static void logErrorWithContext(
+    String context,
+    dynamic error, [
+    StackTrace? stackTrace,
+  ]) {
     if (AppConfig.enableLogging) {
-      _logger.e('Error in $context: $error', error: error, stackTrace: stackTrace);
+      _logger.e(
+        'Error in $context: $error',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -134,6 +163,6 @@ class AppLogger {
 
 // فئة مساعدة للتهيئة
 class AppConfig {
-  static const bool enableLogging = bool.fromEnvironment('dart.vm.product') == false;
+  static const bool enableLogging = kDebugMode;
   static const bool enableAnalytics = true;
 }

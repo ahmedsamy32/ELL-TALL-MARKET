@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
-import 'package:ell_tall_market/models/order_model.dart';
+import 'package:ell_tall_market/models/order_model.dart' hide OrderStatus;
+import 'package:ell_tall_market/models/order_enums.dart';
 import 'package:ell_tall_market/widgets/order_card.dart';
 
 class MerchantOrdersScreen extends StatefulWidget {
@@ -57,7 +58,7 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
             return Padding(
               padding: const EdgeInsets.only(right: 8.0),
               child: FilterChip(
-                label: Text(_getStatusText(status)),
+                label: Text(status.displayName),
                 selected: _selectedFilter == status,
                 onSelected: (selected) {
                   setState(() {
@@ -77,7 +78,10 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
       return Center(child: CircularProgressIndicator());
     }
 
-    final filteredOrders = provider.getOrdersByStatus(_selectedFilter);
+    final filteredOrders = provider.orders.where((order) {
+      final status = OrderStatusExtension.fromDbValue(order.status.value);
+      return status == _selectedFilter;
+    }).toList();
 
     if (filteredOrders.isEmpty) {
       return Center(
@@ -111,6 +115,9 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
     showModalBottomSheet(
       context: context,
       builder: (context) {
+        final orderStatus = OrderStatusExtension.fromDbValue(
+          order.status.value,
+        );
         return Container(
           padding: EdgeInsets.all(16),
           child: Column(
@@ -121,7 +128,7 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               SizedBox(height: 16),
-              if (order.status == OrderStatus.pending) ...[
+              if (orderStatus == OrderStatus.pending) ...[
                 _buildActionButton(
                   'قبول الطلب',
                   Icons.check,
@@ -135,31 +142,38 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
                   () => _updateOrderStatus(order, OrderStatus.cancelled),
                 ),
               ],
-              if (order.status == OrderStatus.confirmed)
+              if (orderStatus == OrderStatus.confirmed)
                 _buildActionButton(
                   'قيد التحضير',
                   Icons.inventory,
                   Colors.blue,
-                  () => _updateOrderStatus(order, OrderStatus.processing),
+                  () => _updateOrderStatus(order, OrderStatus.inPreparation),
                 ),
-              if (order.status == OrderStatus.processing)
+              if (orderStatus == OrderStatus.inPreparation)
                 _buildActionButton(
                   'تم التجهيز',
                   Icons.local_shipping,
                   Colors.purple,
-                  () => _updateOrderStatus(order, OrderStatus.readyForDelivery),
+                  () => _updateOrderStatus(order, OrderStatus.ready),
                 ),
-              if (order.status == OrderStatus.readyForDelivery)
+              if (orderStatus == OrderStatus.ready)
                 _buildActionButton(
-                  'تم التسليم للكابتن',
+                  'إرسال مع الكابتن',
                   Icons.delivery_dining,
                   Colors.orange,
-                  () => _updateOrderStatus(order, OrderStatus.assignedToCaptain),
+                  () => _updateOrderStatus(order, OrderStatus.onTheWay),
+                ),
+              if (orderStatus == OrderStatus.onTheWay)
+                _buildActionButton(
+                  'تم التسليم للعميل',
+                  Icons.check_circle,
+                  Colors.green,
+                  () => _updateOrderStatus(order, OrderStatus.delivered),
                 ),
               SizedBox(height: 8),
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: Text('إل��اء'),
+                child: Text('إلغاء'),
               ),
             ],
           ),
@@ -184,8 +198,10 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
   void _updateOrderStatus(OrderModel order, OrderStatus newStatus) async {
     try {
       Navigator.pop(context);
-      // await Provider.of<OrderProvider>(context, listen: false)
-      //     .updateOrderStatus(order.id, newStatus);
+      await Provider.of<OrderProvider>(
+        context,
+        listen: false,
+      ).updateOrderStatus(order.id, newStatus.dbValue);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('تم تحديث حالة الطلب بنجاح'),
@@ -199,33 +215,6 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
           backgroundColor: Colors.red,
         ),
       );
-    }
-  }
-
-  String _getStatusText(OrderStatus status) {
-    switch (status) {
-      case OrderStatus.pending:
-        return 'قيد الانتظار';
-      case OrderStatus.confirmed:
-        return 'تم التأكيد';
-      case OrderStatus.processing:
-        return 'قيد التحضير';
-      case OrderStatus.readyForDelivery:
-        return 'جاهز للتوصيل';
-      case OrderStatus.assignedToCaptain:
-        return 'تم تعيين كابتن';
-      case OrderStatus.pickedUp:
-        return 'تم الاستلام';
-      case OrderStatus.onTheWay:
-        return 'في الطريق';
-      case OrderStatus.delivered:
-        return 'تم التوصيل';
-      case OrderStatus.cancelled:
-        return 'ملغي';
-      case OrderStatus.refunded:
-        return 'تم الاسترجاع';
-      case OrderStatus.completed:
-        return 'مكتمل';
     }
   }
 }

@@ -1,4 +1,4 @@
-import  'dart:math';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -87,7 +87,9 @@ class Helpers {
 
   // فتح موقع على الخريطة
   static Future<void> openMap(double latitude, double longitude) async {
-    final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=$latitude,$longitude');
+    final uri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=$latitude,$longitude',
+    );
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri);
     } else {
@@ -98,9 +100,9 @@ class Helpers {
   // نسخ النص إلى الحافظة
   static Future<void> copyToClipboard(String text, BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('تم النسخ إلى الحافظة')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('تم النسخ إلى الحافظة')));
   }
 
   // تحويل اللون من hex إلى Color
@@ -118,7 +120,9 @@ class Helpers {
 
   // توليد لون عشوائي
   static Color generateRandomColor() {
-    return Color((Random().nextDouble() * 0xFFFFFF).toInt()).withOpacity(1.0);
+    return Color(
+      (Random().nextDouble() * 0xFFFFFF).toInt(),
+    ).withValues(alpha: 1.0);
   }
 
   // اختصار النص الطويل
@@ -141,13 +145,19 @@ class Helpers {
 
   // التحقق من صحة الصورة
   static bool isValidImageUrl(String url) {
-    final imageRegex = RegExp(r'\.(jpeg|jpg|gif|png|webp|bmp)$', caseSensitive: false);
+    final imageRegex = RegExp(
+      r'\.(jpeg|jpg|gif|png|webp|bmp)$',
+      caseSensitive: false,
+    );
     return imageRegex.hasMatch(url);
   }
 
   // التحقق من صحة الفيديو
   static bool isValidVideoUrl(String url) {
-    final videoRegex = RegExp(r'\.(mp4|mov|avi|wmv|flv|webm)$', caseSensitive: false);
+    final videoRegex = RegExp(
+      r'\.(mp4|mov|avi|wmv|flv|webm)$',
+      caseSensitive: false,
+    );
     return videoRegex.hasMatch(url);
   }
 
@@ -239,7 +249,11 @@ class Helpers {
 
   // تحويل النص المفصول بفواصل إلى قائمة
   static List<String> commaSeparatedToList(String text) {
-    return text.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    return text
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
   }
 
   // إزالة الحروف المكررة
@@ -270,6 +284,8 @@ class Helpers {
 
   // التحقق من أن النص هو رابط URL
   static bool isUrl(String text) {
-    return RegExp(r'^(http|https):\/\/[a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}').hasMatch(text);
+    return RegExp(
+      r'^(http|https):\/\/[a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}',
+    ).hasMatch(text);
   }
 }

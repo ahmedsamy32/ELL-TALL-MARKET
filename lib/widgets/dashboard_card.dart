@@ -30,7 +30,7 @@ class DashboardCard extends StatelessWidget {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(15),
         side: BorderSide(
-          color: Theme.of(context).dividerColor.withOpacity(0.1),
+          color: Theme.of(context).dividerColor.withValues(alpha: 0.1),
           width: 1,
         ),
       ),
@@ -48,7 +48,8 @@ class DashboardCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: (iconColor ?? Theme.of(context).primaryColor).withOpacity(0.1),
+                      color: (iconColor ?? Theme.of(context).primaryColor)
+                          .withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
@@ -72,7 +73,9 @@ class DashboardCard extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
-                  color: textColor ?? Theme.of(context).textTheme.titleLarge?.color,
+                  color:
+                      textColor ??
+                      Theme.of(context).textTheme.titleLarge?.color,
                 ),
               ),
               if (subtitle != null) ...[
@@ -81,8 +84,11 @@ class DashboardCard extends StatelessWidget {
                   subtitle!,
                   style: TextStyle(
                     fontSize: 14,
-                    color: textColor?.withOpacity(0.7) ??
-                           Theme.of(context).textTheme.bodyMedium?.color?.withOpacity(0.7),
+                    color:
+                        textColor?.withValues(alpha: 0.7) ??
+                        Theme.of(
+                          context,
+                        ).textTheme.bodyMedium?.color?.withValues(alpha: 0.7),
                   ),
                 ),
               ],

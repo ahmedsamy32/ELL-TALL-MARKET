@@ -2,14 +2,13 @@ import 'package:ell_tall_market/providers/locale_provider.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:ell_tall_market/config/theme.dart';
 import 'package:ell_tall_market/config/supabase_config.dart';
 import 'package:ell_tall_market/config/env.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart'; // ✅ Firebase Auth Provider
+import 'package:ell_tall_market/providers/supabase_provider.dart'; // ✅ Supabase Provider
 import 'package:ell_tall_market/providers/cart_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/category_provider.dart';
@@ -18,13 +17,14 @@ import 'package:ell_tall_market/providers/settings_provider.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/providers/dynamic_ui_provider.dart';
 import 'package:ell_tall_market/providers/favorites_provider.dart';
-import 'package:ell_tall_market/services/connectivity_service.dart'; // ✅ إضافة خدمة الاتصال
+import 'package:ell_tall_market/providers/store_provider.dart';
 import 'package:ell_tall_market/services/network_manager.dart'; // ✅ إضافة مدير الشبكة
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'generated/l10n.dart';
 import 'firebase_options.dart';
-import 'services/supabase_schema_checker.dart';
+import 'services/auth_deep_link_handler.dart';
+import 'config/production_config.dart';
 
 // ===== NavigationService =====
 class NavigationService {
@@ -72,9 +72,17 @@ Future<void> main() async {
   // Set up Firebase Messaging
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-  // Request notification permissions
+  // Request notification permissions (iOS optimized)
   final messaging = FirebaseMessaging.instance;
-  await messaging.requestPermission(alert: true, badge: true, sound: true);
+  await messaging.requestPermission(
+    alert: true,
+    announcement: true,
+    badge: true,
+    carPlay: false,
+    criticalAlert: false,
+    provisional: false,
+    sound: true,
+  );
 
   // Get FCM token
   final token = await messaging.getToken();
@@ -82,68 +90,55 @@ Future<void> main() async {
     print('FCM Token: $token');
   }
 
-  // Check internet connectivity
-  await ConnectivityService.checkConnection();
-
   // Initialize Network Manager
-  await NetworkManager().initialize();
+  NetworkManager().initialize();
   if (kDebugMode) {
     debugPrint('✅ Network Manager initialized');
   }
 
-  // Initialize Supabase (single place)
-  try {
-    await SupabaseConfig.initialize();
-    debugPrint('✅ Supabase and Firebase initialized successfully');
+  // Initialize Supabase according to official docs
+  await SupabaseConfig.initialize();
 
-    // Test Supabase connection only if initialization was successful
-    await testSupabaseConnection();
-  } catch (e) {
-    debugPrint('❌ Supabase initialization failed: $e');
-    debugPrint('📱 App will continue in offline mode');
-  }
-
-  // Run Supabase schema checks and log results (only in debug mode)
-  if (kDebugMode) {
-    try {
-      final checker = SupabaseSchemaChecker(Supabase.instance.client);
-      final results = await checker.runAllChecks();
-      debugPrint('🔎 Supabase schema check results:');
-      debugPrint('Connectivity: ${results['connectivity']}');
-      debugPrint('Missing tables: ${results['missingTables']}');
-      debugPrint('Missing RPCs: ${results['missingRpcs']}');
-      debugPrint('Storage: ${results['storage']}');
-    } catch (e) {
-      debugPrint('❌ Supabase schema check failed: $e');
-      debugPrint('📱 Schema checks skipped - app will continue normally');
-    }
-  }
+  // Initialize all app services
+  await initializeAppServices();
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => LocaleProvider()),
         ChangeNotifierProvider(
-          create: (_) => FirebaseAuthProvider(),
-        ), // ✅ Firebase Auth Provider
-        ChangeNotifierProxyProvider<FirebaseAuthProvider, CartProvider>(
+          create: (_) => SupabaseProvider(),
+        ), // ✅ Supabase Provider
+        ChangeNotifierProxyProvider<SupabaseProvider, CartProvider>(
           create: (context) => CartProvider(
-            Provider.of<FirebaseAuthProvider>(
+            Provider.of<SupabaseProvider>(
                   context,
                   listen: false,
-                ).user?.id ??
+                ).currentUser?.id ??
                 '',
           ),
           update: (context, auth, previousCart) =>
-              CartProvider(auth.user?.id ?? ''),
+              CartProvider(auth.currentUser?.id ?? ''),
         ),
         ChangeNotifierProvider(create: (_) => ProductProvider()),
         ChangeNotifierProvider(create: (_) => CategoryProvider()),
+        ChangeNotifierProvider(create: (_) => StoreProvider()),
         ChangeNotifierProvider(create: (_) => OrderProvider()),
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
         ChangeNotifierProvider(create: (_) => NotificationProvider()),
         ChangeNotifierProvider(create: (_) => DynamicUIProvider()),
-        ChangeNotifierProvider(create: (_) => FavoritesProvider()),
+        ChangeNotifierProxyProvider<SupabaseProvider, FavoritesProvider>(
+          create: (_) => FavoritesProvider(),
+          update: (context, auth, previousFavorites) {
+            final favoritesProvider = previousFavorites ?? FavoritesProvider();
+            favoritesProvider.setAuthProvider(auth);
+            // تحميل المفضلة عند تسجيل الدخول
+            if (auth.isLoggedIn && auth.currentUser != null) {
+              favoritesProvider.loadUserFavorites(auth.currentUser!.id);
+            }
+            return favoritesProvider;
+          },
+        ),
       ],
       child: const MyApp(),
     ),
@@ -170,56 +165,171 @@ class MyApp extends StatelessWidget {
           ],
           initialRoute: AppRoutes.splash,
           routes: AppRoutes.routes,
+          onGenerateRoute: AppRoutes.generateRoute,
           navigatorKey: NavigationService.navigatorKey,
           debugShowCheckedModeBanner: false,
+          builder: (context, child) {
+            return SupabaseInitializer(child: child ?? Container());
+          },
         );
       },
     );
   }
 }
 
-// Function to test Supabase connection (for development only)
-Future<void> testSupabaseConnection() async {
-  if (!kDebugMode) return;
+/// Initializes SupabaseProvider according to official documentation
+class SupabaseInitializer extends StatefulWidget {
+  final Widget child;
 
-  try {
-    debugPrint('🔍 Testing Supabase connection...');
+  const SupabaseInitializer({super.key, required this.child});
 
-    // Test with timeout and connection check
-    if (await SupabaseConfig.isConnected()) {
-      debugPrint('✅ Supabase connection test successful');
-    } else {
-      debugPrint('⚠️ Supabase connection test failed - attempting retry...');
-      if (await SupabaseConfig.retryConnection()) {
-        debugPrint('✅ Supabase connection restored after retry');
-      } else {
-        debugPrint('❌ Supabase connection could not be established');
+  @override
+  State<SupabaseInitializer> createState() => _SupabaseInitializerState();
+}
+
+class _SupabaseInitializerState extends State<SupabaseInitializer> {
+  bool _isInitializing = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeSupabase();
+  }
+
+  Future<void> _initializeSupabase() async {
+    try {
+      setState(() {
+        _isInitializing = true;
+        _errorMessage = null;
+      });
+
+      // Initialize SupabaseProvider with short timeout
+      final supabaseProvider = Provider.of<SupabaseProvider>(
+        context,
+        listen: false,
+      );
+
+      await supabaseProvider.initialize().timeout(
+        Duration(seconds: 3), // تقليل من 10 ثواني إلى 3
+        onTimeout: () {
+          debugPrint('⚠️ Supabase initialization timeout - continuing anyway');
+        },
+      );
+
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('❌ Supabase initialization error: $e');
+      if (mounted) {
+        setState(() {
+          _isInitializing = false;
+          _errorMessage = e.toString();
+        });
       }
     }
-  } catch (e) {
-    debugPrint('❌ Supabase connection test error: $e');
-    if (e.toString().contains('HandshakeException') ||
-        e.toString().contains('Connection terminated')) {
-      debugPrint('🔧 Connection issue detected - SSL/TLS handshake problem');
-      debugPrint(
-        '💡 This might be due to network restrictions or firewall settings',
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Show loading screen while initializing
+    if (_isInitializing) {
+      return MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('جاري تهيئة التطبيق...'),
+              ],
+            ),
+          ),
+        ),
       );
     }
-    // Log the error but don't stop the app
+
+    // Show error if initialization failed (but continue anyway)
+    if (_errorMessage != null) {
+      // Log error but continue to app
+      debugPrint('⚠️ Supabase init had errors but continuing: $_errorMessage');
+    }
+
+    // Return the normal app - continue even if there were errors
+    return widget.child;
   }
 }
 
-// Function to initialize app services
+// Function to initialize app services (unified)
 Future<void> initializeAppServices() async {
   try {
-    await SupabaseConfig.initialize();
-    debugPrint('✅ Supabase initialized successfully');
-
-    if (kDebugMode) {
-      await testSupabaseConnection();
+    // Initialize Auth Deep Link Handler for authentication links
+    AuthDeepLinkHandler.initialize();
+    if (ProductionConfig.shouldShowDebugLogs) {
+      debugPrint('✅ Auth Deep Link Handler initialized');
     }
+
+    // Initialize Supabase with production-aware timeout
+    await SupabaseConfig.initialize();
+    if (ProductionConfig.shouldShowDebugLogs) {
+      debugPrint('✅ Supabase initialized successfully');
+    }
+
+    // تعطيل اختبار الاتصال المباشر لتجنب التوقف
+    // اختبار سريع في وضع التطوير - معطل مؤقتاً
+    // if (kDebugMode) {
+    //   try {
+    //     await SupabaseConfig.client.from('categories').select('id').limit(1);
+    //     debugPrint('✅ Supabase connection test successful');
+    //   } catch (e) {
+    //     debugPrint('❌ Supabase connection test failed: $e');
+    //   }
+    // }
+
+    // Test Supabase connection and run schema checks - معطل لتحسين الأداء
+    // if (ProductionConfig.shouldRunSchemaChecks) {
+    //   await _testSupabaseConnection();
+    //   await _runSchemaChecks();
+    // }
   } catch (e) {
-    debugPrint('❌ Error initializing services: $e');
-    rethrow;
+    if (ProductionConfig.shouldShowDebugLogs) {
+      debugPrint('❌ Service initialization failed: $e');
+      debugPrint('📱 App will continue in offline mode');
+    }
+
+    // Show user-friendly message in case of connection failure
+    _showOfflineMode(e);
   }
+}
+
+// Show offline mode notification to user
+void _showOfflineMode([dynamic error]) {
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    final context = NavigationService.navigatorKey.currentContext;
+    if (context != null) {
+      String message = '📴 أنت غير متصل بالسيرفر – جاري العمل في وضع أوفلاين';
+
+      // Show error details only in debug mode
+      if (ProductionConfig.shouldShowErrorDetails && error != null) {
+        message += '\nالتفاصيل: ${error.toString().split('\n').first}';
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'إعادة المحاولة',
+            textColor: Colors.white,
+            onPressed: () => initializeAppServices(),
+          ),
+        ),
+      );
+    }
+  });
 }

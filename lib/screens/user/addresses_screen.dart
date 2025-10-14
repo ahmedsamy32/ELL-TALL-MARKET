@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:ell_tall_market/models/user_model.dart'; // Moving this up
+// Moving this up
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/models/address_Model.dart';
+import 'package:ell_tall_market/core/logger.dart';
 
 class AddressesScreen extends StatefulWidget {
   const AddressesScreen({super.key});
@@ -29,306 +32,716 @@ class _AddressesScreenState extends State<AddressesScreen> {
   @override
   void initState() {
     super.initState();
-    final authProvider = Provider.of<FirebaseAuthProvider>(
-      context,
-      listen: false,
-    );
-    _fillManualAddress(authProvider.user?.address ?? '');
+    // Load user's default address if exists
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadDefaultAddress();
+    });
   }
 
-  void _fillManualAddress(String address) {
-    if (address.isEmpty) return;
-    // تقسيم العنوان إلى أجزاء مفصولة بفاصلة
-    final parts = address.split(',').map((e) => e.trim()).toList();
-    if (parts.isNotEmpty) {
-      governorateController.text = parts.isNotEmpty ? parts[0] : '';
-    }
-    if (parts.length > 1) {
-      cityController.text = parts[1];
-    }
-    if (parts.length > 2) {
-      districtController.text = parts[2];
-    }
-    if (parts.length > 3) {
-      streetController.text = parts[3];
+  Future<void> _loadDefaultAddress() async {
+    if (!mounted) return;
+
+    try {
+      final authProvider = Provider.of<SupabaseProvider>(
+        context,
+        listen: false,
+      );
+      final userId = authProvider.currentUser?.id;
+
+      if (userId == null) {
+        AppLogger.warning('User not logged in - skipping address load');
+        return;
+      }
+
+      // Load the default address from addresses table
+      final response = await Supabase.instance.client
+          .from('addresses')
+          .select()
+          .eq('client_id', userId)
+          .eq('is_default', true)
+          .maybeSingle();
+
+      if (!mounted) return;
+
+      if (response != null) {
+        try {
+          final address = AddressModel.fromMap(response);
+
+          // Fill the form with existing address data
+          cityController.text = address.city;
+          streetController.text = address.street;
+          districtController.text = address.area ?? '';
+          buildingController.text = address.buildingNumber ?? '';
+          floorController.text = address.floorNumber ?? '';
+          apartmentController.text = address.apartmentNumber ?? '';
+          landmarkController.text = address.notes ?? '';
+
+          if (address.latitude != null && address.longitude != null) {
+            selectedPosition = LatLng(address.latitude!, address.longitude!);
+          }
+
+          if (mounted) {
+            setState(() {});
+          }
+        } catch (e) {
+          AppLogger.error('Error parsing address data', e);
+        }
+      }
+    } catch (e) {
+      AppLogger.error('Error loading address', e);
+      // Don't crash the app - just log the error
     }
   }
 
   Future<void> detectCurrentLocation() async {
+    if (!mounted) return;
+
     setState(() => isLoadingLocation = true);
     try {
+      // Check location permission first
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          throw Exception('تم رفض إذن الموقع');
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        throw Exception('إذن الموقع مرفوض بشكل دائم. يرجى تفعيله من الإعدادات');
+      }
+
       Position position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
           timeLimit: Duration(seconds: 10),
         ),
       );
+
+      if (!mounted) return;
+
       selectedPosition = LatLng(position.latitude, position.longitude);
       mapController?.animateCamera(
         CameraUpdate.newLatLngZoom(selectedPosition!, 16),
       );
 
       // تحويل الإحداثيات إلى عنوان فعلي
-      List<Placemark> placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
+      try {
+        List<Placemark> placemarks = await placemarkFromCoordinates(
+          position.latitude,
+          position.longitude,
+        );
 
-      if (placemarks.isNotEmpty) {
-        final place = placemarks.first;
-        governorateController.text = place.administrativeArea ?? '';
-        cityController.text = place.locality ?? '';
-        districtController.text = place.subLocality ?? '';
-        streetController.text = place.street ?? '';
+        if (placemarks.isNotEmpty && mounted) {
+          final place = placemarks.first;
+          governorateController.text = place.administrativeArea ?? '';
+          cityController.text = place.locality ?? '';
+          districtController.text = place.subLocality ?? '';
+          streetController.text = place.street ?? '';
+        }
+      } catch (e) {
+        AppLogger.warning('Failed to get address from coordinates: $e');
       }
 
-      setState(() {});
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('فشل في تحديد الموقع: $e')));
+      AppLogger.error('Location detection error', e);
+      if (mounted) {
+        String errorMessage = 'فشل في تحديد الموقع';
+
+        // Parse error message
+        String errorStr = e.toString();
+        if (errorStr.contains('denied')) {
+          errorMessage = 'تم رفض إذن الموقع. يرجى تفعيله من الإعدادات';
+        } else if (errorStr.contains('timeout')) {
+          errorMessage = 'انتهت مهلة تحديد الموقع. تأكد من تفعيل GPS';
+        } else if (errorStr.contains('network')) {
+          errorMessage = 'تحقق من اتصال الإنترنت';
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMessage), duration: Duration(seconds: 3)),
+        );
+      }
     } finally {
-      setState(() => isLoadingLocation = false);
+      if (mounted) {
+        setState(() => isLoadingLocation = false);
+      }
     }
   }
 
   void saveAddress() async {
-    final authProvider = Provider.of<FirebaseAuthProvider>(
-      context,
-      listen: false,
-    );
-    if (authProvider.user == null) return;
+    final authProvider = Provider.of<SupabaseProvider>(context, listen: false);
+    final userId = authProvider.currentUser?.id;
 
-    final addressParts = [
-      governorateController.text,
-      cityController.text,
-      districtController.text,
-      streetController.text,
-      if (buildingController.text.isNotEmpty) 'مبنى ${buildingController.text}',
-      if (floorController.text.isNotEmpty) 'الطابق ${floorController.text}',
-      if (apartmentController.text.isNotEmpty)
-        'شقة ${apartmentController.text}',
-      if (landmarkController.text.isNotEmpty)
-        'بالقرب من ${landmarkController.text}',
-    ].where((e) => e.isNotEmpty).join(', ');
-
-    if (addressParts.isEmpty) {
+    if (userId == null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('يرجى تحديد العنوان أولاً')));
+      ).showSnackBar(const SnackBar(content: Text('يرجى تسجيل الدخول أولاً')));
       return;
     }
 
-    // Creating a new user model with updated address
-    final updatedUser = UserModel(
-      id: authProvider.user!.id,
-      name: authProvider.user!.name,
-      email: authProvider.user!.email,
-      phone: authProvider.user!.phone,
-      type: authProvider.user!.type,
-      createdAt: authProvider.user!.createdAt,
-      isActive: authProvider.user!.isActive,
-      address: addressParts, // Set the new address
-      // Copy other fields from existing user
-      avatarUrl: authProvider.user!.avatarUrl,
-      updatedAt: DateTime.now(),
-      lastLogin: authProvider.user!.lastLogin,
-      loginCount: authProvider.user!.loginCount,
-      storeId: authProvider.user!.storeId,
-      preferredPaymentMethod: authProvider.user!.preferredPaymentMethod,
-      storeName: authProvider.user!.storeName,
-      storeDescription: authProvider.user!.storeDescription,
-      storeLogoUrl: authProvider.user!.storeLogoUrl,
-      storeCoverUrl: authProvider.user!.storeCoverUrl,
-      storeAddress: authProvider.user!.storeAddress,
-      storeLocation: authProvider.user!.storeLocation,
-      storeCategory: authProvider.user!.storeCategory,
-      storeRating: authProvider.user!.storeRating,
-      storeRatingCount: authProvider.user!.storeRatingCount,
-    );
-
-    // Updating the user data in the database and then inside AuthProvider
-    final updatedResult = await authProvider.updateUser(updatedUser);
-
-    if (updatedResult != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('تم حفظ العنوان بنجاح')));
-    } else {
+    // Validate required fields
+    if (cityController.text.isEmpty || streetController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('حدث خطأ أثناء حفظ العنوان')),
+        const SnackBar(content: Text('يرجى إدخال المدينة والشارع على الأقل')),
       );
+      return;
+    }
+
+    try {
+      // Prepare address data for database
+      final addressData = {
+        'client_id': userId,
+        'label': 'المنزل', // Default label
+        'city': cityController.text.trim(),
+        'street': streetController.text.trim(),
+        'area': districtController.text.trim().isNotEmpty
+            ? districtController.text.trim()
+            : null,
+        'building_number': buildingController.text.trim().isNotEmpty
+            ? buildingController.text.trim()
+            : null,
+        'floor_number': floorController.text.trim().isNotEmpty
+            ? floorController.text.trim()
+            : null,
+        'apartment_number': apartmentController.text.trim().isNotEmpty
+            ? apartmentController.text.trim()
+            : null,
+        'latitude': selectedPosition?.latitude,
+        'longitude': selectedPosition?.longitude,
+        'notes': landmarkController.text.trim().isNotEmpty
+            ? landmarkController.text.trim()
+            : null,
+        'is_default': true, // Set as default address
+      };
+
+      // Check if user already has a default address
+      final existingAddress = await Supabase.instance.client
+          .from('addresses')
+          .select()
+          .eq('client_id', userId)
+          .eq('is_default', true)
+          .maybeSingle();
+
+      if (existingAddress != null) {
+        // Update existing default address
+        await Supabase.instance.client
+            .from('addresses')
+            .update(addressData)
+            .eq('id', existingAddress['id']);
+      } else {
+        // Insert new address
+        await Supabase.instance.client.from('addresses').insert(addressData);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('تم حفظ العنوان بنجاح')));
+      }
+    } catch (e) {
+      AppLogger.error('Error saving address', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('حدث خطأ أثناء حفظ العنوان: ${e.toString()}')),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
     return Scaffold(
-      appBar: AppBar(title: Text('العنوان')),
-      body: Column(
-        children: [
-          Expanded(
-            flex: 3,
-            child: GoogleMap(
-              initialCameraPosition: CameraPosition(
-                target: selectedPosition ?? LatLng(30.0444, 31.2357),
-                zoom: 14,
-              ),
-              onMapCreated: (controller) => mapController = controller,
-              markers: selectedPosition != null
-                  ? {
-                      Marker(
-                        markerId: MarkerId('selected'),
-                        position: selectedPosition!,
-                      ),
-                    }
-                  : {},
-              onTap: (position) {
-                setState(() {
-                  selectedPosition = position;
-                });
-              },
-              myLocationEnabled: true,
-              myLocationButtonEnabled: true,
-            ),
-          ),
-          Expanded(
-            flex: 2,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: isLoadingLocation ? null : detectCurrentLocation,
-                    icon: Icon(Icons.my_location),
-                    label: Text(
-                      isLoadingLocation
-                          ? 'جاري التحميل...'
-                          : 'استخدام موقعي الحالي',
+      backgroundColor: colorScheme.surface,
+      appBar: AppBar(
+        title: const Text('📍 عنوان التوصيل'),
+        centerTitle: true,
+        elevation: 0,
+        backgroundColor: colorScheme.primaryContainer,
+        foregroundColor: colorScheme.onPrimaryContainer,
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Map Section with rounded corners
+            Expanded(
+              flex: 2,
+              child: Container(
+                margin: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.1),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'أو أدخل العنوان يدويًا',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // المحافظة والمدينة
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: governorateController,
-                          decoration: InputDecoration(
-                            labelText: 'المحافظة',
-                            hintText: 'مثل: القاهرة، الجيزة',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  children: [
+                    GoogleMap(
+                      initialCameraPosition: CameraPosition(
+                        target:
+                            selectedPosition ?? const LatLng(30.0444, 31.2357),
+                        zoom: 14,
                       ),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: cityController,
-                          decoration: InputDecoration(
-                            labelText: 'المدينة/المنطقة',
-                            hintText: 'مثل: مدينة نصر، المعادي',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // الحي والشارع
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: districtController,
-                          decoration: InputDecoration(
-                            labelText: 'الحي',
-                            hintText: 'مثل: الحي الأول، النزهة',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: TextField(
-                          controller: streetController,
-                          decoration: InputDecoration(
-                            labelText: 'الشارع',
-                            hintText: 'مثل: شارع التحرير',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // تفاصيل المبنى
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: buildingController,
-                          decoration: InputDecoration(
-                            labelText: 'رقم المبنى',
-                            hintText: 'مثل: 15، 23أ',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: floorController,
-                          decoration: InputDecoration(
-                            labelText: 'الطابق',
-                            hintText: 'مثل: 3، الأرضي',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                      SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: apartmentController,
-                          decoration: InputDecoration(
-                            labelText: 'الشقة',
-                            hintText: 'مثل: 5، 12أ',
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // العلامة المميزة
-                  TextField(
-                    controller: landmarkController,
-                    decoration: InputDecoration(
-                      labelText: 'علامة مميزة (اختياري)',
-                      hintText: 'مثل: بجانب مسجد النور، أمام بنك مصر',
-                      border: OutlineInputBorder(),
+                      onMapCreated: (controller) => mapController = controller,
+                      markers: selectedPosition != null
+                          ? {
+                              Marker(
+                                markerId: const MarkerId('selected'),
+                                position: selectedPosition!,
+                                icon: BitmapDescriptor.defaultMarkerWithHue(
+                                  BitmapDescriptor.hueBlue,
+                                ),
+                              ),
+                            }
+                          : {},
+                      onTap: (position) {
+                        setState(() {
+                          selectedPosition = position;
+                        });
+                      },
+                      myLocationEnabled: true,
+                      myLocationButtonEnabled: false,
+                      zoomControlsEnabled: false,
+                      mapToolbarEnabled: false,
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton(
-                    onPressed: saveAddress,
-                    child: Text('حفظ العنوان'),
-                  ),
-                ],
+                    // Hint overlay
+                    if (selectedPosition == null)
+                      Positioned(
+                        top: 16,
+                        left: 16,
+                        right: 16,
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surface.withValues(alpha: 0.95),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.1),
+                                blurRadius: 8,
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.touch_app_rounded,
+                                color: colorScheme.primary,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'اضغط على الخريطة لتحديد موقعك',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+
+            // Form Section
+            Expanded(
+              flex: 3,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, -2),
+                    ),
+                  ],
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Location button
+                      FilledButton.tonalIcon(
+                        onPressed: isLoadingLocation
+                            ? null
+                            : detectCurrentLocation,
+                        icon: isLoadingLocation
+                            ? SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: colorScheme.onSecondaryContainer,
+                                ),
+                              )
+                            : const Icon(Icons.my_location_rounded),
+                        label: Text(
+                          isLoadingLocation
+                              ? 'جاري تحديد الموقع...'
+                              : '📍 استخدام موقعي الحالي',
+                          style: const TextStyle(fontSize: 15),
+                        ),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // Divider with text
+                      Row(
+                        children: [
+                          Expanded(child: Divider(color: colorScheme.outline)),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: Text(
+                              'أو أدخل العنوان يدويًا',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Expanded(child: Divider(color: colorScheme.outline)),
+                        ],
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // المحافظة والمدينة
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: governorateController,
+                              style: const TextStyle(fontSize: 15),
+                              decoration: InputDecoration(
+                                labelText: 'المحافظة',
+                                labelStyle: const TextStyle(fontSize: 14),
+                                hintText: 'القاهرة',
+                                hintStyle: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey[400],
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.location_city_rounded,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: colorScheme.surfaceVariant
+                                    .withOpacity(0.3),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: cityController,
+                              style: const TextStyle(fontSize: 15),
+                              decoration: InputDecoration(
+                                labelText: 'المدينة *',
+                                labelStyle: const TextStyle(fontSize: 14),
+                                hintText: 'مدينة نصر',
+                                hintStyle: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey[400],
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.location_on_rounded,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: colorScheme.surfaceVariant
+                                    .withValues(alpha: 0.3),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // الحي والشارع
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: districtController,
+                              style: const TextStyle(fontSize: 15),
+                              decoration: InputDecoration(
+                                labelText: 'الحي',
+                                labelStyle: const TextStyle(fontSize: 14),
+                                hintText: 'الحي الأول',
+                                hintStyle: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey[400],
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.apartment_rounded,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: colorScheme.surfaceVariant
+                                    .withValues(alpha: 0.3),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: streetController,
+                              style: const TextStyle(fontSize: 15),
+                              decoration: InputDecoration(
+                                labelText: 'الشارع *',
+                                labelStyle: const TextStyle(fontSize: 14),
+                                hintText: 'التحرير',
+                                hintStyle: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey[400],
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.signpost_rounded,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: colorScheme.surfaceVariant
+                                    .withValues(alpha: 0.3),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // رقم المبنى والطابق
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: buildingController,
+                              keyboardType: TextInputType.text,
+                              style: const TextStyle(fontSize: 15),
+                              decoration: InputDecoration(
+                                labelText: 'رقم المبنى',
+                                labelStyle: const TextStyle(fontSize: 14),
+                                hintText: '15',
+                                hintStyle: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey[400],
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.home_work_rounded,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: colorScheme.surfaceVariant
+                                    .withValues(alpha: 0.3),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: floorController,
+                              keyboardType: TextInputType.text,
+                              style: const TextStyle(fontSize: 15),
+                              decoration: InputDecoration(
+                                labelText: 'الطابق',
+                                labelStyle: const TextStyle(fontSize: 14),
+                                hintText: '3',
+                                hintStyle: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey[400],
+                                ),
+                                prefixIcon: const Icon(
+                                  Icons.stairs_rounded,
+                                  size: 20,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: colorScheme.surfaceVariant
+                                    .withValues(alpha: 0.3),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+
+                      // رقم الشقة
+                      TextField(
+                        controller: apartmentController,
+                        keyboardType: TextInputType.text,
+                        style: const TextStyle(fontSize: 15),
+                        decoration: InputDecoration(
+                          labelText: 'رقم الشقة',
+                          labelStyle: const TextStyle(fontSize: 14),
+                          hintText: '5',
+                          hintStyle: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[400],
+                          ),
+                          prefixIcon: const Icon(
+                            Icons.door_front_door_rounded,
+                            size: 20,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          filled: true,
+                          fillColor: colorScheme.surfaceVariant.withValues(
+                            alpha: 0.3,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 18,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // العلامة المميزة
+                      TextField(
+                        controller: landmarkController,
+                        maxLines: 2,
+                        style: const TextStyle(fontSize: 15),
+                        decoration: InputDecoration(
+                          labelText: 'علامة مميزة (اختياري)',
+                          labelStyle: const TextStyle(fontSize: 14),
+                          hintText: 'بجانب مسجد النور، أمام بنك مصر',
+                          hintStyle: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[400],
+                          ),
+                          prefixIcon: const Icon(
+                            Icons.near_me_rounded,
+                            size: 20,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          filled: true,
+                          fillColor: colorScheme.surfaceVariant.withValues(
+                            alpha: 0.3,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 18,
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      // Save button
+                      FilledButton.icon(
+                        onPressed: saveAddress,
+                        icon: const Icon(Icons.save_rounded),
+                        label: const Text(
+                          'حفظ العنوان',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(height: 8),
+
+                      // Required fields note
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.info_outline_rounded,
+                            size: 14,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            '* حقول مطلوبة',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

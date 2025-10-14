@@ -56,13 +56,13 @@ class _DynamicUIBuilderScreenState extends State<DynamicUIBuilderScreen> {
             ),
             _buildDropdownSetting(
               'نوع الخط',
-              provider.getConfigValue('fontFamily', defaultValue: 'Cairo'),
+              provider.getConfigValue('fontFamily') ?? 'Cairo',
               ['Cairo', 'Tajawal', 'Roboto', 'OpenSans'],
               (value) => provider.updateConfigValue('fontFamily', value),
             ),
             _buildDropdownSetting(
               'حجم الخط',
-              provider.getConfigValue('fontSize', defaultValue: 'medium'),
+              provider.getConfigValue('fontSize') ?? 'medium',
               ['small', 'medium', 'large', 'xlarge'],
               (value) => provider.updateConfigValue('fontSize', value),
             ),
@@ -70,47 +70,41 @@ class _DynamicUIBuilderScreenState extends State<DynamicUIBuilderScreen> {
             _buildSectionHeader('تخطيط الصفحة الرئيسية'),
             _buildDropdownSetting(
               'نمط العرض',
-              provider.getConfigValue('layout', defaultValue: 'grid'),
+              provider.getConfigValue('layout') ?? 'grid',
               ['grid', 'list', 'staggered'],
               (value) => provider.updateConfigValue('layout', value),
             ),
             _buildSwitchSetting(
               'إظهار البنرات',
-              provider.getConfigValue('showBanners', defaultValue: true),
+              provider.getConfigValue('showBanners') ?? true,
               (value) => provider.updateConfigValue('showBanners', value),
             ),
             _buildSwitchSetting(
               'إظهار الفئات',
-              provider.getConfigValue('showCategories', defaultValue: true),
+              provider.getConfigValue('showCategories') ?? true,
               (value) => provider.updateConfigValue('showCategories', value),
             ),
             _buildSwitchSetting(
               'إظهار المنتجات المميزة',
-              provider.getConfigValue(
-                'showFeaturedProducts',
-                defaultValue: true,
-              ),
+              provider.getConfigValue('showFeaturedProducts') ?? true,
               (value) =>
                   provider.updateConfigValue('showFeaturedProducts', value),
             ),
             _buildSwitchSetting(
               'إظهار التقييمات',
-              provider.getConfigValue('showReviews', defaultValue: true),
+              provider.getConfigValue('showReviews') ?? true,
               (value) => provider.updateConfigValue('showReviews', value),
             ),
 
             _buildSectionHeader('الحركات والانتقالات'),
             _buildSwitchSetting(
               'تفعيل الحركات',
-              provider.getConfigValue('animationEnabled', defaultValue: true),
+              provider.getConfigValue('animationEnabled') ?? true,
               (value) => provider.updateConfigValue('animationEnabled', value),
             ),
             _buildDropdownSetting(
               'سرعة الانتقال',
-              provider.getConfigValue(
-                'transitionSpeed',
-                defaultValue: 'normal',
-              ),
+              provider.getConfigValue('transitionSpeed') ?? 'normal',
               ['slow', 'normal', 'fast'],
               (value) => provider.updateConfigValue('transitionSpeed', value),
             ),
@@ -118,17 +112,17 @@ class _DynamicUIBuilderScreenState extends State<DynamicUIBuilderScreen> {
             _buildSectionHeader('إعدادات متقدمة'),
             _buildTextFieldSetting(
               'عدد العناصر في الصفحة',
-              provider.getConfigValue('itemsPerPage', defaultValue: '20'),
+              provider.getConfigValue('itemsPerPage') ?? '20',
               (value) => provider.updateConfigValue('itemsPerPage', value),
             ),
             _buildSwitchSetting(
               'التخزين المؤقت',
-              provider.getConfigValue('cacheEnabled', defaultValue: true),
+              provider.getConfigValue('cacheEnabled') ?? true,
               (value) => provider.updateConfigValue('cacheEnabled', value),
             ),
             _buildSwitchSetting(
               'وضع غير متصل',
-              provider.getConfigValue('offlineMode', defaultValue: false),
+              provider.getConfigValue('offlineMode') ?? false,
               (value) => provider.updateConfigValue('offlineMode', value),
             ),
 
@@ -157,9 +151,9 @@ class _DynamicUIBuilderScreenState extends State<DynamicUIBuilderScreen> {
   }
 
   Widget _buildColorPicker(String title, String key, String defaultValue) {
-    final currentColor = Provider.of<DynamicUIProvider>(
-      context,
-    ).getConfigValue(key, defaultValue: defaultValue);
+    final currentColor =
+        Provider.of<DynamicUIProvider>(context).getConfigValue(key) ??
+        defaultValue;
 
     return ListTile(
       title: Text(title),
@@ -328,12 +322,8 @@ class _DynamicUIBuilderScreenState extends State<DynamicUIBuilderScreen> {
 
   void _saveUIConfig() async {
     try {
-      await Provider.of<DynamicUIProvider>(
-        context,
-        listen: false,
-      ).updateUIConfig(
-        Provider.of<DynamicUIProvider>(context, listen: false).uiConfig,
-      );
+      final provider = Provider.of<DynamicUIProvider>(context, listen: false);
+      provider.updateUIConfig(provider.uiConfig);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('تم حفظ إعدادات الواجهة بنجاح'),
@@ -365,10 +355,11 @@ class _DynamicUIBuilderScreenState extends State<DynamicUIBuilderScreen> {
             onPressed: () async {
               Navigator.pop(context);
               try {
-                await Provider.of<DynamicUIProvider>(
+                final provider = Provider.of<DynamicUIProvider>(
                   context,
                   listen: false,
-                ).resetToDefault();
+                );
+                provider.resetToDefault();
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('تم استعادة الإعدادات الافتراضية'),

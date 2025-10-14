@@ -2,8 +2,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
-import 'package:ell_tall_market/models/user_model.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/models/Profile_model.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 import 'package:ell_tall_market/widgets/custom_search_bar.dart';
 
@@ -22,13 +22,13 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<FirebaseAuthProvider>(context, listen: false).fetchAllUsers();
+      Provider.of<SupabaseProvider>(context, listen: false).fetchAllUsers();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<FirebaseAuthProvider>(context);
+    final authProvider = Provider.of<SupabaseProvider>(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -57,7 +57,7 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
     );
   }
 
-  Widget _buildCaptainsList(FirebaseAuthProvider provider) {
+  Widget _buildCaptainsList(SupabaseProvider provider) {
     if (provider.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -65,10 +65,10 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
     final captains = provider.allUsers
         .where(
           (u) =>
-              u.type == UserType.captain &&
-              (u.name.contains(_searchController.text) ||
-                  u.email.contains(_searchController.text) ||
-                  u.phone.contains(_searchController.text)),
+              u.role == UserRole.captain &&
+              ((u.fullName?.contains(_searchController.text) ?? false) ||
+                  (u.email?.contains(_searchController.text) ?? false) ||
+                  (u.phone?.contains(_searchController.text) ?? false)),
         )
         .toList();
 
@@ -95,7 +95,7 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
     );
   }
 
-  Widget _buildCaptainCard(UserModel captain) {
+  Widget _buildCaptainCard(ProfileModel captain) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
@@ -105,12 +105,12 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
               : const AssetImage('assets/images/default_avatar.png')
                     as ImageProvider,
         ),
-        title: Text(captain.name),
+        title: Text(captain.fullName ?? 'بدون اسم'),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(captain.email),
-            Text(captain.phone),
+            Text(captain.email ?? 'بدون بريد'),
+            Text(captain.phone ?? 'بدون هاتف'),
             Chip(
               label: const Text(
                 "كابتن",
@@ -234,7 +234,7 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
     );
   }
 
-  void _editCaptain(UserModel captain) {
+  void _editCaptain(ProfileModel captain) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -244,7 +244,7 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               TextFormField(
-                initialValue: captain.name,
+                initialValue: captain.fullName,
                 decoration: const InputDecoration(labelText: 'الاسم'),
               ),
               TextFormField(
@@ -277,13 +277,13 @@ class _ManageCaptainsScreenState extends State<ManageCaptainsScreen> {
     );
   }
 
-  void _toggleCaptainStatus(UserModel captain) {
+  void _toggleCaptainStatus(ProfileModel captain) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(captain.isActive ? 'تعطيل الكابتن' : 'تفعيل الكابتن'),
         content: Text(
-          'هل أنت متأكد من ${captain.isActive ? 'تعطيل' : 'تفعيل'} الكابتن ${captain.name}؟',
+          'هل أنت متأكد من ${captain.isActive ? 'تعطيل' : 'تفعيل'} الكابتن ${captain.fullName ?? 'بدون اسم'}؟',
         ),
         actions: [
           TextButton(

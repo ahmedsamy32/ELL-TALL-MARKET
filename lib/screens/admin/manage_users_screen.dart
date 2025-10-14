@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
-import 'package:ell_tall_market/models/user_model.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/models/Profile_model.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 import 'package:ell_tall_market/widgets/custom_search_bar.dart';
 
@@ -20,13 +20,13 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<FirebaseAuthProvider>(context, listen: false).fetchAllUsers();
+      Provider.of<SupabaseProvider>(context, listen: false).fetchAllUsers();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<FirebaseAuthProvider>(context);
+    final authProvider = Provider.of<SupabaseProvider>(context);
 
     return Scaffold(
       appBar: AppBar(
@@ -45,7 +45,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   }
 
   /// 🔹 بطاقات إحصائيات سريعة
-  Widget _buildStatsRow(FirebaseAuthProvider provider) {
+  Widget _buildStatsRow(SupabaseProvider provider) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
@@ -54,17 +54,17 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
           _buildStatCard("إجمالي", provider.allUsers.length, Colors.blue),
           _buildStatCard(
             "عملاء",
-            provider.allUsers.where((u) => u.type == UserType.customer).length,
+            provider.allUsers.where((u) => u.role == UserRole.client).length,
             Colors.green,
           ),
           _buildStatCard(
             "تجار",
-            provider.allUsers.where((u) => u.type == UserType.merchant).length,
+            provider.allUsers.where((u) => u.role == UserRole.merchant).length,
             Colors.orange,
           ),
           _buildStatCard(
             "كباتن",
-            provider.allUsers.where((u) => u.type == UserType.captain).length,
+            provider.allUsers.where((u) => u.role == UserRole.captain).length,
             Colors.purple,
           ),
         ],
@@ -98,7 +98,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   }
 
   /// 🔹 البحث والفلاتر
-  Widget _buildSearchAndFilterBar(FirebaseAuthProvider provider) {
+  Widget _buildSearchAndFilterBar(SupabaseProvider provider) {
     return AdminSearchBar(
       controller: _searchController,
       hintText: 'ابحث باسم المستخدم أو البريد',
@@ -125,7 +125,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   }
 
   /// 🔹 قائمة المستخدمين
-  Widget _buildUsersList(FirebaseAuthProvider provider) {
+  Widget _buildUsersList(SupabaseProvider provider) {
     if (provider.isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -151,9 +151,10 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
       itemBuilder: (context, index) {
         final user = filteredUsers[index];
         if (_searchController.text.isNotEmpty &&
-            !user.name.toLowerCase().contains(
-              _searchController.text.toLowerCase(),
-            )) {
+            !(user.fullName?.toLowerCase().contains(
+                  _searchController.text.toLowerCase(),
+                ) ??
+                false)) {
           return const SizedBox.shrink();
         }
         return _buildUserCard(user);
@@ -161,17 +162,17 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
     );
   }
 
-  List<UserModel> _filterUsers(List<UserModel> users) {
+  List<ProfileModel> _filterUsers(List<ProfileModel> users) {
     if (_selectedFilter == 'all') return users;
 
     return users.where((user) {
       switch (_selectedFilter) {
         case 'customer':
-          return user.type == UserType.customer;
+          return user.role == UserRole.client;
         case 'merchant':
-          return user.type == UserType.merchant;
+          return user.role == UserRole.merchant;
         case 'captain':
-          return user.type == UserType.captain;
+          return user.role == UserRole.captain;
         default:
           return true;
       }
@@ -179,7 +180,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   }
 
   /// 🔹 بطاقة المستخدم
-  Widget _buildUserCard(UserModel user) {
+  Widget _buildUserCard(ProfileModel user) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
@@ -191,20 +192,26 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                     as ImageProvider,
         ),
         title: Text(
-          user.name,
+          user.fullName ?? 'بدون اسم',
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(user.email, style: const TextStyle(color: Colors.black54)),
-            Text(user.phone, style: const TextStyle(color: Colors.black45)),
+            Text(
+              user.email ?? 'بدون بريد',
+              style: const TextStyle(color: Colors.black54),
+            ),
+            Text(
+              user.phone ?? 'بدون هاتف',
+              style: const TextStyle(color: Colors.black45),
+            ),
             Chip(
               label: Text(
-                _getUserTypeText(user.type),
+                _getUserTypeText(user.role),
                 style: const TextStyle(fontSize: 12, color: Colors.white),
               ),
-              backgroundColor: _getUserTypeColor(user.type),
+              backgroundColor: _getUserTypeColor(user.role),
             ),
           ],
         ),
@@ -228,34 +235,34 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
     );
   }
 
-  String _getUserTypeText(UserType type) {
-    switch (type) {
-      case UserType.customer:
+  String _getUserTypeText(UserRole role) {
+    switch (role) {
+      case UserRole.client:
         return 'عميل';
-      case UserType.merchant:
+      case UserRole.merchant:
         return 'تاجر';
-      case UserType.captain:
+      case UserRole.captain:
         return 'كابتن';
-      case UserType.admin:
+      case UserRole.admin:
         return 'مدير';
     }
   }
 
-  Color _getUserTypeColor(UserType type) {
-    switch (type) {
-      case UserType.customer:
+  Color _getUserTypeColor(UserRole role) {
+    switch (role) {
+      case UserRole.client:
         return AppColors.primary;
-      case UserType.merchant:
+      case UserRole.merchant:
         return AppColors.success;
-      case UserType.captain:
+      case UserRole.captain:
         return AppColors.warning;
-      case UserType.admin:
+      case UserRole.admin:
         return AppColors.danger;
     }
   }
 
   /// 🔹 تعديل المستخدم
-  void _editUser(UserModel user) {
+  void _editUser(ProfileModel user) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -265,7 +272,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
           child: Column(
             children: [
               TextFormField(
-                initialValue: user.name,
+                initialValue: user.fullName,
                 decoration: const InputDecoration(labelText: 'الاسم'),
               ),
               TextFormField(
@@ -305,14 +312,14 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   }
 
   /// 🔹 تفعيل / تعطيل المستخدم
-  void _toggleUserStatus(UserModel user) {
+  void _toggleUserStatus(ProfileModel user) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         title: Text(user.isActive ? 'تعطيل المستخدم' : 'تفعيل المستخدم'),
         content: Text(
-          'هل أنت متأكد من ${user.isActive ? 'تعطيل' : 'تفعيل'} المستخدم ${user.name}؟',
+          'هل أنت متأكد من ${user.isActive ? 'تعطيل' : 'تفعيل'} المستخدم ${user.fullName ?? 'بدون اسم'}؟',
         ),
         actions: [
           TextButton(

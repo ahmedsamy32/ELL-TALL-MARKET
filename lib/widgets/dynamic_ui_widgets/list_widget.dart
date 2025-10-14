@@ -63,11 +63,17 @@ class ProductListTile extends StatelessWidget {
                   height: 80,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
-                    image: DecorationImage(
-                      image: NetworkImage(product.imageUrl),
-                      fit: BoxFit.cover,
-                    ),
+                    image: product.imageUrl != null
+                        ? DecorationImage(
+                            image: NetworkImage(product.imageUrl!),
+                            fit: BoxFit.cover,
+                          )
+                        : null,
+                    color: product.imageUrl == null ? Colors.grey[200] : null,
                   ),
+                  child: product.imageUrl == null
+                      ? Icon(Icons.image, color: Colors.grey)
+                      : null,
                 ),
               if (showImage) SizedBox(width: 16),
 
@@ -86,7 +92,7 @@ class ProductListTile extends StatelessWidget {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      product.description,
+                      product.description ?? 'لا يوجد وصف',
                       style: TextStyle(color: Colors.grey, fontSize: 12),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -95,24 +101,12 @@ class ProductListTile extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          '${product.finalPrice} ج.م',
+                          '${product.price.toStringAsFixed(2)} ر.س',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: Theme.of(context).primaryColor,
                           ),
                         ),
-                        if (product.hasDiscount)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 8.0),
-                            child: Text(
-                              '${product.price} ج.م',
-                              style: TextStyle(
-                                decoration: TextDecoration.lineThrough,
-                                color: Colors.grey,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
                       ],
                     ),
                   ],

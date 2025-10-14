@@ -38,7 +38,8 @@ class _SearchScreenState extends State<SearchScreen> {
       appBar: SearchAppBar(
         controller: _searchController,
         onChanged: (query) {
-          productProvider.filterProducts(query);
+          // البحث في المنتجات
+          productProvider.searchProducts(query);
         },
         onCancel: () {
           Navigator.pop(context);
@@ -115,10 +116,11 @@ class _SearchScreenState extends State<SearchScreen> {
                 title: Text(recentSearches[index]),
                 onTap: () {
                   _searchController.text = recentSearches[index];
+                  // تشغيل البحث
                   Provider.of<ProductProvider>(
                     context,
                     listen: false,
-                  ).filterProducts(recentSearches[index]);
+                  ).searchProducts(recentSearches[index]);
                 },
               );
             },

@@ -90,14 +90,14 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen> {
       elevation: 2,
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: AppColors.primary.withOpacity(0.1),
+          backgroundColor: AppColors.primary.withValues(alpha: 0.1),
           child: const Icon(Icons.category, color: Colors.black87),
         ),
         title: Text(
           category.name,
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
-        subtitle: Text("عدد المنتجات: ${category.productCount}"),
+        subtitle: Text("الوصف: ${category.description ?? 'لا يوجد وصف'}"),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [

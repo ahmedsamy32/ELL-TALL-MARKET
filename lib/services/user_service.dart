@@ -1,242 +1,137 @@
+/// User Service - خدمات إدارة المستخدمين للأدمن
+/// يعمل مع user_model.dart و user_provider.dart
+/// Following Supabase Dart SDK: https://supabase.com/docs/reference/dart/introduction
+library;
+
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:ell_tall_market/models/user_model.dart';
-import 'dart:io';
+import '../models/user_model.dart';
+import '../models/Profile_model.dart'; // Import UserRole
+import '../core/logger.dart';
 
+/// UserService - خدمات CRUD للمستخدمين
 class UserService {
-  final _supabase = Supabase.instance.client;
+  static final SupabaseClient _client = Supabase.instance.client;
 
-  // الحصول على مستخدم بواسطة ID
-  Future<UserModel?> getUserById(String userId) async {
+  /// Get all users with filters
+  /// https://supabase.com/docs/reference/dart/select
+  static Future<List<UserModel>> getAllUsers({
+    UserRole? role,
+    int? limit,
+    int? offset,
+  }) async {
     try {
-      final response = await _supabase
-          .from('users')
+      dynamic query = _client.from(UserModel.tableName).select();
+
+      if (role != null) {
+        query = query.eq('role', role.value);
+      }
+
+      query = query.order('created_at', ascending: false);
+
+      if (limit != null) {
+        query = query.limit(limit);
+      }
+
+      if (offset != null) {
+        query = query.range(offset, offset + (limit ?? 20) - 1);
+      }
+
+      final response = await query;
+      final list = response as List;
+
+      return list.map((item) => UserModel.fromMap(item)).toList();
+    } catch (e) {
+      AppLogger.error('خطأ في جلب المستخدمين', e);
+      rethrow;
+    }
+  }
+
+  /// Get user by ID
+  /// https://supabase.com/docs/reference/dart/select
+  static Future<UserModel?> getUserById(String userId) async {
+    try {
+      final response = await _client
+          .from(UserModel.tableName)
           .select()
           .eq('id', userId)
-          .single();
-
-      return UserModel.fromMap(response, id: response['id']);
-    } catch (e) {
-      throw Exception('فشل تحميل المستخدم: ${e.toString()}');
-    }
-  }
-
-  // الحصول على جميع المستخدمين
-  Future<List<UserModel>> getAllUsers() async {
-    try {
-      final response = await _supabase
-          .from('users')
-          .select()
-          .order('created_at', ascending: false);
-
-      return (response as List)
-          .map((data) => UserModel.fromMap(data, id: data['id']))
-          .toList();
-    } catch (e) {
-      throw Exception('فشل تحميل المستخدمين: ${e.toString()}');
-    }
-  }
-
-  // إنشاء مستخدم جديد
-  Future<UserModel?> createUser(UserModel user, String password) async {
-    try {
-      // إنشاء المستخدم في Supabase Auth
-      final authResponse = await _supabase.auth.signUp(
-        email: user.email,
-        password: password,
-        data: {
-          'full_name': user.name,
-          'phone': user.phone,
-        },
-      );
-
-      if (authResponse.user != null) {
-        // حفظ بيانات المس��خدم في جدول المستخدمين
-        final userData = user.toMap()
-          ..addAll({
-            'id': authResponse.user!.id,
-            'created_at': DateTime.now().toIso8601String(),
-          });
-
-        await _supabase
-            .from('users')
-            .insert(userData);
-
-        return user.copyWith(id: authResponse.user!.id);
-      }
-      return null;
-    } catch (e) {
-      throw Exception('فشل إنشاء المستخدم: ${e.toString()}');
-    }
-  }
-
-  // تحديث مستخدم
-  Future<bool> updateUser(UserModel user) async {
-    try {
-      await _supabase
-          .from('users')
-          .update(user.toMap())
-          .eq('id', user.id);
-      return true;
-    } catch (e) {
-      throw Exception('فشل تحديث المستخدم: ${e.toString()}');
-    }
-  }
-
-  // حذف مستخدم
-  Future<bool> deleteUser(String userId) async {
-    try {
-      await _supabase
-          .from('users')
-          .delete()
-          .eq('id', userId);
-
-      // حذف المستخدم من Supabase Auth
-      await _supabase.auth.admin.deleteUser(userId);
-      return true;
-    } catch (e) {
-      throw Exception('فشل حذف المستخدم: ${e.toString()}');
-    }
-  }
-
-  // إعادة تعيين كلمة المرور
-  Future<bool> resetPassword(String email) async {
-    try {
-      await _supabase.auth.resetPasswordForEmail(email);
-      return true;
-    } catch (e) {
-      throw Exception('فشل إرسال رابط إعادة تعيين كلمة المرور: ${e.toString()}');
-    }
-  }
-
-  // تحديث كلمة المرور
-  Future<bool> updatePassword(String newPassword) async {
-    try {
-      await _supabase.auth.updateUser(
-        UserAttributes(
-          password: newPassword,
-        ),
-      );
-      return true;
-    } catch (e) {
-      throw Exception('فشل تحديث كلمة المرور: ${e.toString()}');
-    }
-  }
-
-  // الاستماع للتحدي��ات في الوقت الحقيقي
-  RealtimeChannel getUsersStream() {
-    return _supabase
-        .channel('public:users')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'users',
-          callback: (payload) {
-            // يمكن معالجة التحديثات هنا
-          },
-        )
-        .subscribe();
-  }
-
-  // البحث عن المستخد��ين
-  Future<List<UserModel>> searchUsers(String query) async {
-    try {
-      final response = await _supabase
-          .from('users')
-          .select()
-          .ilike('name', '%$query%')
-          .order('created_at', ascending: false);
-
-      return (response as List)
-          .map((data) => UserModel.fromMap(data, id: data['id']))
-          .toList();
-    } catch (e) {
-      throw Exception('فشل البحث عن المستخدمين: ${e.toString()}');
-    }
-  }
-
-  // رفع صورة المستخدم
-  Future<String?> uploadProfileImage(String userId, File imageFile) async {
-    try {
-      final fileExt = imageFile.path.split('.').last;
-      final fileName = 'profile_$userId.$fileExt';
-      final storageResponse = await _supabase
-          .storage
-          .from('avatars')
-          .upload(fileName, imageFile);
-
-      if (storageResponse.isNotEmpty) {
-        final imageUrl = _supabase
-            .storage
-            .from('avatars')
-            .getPublicUrl(fileName);
-
-        // تحديث رابط الصورة في جدول المستخدمين
-        await _supabase
-            .from('users')
-            .update({'avatar_url': imageUrl})
-            .eq('id', userId);
-
-        return imageUrl;
-      }
-      return null;
-    } catch (e) {
-      throw Exception('فشل رفع صورة المستخدم: ${e.toString()}');
-    }
-  }
-
-  // التحقق من وجود مستخدم مسؤول
-  Future<bool> checkAdminExists() async {
-    try {
-      final response = await _supabase
-          .from('profiles')
-          .select()
-          .eq('type', 'admin')
-          .eq('email', 'admin@elltall.com')
           .maybeSingle();
 
-      return response != null;
+      if (response == null) return null;
+      return UserModel.fromMap(response);
     } catch (e) {
-      throw Exception('فشل التحقق من وجود مستخدم مسؤول: ${e.toString()}');
+      AppLogger.error('خطأ في جلب المستخدم', e);
+      return null;
     }
   }
 
-  // إنشاء مستخدم مسؤول
-  Future<bool> createAdminUser() async {
+  /// Update user
+  /// https://supabase.com/docs/reference/dart/update
+  static Future<bool> updateUser(UserModel user) async {
     try {
-      final exists = await checkAdminExists();
-      if (exists) {
-        return true;
-      }
+      await _client
+          .from(UserModel.tableName)
+          .update(user.toUpdateMap())
+          .eq('id', user.id);
 
-      // إنشاء المستخدم في Supabase Auth
-      final authResponse = await _supabase.auth.admin.createUser(
-        AdminUserAttributes(
-          email: 'admin@elltall.com',
-          password: 'Admin@123',
-          emailConfirm: true,
-          userMetadata: {
-            'full_name': 'Admin',
-            'type': 'admin',
-          },
-        ),
-      );
-
-      if (authResponse.user != null) {
-        // حفظ بيانات المستخدم في جدول profiles
-        await _supabase.from('profiles').insert({
-          'id': authResponse.user!.id,
-          'name': 'Admin',
-          'email': 'admin@elltall.com',
-          'type': 'admin',
-          'is_active': true,
-          'created_at': DateTime.now().toIso8601String(),
-        });
-
-        return true;
-      }
-      return false;
+      AppLogger.info('تم تحديث المستخدم: ${user.id}');
+      return true;
     } catch (e) {
-      throw Exception('فشل إنشاء مستخدم مسؤول: ${e.toString()}');
+      AppLogger.error('خطأ في تحديث المستخدم', e);
+      return false;
+    }
+  }
+
+  /// Delete user
+  /// https://supabase.com/docs/reference/dart/delete
+  static Future<bool> deleteUser(String userId) async {
+    try {
+      await _client.from(UserModel.tableName).delete().eq('id', userId);
+
+      AppLogger.info('تم حذف المستخدم: $userId');
+      return true;
+    } catch (e) {
+      AppLogger.error('خطأ في حذف المستخدم', e);
+      return false;
+    }
+  }
+
+  /// Search users
+  /// https://supabase.com/docs/reference/dart/select
+  static Future<List<UserModel>> searchUsers(String query) async {
+    try {
+      final response = await _client
+          .from(UserModel.tableName)
+          .select()
+          .or('full_name.ilike.%$query%,email.ilike.%$query%');
+
+      final list = response as List;
+      return list.map((item) => UserModel.fromMap(item)).toList();
+    } catch (e) {
+      AppLogger.error('خطأ في البحث عن المستخدمين', e);
+      return [];
+    }
+  }
+
+  /// Get users count by role
+  /// https://supabase.com/docs/reference/dart/select
+  static Future<Map<String, int>> getUsersCountByRole() async {
+    try {
+      final counts = <String, int>{};
+
+      for (final role in UserRole.values) {
+        final response = await _client
+            .from(UserModel.tableName)
+            .select('id')
+            .eq('role', role.value);
+
+        final list = response as List;
+        counts[role.value] = list.length;
+      }
+
+      return counts;
+    } catch (e) {
+      AppLogger.error('خطأ في جلب إحصائيات المستخدمين', e);
+      return {};
     }
   }
 }

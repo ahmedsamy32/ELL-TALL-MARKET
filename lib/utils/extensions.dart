@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
 // ==== Screens Import ====
+// Common
+import '../screens/common/splash_screen.dart';
+import '../screens/common/onboarding_screen.dart';
 // Auth
 import '../screens/auth/login_screen.dart';
 import '../screens/auth/register_screen.dart';
-import '../screens/auth/forgot_password_screen.dart';
 // User
 import '../screens/user/home_screen.dart';
 import '../screens/user/category_screen.dart';
@@ -34,9 +36,7 @@ import '../screens/admin/manage_coupons_screen.dart';
 import '../screens/admin/app_settings_screen.dart';
 import '../screens/admin/dynamic_ui_builder_screen.dart';
 import '../screens/admin/analytics_screen.dart';
-// Common
-import '../screens/common/splash_screen.dart';
-import '../screens/common/onboarding_screen.dart';
+// Common (additional)
 import '../screens/common/search_screen.dart';
 import '../screens/common/notifications_screen.dart';
 
@@ -91,7 +91,7 @@ class AppRoutes {
     final args = settings.arguments;
 
     switch (settings.name) {
-    // ==== Auth ====
+      // ==== Auth ====
       case splash:
         return MaterialPageRoute(builder: (_) => SplashScreen());
       case onboarding:
@@ -100,10 +100,8 @@ class AppRoutes {
         return MaterialPageRoute(builder: (_) => LoginScreen());
       case register:
         return MaterialPageRoute(builder: (_) => RegisterScreen());
-      case forgotPassword:
-        return MaterialPageRoute(builder: (_) => ForgotPasswordScreen());
 
-    // ==== User ====
+      // ==== User ====
       case home:
         return MaterialPageRoute(builder: (_) => HomeScreen());
       case category:
@@ -111,15 +109,18 @@ class AppRoutes {
           final String categoryId = args['id'] ?? '';
           final String categoryName = args['name'] ?? '';
           return MaterialPageRoute(
-              builder: (_) => CategoryScreen(
-                categoryId: categoryId,
-                categoryName: categoryName,
-              ));
+            builder: (_) => CategoryScreen(
+              categoryId: categoryId,
+              categoryName: categoryName,
+            ),
+          );
         }
         return _errorRoute('Category not provided');
       case productDetail:
         if (args is ProductModel) {
-          return MaterialPageRoute(builder: (_) => ProductDetailScreen(product: args));
+          return MaterialPageRoute(
+            builder: (_) => ProductDetailScreen(product: args),
+          );
         }
         return _errorRoute('Product not provided');
       case cart:
@@ -132,18 +133,18 @@ class AppRoutes {
         if (args is Map<String, dynamic>) {
           final String orderId = args['orderId'] ?? '';
           return MaterialPageRoute(
-            builder: (_) => OrderTrackingScreen(
-              orderId: orderId,
-            ),
+            builder: (_) => OrderTrackingScreen(orderId: orderId),
           );
         }
         return _errorRoute('Order not provided');
       case profile:
         return MaterialPageRoute(builder: (_) => ProfileScreen());
 
-    // ==== Merchant ====
+      // ==== Merchant ====
       case merchantDashboard:
-        return MaterialPageRoute(builder: (_) => const MerchantDashboardScreen());
+        return MaterialPageRoute(
+          builder: (_) => const MerchantDashboardScreen(),
+        );
       case merchantProducts:
         if (args is Map<String, dynamic>) {
           final String merchantId = args['merchantId'] ?? '';
@@ -170,13 +171,17 @@ class AppRoutes {
         return _errorRoute('Merchant data not provided');
       case addEditProduct:
         if (args is ProductModel?) {
-          return MaterialPageRoute(builder: (_) => AddEditProductScreen(product: args));
+          return MaterialPageRoute(
+            builder: (_) => AddEditProductScreen(product: args),
+          );
         }
-        return MaterialPageRoute(builder: (_) => AddEditProductScreen(product: null));
+        return MaterialPageRoute(
+          builder: (_) => AddEditProductScreen(product: null),
+        );
       case merchantWallet:
         return MaterialPageRoute(builder: (_) => MerchantWalletScreen());
 
-    // ==== Captain ====
+      // ==== Captain ====
       case captainDashboard:
         return MaterialPageRoute(builder: (_) => CaptainDashboard());
       case captainOrders:
@@ -195,14 +200,12 @@ class AppRoutes {
         if (args is Map<String, dynamic>) {
           final String orderId = args['orderId'] ?? '';
           return MaterialPageRoute(
-            builder: (_) => OrderDeliveryScreen(
-              orderId: orderId,
-            ),
+            builder: (_) => OrderDeliveryScreen(orderId: orderId),
           );
         }
         return _errorRoute('Order not provided');
 
-    // ==== Admin ====
+      // ==== Admin ====
       case adminDashboard:
         return MaterialPageRoute(builder: (_) => AdminDashboard());
       case manageUsers:
@@ -222,7 +225,7 @@ class AppRoutes {
       case analytics:
         return MaterialPageRoute(builder: (_) => AnalyticsScreen());
 
-    // ==== Common ====
+      // ==== Common ====
       case search:
         return MaterialPageRoute(builder: (_) => SearchScreen());
       case notifications:
@@ -244,15 +247,24 @@ class AppRoutes {
   }
 
   // ==== Navigation Helpers ====
-  static Future<T?> push<T>(BuildContext context, String routeName,
-      {Object? arguments}) {
+  static Future<T?> push<T>(
+    BuildContext context,
+    String routeName, {
+    Object? arguments,
+  }) {
     return Navigator.pushNamed(context, routeName, arguments: arguments);
   }
 
-  static Future<T?> pushReplacement<T>(BuildContext context, String routeName,
-      {Object? arguments}) {
-    return Navigator.pushReplacementNamed(context, routeName,
-        arguments: arguments);
+  static Future<T?> pushReplacement<T>(
+    BuildContext context,
+    String routeName, {
+    Object? arguments,
+  }) {
+    return Navigator.pushReplacementNamed(
+      context,
+      routeName,
+      arguments: arguments,
+    );
   }
 
   static void pop(BuildContext context, [Object? result]) {
@@ -260,10 +272,15 @@ class AppRoutes {
   }
 
   static Future<T?> pushAndRemoveUntil<T>(
-      BuildContext context, String routeName,
-      {Object? arguments}) {
+    BuildContext context,
+    String routeName, {
+    Object? arguments,
+  }) {
     return Navigator.pushNamedAndRemoveUntil(
-        context, routeName, (route) => false,
-        arguments: arguments);
+      context,
+      routeName,
+      (route) => false,
+      arguments: arguments,
+    );
   }
 }

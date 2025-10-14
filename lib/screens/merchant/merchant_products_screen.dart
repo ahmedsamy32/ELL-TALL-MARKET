@@ -15,7 +15,7 @@ class MerchantProductsScreen extends StatefulWidget {
   });
 
   @override
-  _MerchantProductsScreenState createState() => _MerchantProductsScreenState();
+  State<MerchantProductsScreen> createState() => _MerchantProductsScreenState();
 }
 
 class _MerchantProductsScreenState extends State<MerchantProductsScreen> {
@@ -42,7 +42,6 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen> {
           IconButton(
             icon: Icon(Icons.add),
             onPressed: () {
-              // الانتقال إلى صفحة إضافة منتج جديد
               // Navigator.pushNamed(context, AppRoutes.addEditProduct);
             },
           ),
@@ -99,19 +98,35 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen> {
       child: ListTile(
         leading: CircleAvatar(
           radius: 30,
-          backgroundImage: NetworkImage(product.imageUrl),
+          backgroundImage: product.hasImage
+              ? NetworkImage(product.imageUrl!)
+              : null,
+          child: product.hasImage
+              ? null
+              : Icon(Icons.image_not_supported, color: Colors.grey[600]),
         ),
         title: Text(product.name),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${product.price} ر.س'),
-            Text('المخزون: ${product.stockQuantity}'),
+            SizedBox(height: 4),
+            Text(product.priceFormatted),
+            SizedBox(height: 4),
+            Text('المخزون: ${product.stock}'),
+            SizedBox(height: 4),
             Row(
               children: [
-                Icon(Icons.star, size: 16, color: Colors.amber),
+                Icon(
+                  product.isAvailable ? Icons.inventory : Icons.report,
+                  size: 16,
+                  color: product.isAvailable ? Colors.green : Colors.red,
+                ),
+                SizedBox(width: 4),
                 Text(
-                  '${product.rating.toStringAsFixed(1)} (${product.ratingCount})',
+                  product.stockStatus,
+                  style: TextStyle(
+                    color: product.isAvailable ? Colors.green : Colors.red,
+                  ),
                 ),
               ],
             ),

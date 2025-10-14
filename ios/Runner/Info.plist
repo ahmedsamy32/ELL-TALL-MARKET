@@ -45,5 +45,53 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<!-- Google Sign-In reversed client ID -->
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.googleusercontent.apps.941471556278-o98nlsdrf39jl1f1v2k8g4f4f64mbqnf</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.941471556278-o98nlsdrf39jl1f1v2k8g4f4f64mbqnf</string>
+			</array>
+		</dict>
+		<!-- Facebook Login Scheme -->
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>fb-login</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>fb1282194797038347</string>
+			</array>
+		</dict>
+		<!-- Custom App Scheme -->
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>ell_tall_market.custom_scheme</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>elltallmarket</string>
+			</array>
+		</dict>
+		<!-- Supabase Auth Callback -->
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>ell_tall_market.supabase_auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>elltallmarket</string>
+			</array>
+			<key>CFBundleURLPath</key>
+			<string>auth/callback</string>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>fbapi</string>
+		<string>fb-messenger-share-api</string>
+		<string>fbauth2</string>
+		<string>fbshareextension</string>
+	</array>
 </dict>
 </plist>

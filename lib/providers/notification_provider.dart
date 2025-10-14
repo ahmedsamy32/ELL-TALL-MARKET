@@ -34,34 +34,35 @@ class NotificationProvider with ChangeNotifier {
     final userId = _supabase.auth.currentUser?.id;
     if (userId == null) return;
 
-    _notificationsChannel = _supabase
-        .channel('notifications_$userId')
-        .onPostgresChanges(
-          event: PostgresChangeEvent.all,
-          schema: 'public',
-          table: 'notifications',
-          filter: PostgresChangeFilter(
-            type: PostgresChangeFilterType.eq,
-            column: 'user_id',
-            value: userId,
-          ),
-          callback: (payload) {
-            switch (payload.eventType) {
-              case PostgresChangeEvent.insert:
-                _handleNewNotification(payload.newRecord);
-                break;
-              case PostgresChangeEvent.update:
-                _handleNotificationUpdate(payload.newRecord);
-                break;
-              case PostgresChangeEvent.delete:
-                _handleNotificationDelete(payload.oldRecord['id']);
-                break;
-              default:
-                break;
-            }
-          },
-        )
-        ..subscribe();
+    _notificationsChannel =
+        _supabase
+            .channel('notifications_$userId')
+            .onPostgresChanges(
+              event: PostgresChangeEvent.all,
+              schema: 'public',
+              table: 'notifications',
+              filter: PostgresChangeFilter(
+                type: PostgresChangeFilterType.eq,
+                column: 'user_id',
+                value: userId,
+              ),
+              callback: (payload) {
+                switch (payload.eventType) {
+                  case PostgresChangeEvent.insert:
+                    _handleNewNotification(payload.newRecord);
+                    break;
+                  case PostgresChangeEvent.update:
+                    _handleNotificationUpdate(payload.newRecord);
+                    break;
+                  case PostgresChangeEvent.delete:
+                    _handleNotificationDelete(payload.oldRecord['id']);
+                    break;
+                  default:
+                    break;
+                }
+              },
+            )
+          ..subscribe();
   }
 
   @override
@@ -81,7 +82,7 @@ class NotificationProvider with ChangeNotifier {
           .order('created_at', ascending: false);
 
       _notifications = (response as List)
-          .map((data) => NotificationModel.fromJson(data))
+          .map((data) => NotificationModel.fromMap(data))
           .toList();
 
       _updateUnreadCount();
@@ -121,7 +122,9 @@ class NotificationProvider with ChangeNotifier {
           .eq('user_id', userId)
           .eq('is_read', false);
 
-      _notifications = _notifications.map((n) => n.copyWith(isRead: true)).toList();
+      _notifications = _notifications
+          .map((n) => n.copyWith(isRead: true))
+          .toList();
       _updateUnreadCount();
     } catch (e) {
       if (kDebugMode) print('❌ Error marking all notifications as read: $e');
@@ -132,10 +135,7 @@ class NotificationProvider with ChangeNotifier {
   // ===== حذف إشعار =====
   Future<void> deleteNotification(String notificationId) async {
     try {
-      await _supabase
-          .from('notifications')
-          .delete()
-          .eq('id', notificationId);
+      await _supabase.from('notifications').delete().eq('id', notificationId);
 
       _notifications.removeWhere((n) => n.id == notificationId);
       _updateUnreadCount();
@@ -151,10 +151,7 @@ class NotificationProvider with ChangeNotifier {
     if (userId == null) return;
 
     try {
-      await _supabase
-          .from('notifications')
-          .delete()
-          .eq('user_id', userId);
+      await _supabase.from('notifications').delete().eq('user_id', userId);
 
       _notifications.clear();
       _updateUnreadCount();
@@ -166,7 +163,7 @@ class NotificationProvider with ChangeNotifier {
 
   // ===== معالجة الإشعارات في الوقت الحقيقي =====
   void _handleNewNotification(Map<String, dynamic> data) {
-    final notification = NotificationModel.fromJson(data);
+    final notification = NotificationModel.fromMap(data);
     _notifications.insert(0, notification);
     if (!notification.isRead) {
       _unreadCount++;
@@ -175,8 +172,10 @@ class NotificationProvider with ChangeNotifier {
   }
 
   void _handleNotificationUpdate(Map<String, dynamic> data) {
-    final updatedNotification = NotificationModel.fromJson(data);
-    final index = _notifications.indexWhere((n) => n.id == updatedNotification.id);
+    final updatedNotification = NotificationModel.fromMap(data);
+    final index = _notifications.indexWhere(
+      (n) => n.id == updatedNotification.id,
+    );
     if (index != -1) {
       _notifications[index] = updatedNotification;
       _updateUnreadCount();

@@ -1,9 +1,15 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+
 import 'package:ell_tall_market/models/product_model.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
+import 'package:ell_tall_market/providers/merchant_provider.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/services/product_service.dart';
+import 'package:ell_tall_market/services/store_service.dart';
 import 'package:ell_tall_market/widgets/custom_button.dart';
 import 'package:ell_tall_market/widgets/custom_textfield.dart';
 
@@ -21,13 +27,16 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _priceController = TextEditingController();
-  final _oldPriceController = TextEditingController();
   final _stockController = TextEditingController();
   final _categoryController = TextEditingController();
-
-  List<String> _productImages = [];
   final ImagePicker _picker = ImagePicker();
-  final ProductService _productService = ProductService();
+
+  bool _isContextLoading = true;
+  bool _isSaving = false;
+  String? _contextError;
+  String? _storeId;
+  String? _imageUrl;
+  XFile? _pickedImage;
 
   @override
   void initState() {
@@ -35,16 +44,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     if (widget.product != null) {
       _initializeForm(widget.product!);
     }
-  }
-
-  void _initializeForm(ProductModel product) {
-    _nameController.text = product.name;
-    _descriptionController.text = product.description;
-    _priceController.text = product.price.toString();
-    _oldPriceController.text = product.salePrice?.toString() ?? '';
-    _stockController.text = product.stockQuantity.toString();
-    _categoryController.text = product.categoryId;
-    _productImages = [product.imageUrl, ...product.images];
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadContext());
   }
 
   @override
@@ -52,10 +52,82 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     _nameController.dispose();
     _descriptionController.dispose();
     _priceController.dispose();
-    _oldPriceController.dispose();
     _stockController.dispose();
     _categoryController.dispose();
     super.dispose();
+  }
+
+  void _initializeForm(ProductModel product) {
+    _nameController.text = product.name;
+    _descriptionController.text = product.description ?? '';
+    _priceController.text = product.price.toStringAsFixed(2);
+    _stockController.text = product.stockQuantity.toString();
+    _categoryController.text = product.categoryId ?? '';
+    _imageUrl = product.imageUrl;
+  }
+
+  Future<void> _loadContext() async {
+    if (widget.product != null) {
+      setState(() {
+        _storeId = widget.product!.storeId;
+        _isContextLoading = false;
+      });
+      return;
+    }
+
+    try {
+      final authProvider = Provider.of<SupabaseProvider>(
+        context,
+        listen: false,
+      );
+      final profile = authProvider.currentUserProfile;
+
+      if (profile == null) {
+        setState(() {
+          _contextError = 'لم يتم العثور على بيانات المستخدم.';
+          _isContextLoading = false;
+        });
+        return;
+      }
+
+      final merchantProvider = Provider.of<MerchantProvider>(
+        context,
+        listen: false,
+      );
+      await merchantProvider.fetchMerchantByProfileId(profile.id);
+      final merchant = merchantProvider.selectedMerchant;
+
+      if (merchant == null) {
+        setState(() {
+          _contextError = 'لم يتم العثور على بيانات التاجر.';
+          _isContextLoading = false;
+        });
+        return;
+      }
+
+      final stores = await StoreService.getMerchantStores(merchant.id);
+
+      if (!mounted) return;
+
+      if (stores.isEmpty) {
+        setState(() {
+          _contextError = 'لم يتم العثور على متجر مرتبط بالتاجر.';
+          _isContextLoading = false;
+        });
+        return;
+      }
+
+      setState(() {
+        _storeId = stores.first.id;
+        _isContextLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _contextError = 'فشل تحميل بيانات المتجر. يرجى المحاولة لاحقاً.';
+        _isContextLoading = false;
+      });
+    }
   }
 
   @override
@@ -67,79 +139,131 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         ),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        padding: EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
-              // تحميل الصور
-              _buildImageUploadSection(),
-              SizedBox(height: 24),
-
-              // معلومات المنتج
-              _buildProductForm(),
-              SizedBox(height: 24),
-
-              // أزرار الحفظ
-              _buildActionButtons(),
-            ],
-          ),
-        ),
-      ),
+      body: _isContextLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _contextError != null
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _contextError!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                    const SizedBox(height: 16),
+                    CustomButton(
+                      text: 'إعادة المحاولة',
+                      onPressed: () {
+                        setState(() {
+                          _isContextLoading = true;
+                          _contextError = null;
+                        });
+                        _loadContext();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    _buildImageUploadSection(),
+                    const SizedBox(height: 24),
+                    _buildProductForm(),
+                    const SizedBox(height: 24),
+                    _buildActionButtons(),
+                  ],
+                ),
+              ),
+            ),
     );
   }
 
   Widget _buildImageUploadSection() {
+    final hasImage =
+        _pickedImage != null || (_imageUrl != null && _imageUrl!.isNotEmpty);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'صور المنتج',
+        const Text(
+          'صورة المنتج',
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
-        SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
+        const SizedBox(height: 8),
+        Row(
           children: [
-            ..._productImages.map((imageUrl) => _buildImagePreview(imageUrl)),
-            _buildAddImageButton(),
+            hasImage ? _buildImagePreview() : _buildEmptyImagePlaceholder(),
+            const SizedBox(width: 16),
+            OutlinedButton.icon(
+              onPressed: _pickImage,
+              icon: const Icon(Icons.photo_library),
+              label: Text(hasImage ? 'تغيير الصورة' : 'إضافة صورة'),
+            ),
           ],
         ),
       ],
     );
   }
 
-  Widget _buildImagePreview(String imageUrl) {
+  Widget _buildEmptyImagePlaceholder() {
+    return Container(
+      width: 120,
+      height: 120,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade400),
+      ),
+      alignment: Alignment.center,
+      child: Icon(Icons.image_outlined, color: Colors.grey.shade400, size: 40),
+    );
+  }
+
+  Widget _buildImagePreview() {
+    Widget imageWidget;
+
+    if (_pickedImage != null) {
+      imageWidget = Image.file(File(_pickedImage!.path), fit: BoxFit.cover);
+    } else {
+      imageWidget = Image.network(
+        _imageUrl!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(
+          color: Colors.grey.shade200,
+          alignment: Alignment.center,
+          child: const Icon(Icons.broken_image, color: Colors.redAccent),
+        ),
+      );
+    }
+
     return Stack(
       children: [
-        Container(
-          width: 80,
-          height: 80,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            image: DecorationImage(
-              image: NetworkImage(imageUrl),
-              fit: BoxFit.cover,
-            ),
-          ),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(width: 120, height: 120, child: imageWidget),
         ),
         Positioned(
-          top: 0,
-          right: 0,
+          top: 6,
+          right: 6,
           child: GestureDetector(
-            onTap: () {
-              setState(() {
-                _productImages.remove(imageUrl);
-              });
-            },
+            onTap: () => setState(() {
+              _pickedImage = null;
+              _imageUrl = null;
+            }),
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.red,
-                shape: BoxShape.circle,
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(Icons.close, size: 16, color: Colors.white),
+              padding: const EdgeInsets.all(4),
+              child: const Icon(Icons.close, color: Colors.white, size: 16),
             ),
           ),
         ),
@@ -147,31 +271,31 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     );
   }
 
-  Widget _buildAddImageButton() {
-    return GestureDetector(
-      onTap: _pickImage,
-      child: Container(
-        width: 80,
-        height: 80,
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(Icons.add, size: 30, color: Colors.grey),
-      ),
-    );
-  }
-
   Future<void> _pickImage() async {
     try {
-      final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1200,
+        maxHeight: 1200,
+        imageQuality: 80,
+      );
+
       if (image != null) {
-        // هنا سيتم رفع الصورة إلى السيرفر والحصول على الرابط
         setState(() {
-          _productImages.add(image.path);
+          _pickedImage = image;
         });
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم اختيار الصورة بنجاح'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('فشل تحميل الصورة: ${e.toString()}')),
       );
@@ -185,86 +309,68 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
           controller: _nameController,
           label: 'اسم المنتج',
           validator: (value) {
-            if (value == null || value.isEmpty) {
+            if (value == null || value.trim().isEmpty) {
               return 'يرجى إدخال اسم المنتج';
             }
             return null;
           },
         ),
-        SizedBox(height: 16),
+        const SizedBox(height: 16),
         CustomTextField(
           controller: _descriptionController,
           label: 'وصف المنتج',
           maxLines: 4,
           validator: (value) {
-            if (value == null || value.isEmpty) {
+            if (value == null || value.trim().isEmpty) {
               return 'يرجى إدخال وصف المنتج';
             }
             return null;
           },
         ),
-        SizedBox(height: 16),
+        const SizedBox(height: 16),
         Row(
           children: [
             Expanded(
               child: CustomTextField(
                 controller: _priceController,
                 label: 'السعر (ر.س)',
-                keyboardType: TextInputType.number,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
+                  if (value == null || value.trim().isEmpty) {
                     return 'يرجى إدخال السعر';
                   }
-                  if (double.tryParse(value) == null) {
+                  if (double.tryParse(value.trim()) == null) {
                     return 'يرجى إدخال سعر صحيح';
                   }
                   return null;
                 },
               ),
             ),
-            SizedBox(width: 16),
-            Expanded(
-              child: CustomTextField(
-                controller: _oldPriceController,
-                label: 'السعر القديم (ر.س) - اختياري',
-                keyboardType: TextInputType.number,
-              ),
-            ),
-          ],
-        ),
-        SizedBox(height: 16),
-        Row(
-          children: [
+            const SizedBox(width: 16),
             Expanded(
               child: CustomTextField(
                 controller: _stockController,
                 label: 'الكمية المتاحة',
                 keyboardType: TextInputType.number,
                 validator: (value) {
-                  if (value == null || value.isEmpty) {
+                  if (value == null || value.trim().isEmpty) {
                     return 'يرجى إدخال الكمية';
                   }
-                  if (int.tryParse(value) == null) {
+                  if (int.tryParse(value.trim()) == null) {
                     return 'يرجى إدخال رقم صحيح';
                   }
                   return null;
                 },
               ),
             ),
-            SizedBox(width: 16),
-            Expanded(
-              child: CustomTextField(
-                controller: _categoryController,
-                label: 'الفئة',
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'يرجى إدخال الفئة';
-                  }
-                  return null;
-                },
-              ),
-            ),
           ],
+        ),
+        const SizedBox(height: 16),
+        CustomTextField(
+          controller: _categoryController,
+          label: 'معرّف الفئة (اختياري)',
         ),
       ],
     );
@@ -274,56 +380,158 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     return Row(
       children: [
         Expanded(
-          child: CustomButton(text: 'حفظ', onPressed: _saveProduct),
+          child: CustomButton(
+            text: 'حفظ',
+            onPressed: _isSaving ? null : _saveProduct,
+            isLoading: _isSaving,
+          ),
         ),
-        SizedBox(width: 16),
+        const SizedBox(width: 16),
         Expanded(
           child: CustomButton(
             text: 'إلغاء',
             backgroundColor: Colors.grey,
-            onPressed: () => Navigator.pop(context),
+            onPressed: _isSaving ? null : () => Navigator.pop(context),
           ),
         ),
       ],
     );
   }
 
-  void _saveProduct() async {
-    if (_formKey.currentState!.validate() && _productImages.isNotEmpty) {
-      try {
-        final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
-        final currentUser = authProvider.user;
-        // تجهيز بيانات المنتج
-        final product = ProductModel(
-          id: widget.product?.id ?? '',
-          name: _nameController.text.trim(),
-          description: _descriptionController.text.trim(),
-          price: double.parse(_priceController.text.trim()),
-          salePrice: _oldPriceController.text.isNotEmpty ? double.tryParse(_oldPriceController.text.trim()) : null,
-          stockQuantity: int.parse(_stockController.text.trim()),
-          categoryId: _categoryController.text.trim(),
-          storeId: currentUser?.storeId ?? '',
-          isAvailable: true,
-          images: _productImages,
-          createdAt: DateTime.now(),
-        );
-        if (widget.product == null) {
-          await _productService.addProduct(product);
+  Future<void> _saveProduct() async {
+    if (_isSaving) return;
+
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+
+    final hasImage =
+        _pickedImage != null || (_imageUrl != null && _imageUrl!.isNotEmpty);
+
+    if (!hasImage) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('يرجى إضافة صورة واحدة على الأقل'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final storeId = widget.product?.storeId ?? _storeId;
+
+    if (storeId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يمكن حفظ المنتج قبل تحديد المتجر المرتبط به'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final price = double.parse(_priceController.text.trim());
+      final stock = int.parse(_stockController.text.trim());
+      final description = _descriptionController.text.trim();
+      final category = _categoryController.text.trim();
+      final now = DateTime.now();
+
+      final initialImageUrl =
+          widget.product?.imageUrl ??
+          ((_imageUrl != null && _imageUrl!.isNotEmpty) ? _imageUrl : null);
+
+      final baseProduct = ProductModel(
+        id: widget.product?.id ?? '',
+        storeId: storeId,
+        categoryId: category.isEmpty ? null : category,
+        name: _nameController.text.trim(),
+        description: description.isEmpty ? null : description,
+        price: price,
+        stockQuantity: stock,
+        imageUrl: initialImageUrl,
+        isActive: widget.product?.isActive ?? true,
+        createdAt: widget.product?.createdAt ?? now,
+        updatedAt: widget.product != null ? now : null,
+      );
+
+      ProductModel? savedProduct;
+
+      if (widget.product == null) {
+        if (_pickedImage != null) {
+          final Uint8List bytes = await _pickedImage!.readAsBytes();
+          final fileName = _pickedImage!.name.isNotEmpty
+              ? _pickedImage!.name
+              : 'product_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+          savedProduct = await ProductService.addProductWithImages(
+            product: baseProduct,
+            images: [bytes],
+            imageNames: [fileName],
+          );
         } else {
-          await _productService.updateProduct(product);
+          savedProduct = await ProductService.addProduct(baseProduct);
         }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              widget.product == null
-                  ? 'تم إضافة المنتج بنجاح'
-                  : 'تم تحديث المنتج بنجاح',
-            ),
-            backgroundColor: Colors.green,
+      } else {
+        String? updatedImageUrl = baseProduct.imageUrl;
+
+        if (_pickedImage != null) {
+          final Uint8List bytes = await _pickedImage!.readAsBytes();
+          final fileName = _pickedImage!.name.isNotEmpty
+              ? _pickedImage!.name
+              : 'product_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+          final uploadedUrls = await ProductService.uploadProductImages(
+            productId: widget.product!.id,
+            imagesBytesList: [bytes],
+            fileNames: [fileName],
+          );
+
+          if (uploadedUrls.isNotEmpty) {
+            updatedImageUrl = uploadedUrls.first;
+          }
+        } else if (_imageUrl != null && _imageUrl!.isNotEmpty) {
+          updatedImageUrl = _imageUrl;
+        } else {
+          updatedImageUrl = null;
+        }
+
+        final productToUpdate = baseProduct.copyWith(imageUrl: updatedImageUrl);
+
+        savedProduct = await ProductService.updateProduct(productToUpdate);
+      }
+
+      if (!mounted) return;
+
+      Navigator.of(context).pop(); // Close loading dialog
+
+      if (savedProduct == null) {
+        throw Exception('تعذر حفظ المنتج');
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.product == null
+                ? 'تم إضافة المنتج بنجاح'
+                : 'تم تحديث المنتج بنجاح',
           ),
-        );
-        Navigator.pop(context);
-      } catch (e) {
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      Navigator.of(context).pop(savedProduct);
+    } catch (e) {
+      if (mounted) {
+        Navigator.of(context).pop(); // Close loading dialog
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('فشل حفظ المنتج: ${e.toString()}'),
@@ -331,13 +539,10 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
           ),
         );
       }
-    } else if (_productImages.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('يرجى إضافة صورة واحدة على الأقل'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 }

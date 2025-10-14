@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/cart_provider.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
-import 'package:ell_tall_market/utils/app_routes.dart';
-import 'package:ell_tall_market/widgets/cart_item_widget.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/widgets/custom_button.dart';
+import 'package:ell_tall_market/utils/app_routes.dart';
 
 class CartScreen extends StatelessWidget {
   const CartScreen({super.key});
 
   void _checkLoginAndNavigate(BuildContext context, Function action) {
-    final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
+    final authProvider = Provider.of<SupabaseProvider>(context, listen: false);
     if (authProvider.isLoggedIn) {
       action();
     } else {
@@ -24,7 +23,7 @@ class CartScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('سلة التسوق'), centerTitle: true),
       body: SafeArea(
-        child: cartProvider.items.isEmpty
+        child: cartProvider.isEmpty
             ? _buildEmptyCart(context)
             : _buildCartWithItems(cartProvider, context),
       ),
@@ -70,14 +69,30 @@ class CartScreen extends StatelessWidget {
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.all(16),
-            itemCount: cartProvider.items.length,
+            itemCount: cartProvider.cartItems.length,
             itemBuilder: (context, index) {
-              final item = cartProvider.items[index];
-              return CartItemWidget(
-                item: item,
-                onIncrease: () async => await cartProvider.increaseQuantity(item.product.id),
-                onDecrease: () async => await cartProvider.decreaseQuantity(item.product.id),
-                onRemove: () async => await cartProvider.removeItem(item.product.id),
+              final item = cartProvider.cartItems[index];
+              final product = item['product'] as Map<String, dynamic>;
+              final quantity = item['quantity'] as int;
+              final price = (product['price'] as num).toDouble();
+
+              return Card(
+                margin: EdgeInsets.only(bottom: 12),
+                child: ListTile(
+                  title: Text(product['name'] ?? 'منتج'),
+                  subtitle: Text('الكمية: $quantity'),
+                  trailing: Text(
+                    '${(price * quantity).toStringAsFixed(2)} ر.س',
+                  ),
+                  leading: product['image_url'] != null
+                      ? Image.network(
+                          product['image_url'],
+                          width: 50,
+                          height: 50,
+                          fit: BoxFit.cover,
+                        )
+                      : Icon(Icons.image, size: 50),
+                ),
               );
             },
           ),
@@ -97,14 +112,14 @@ class CartScreen extends StatelessWidget {
           ),
           child: Column(
             children: [
-                _buildSummaryRow('المجموع الفرعي', cartProvider.total),
+              _buildSummaryRow('المجموع الفرعي', cartProvider.subtotal),
               const SizedBox(height: 8),
-              _buildSummaryRow('رسوم التوصيل', deliveryFee),
-              if (discount > 0) ...[
+              _buildSummaryRow('رسوم التوصيل', cartProvider.deliveryFee),
+              if (cartProvider.discount > 0) ...[
                 const SizedBox(height: 8),
                 _buildSummaryRow(
-                  'الخصم (${cartProvider.couponCode})',
-                  discount,
+                  'الخصم${cartProvider.couponCode != null ? ' (${cartProvider.couponCode})' : ''}',
+                  cartProvider.discount,
                   valueColor: Colors.green,
                 ),
               ],

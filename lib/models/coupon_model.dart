@@ -1,120 +1,228 @@
-enum CouponType { percentage, fixed }
+/// Coupon models that match the Supabase coupons and coupon_usage tables
+/// Updated to match the new comprehensive coupon system schema
+library;
 
-class CouponModel {
-  final String id;
-  final String code;
-  final CouponType type;
-  final double value;
-  final double? minOrderAmount;
-  final double? maxDiscountAmount;
-  final DateTime startDate;
-  final DateTime endDate;
-  final int? usageLimit;
-  final int usageCount;
-  final bool isActive;
-  final String? storeId;
-  final DateTime createdAt;
-  final DateTime? updatedAt;
+import 'package:intl/intl.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-  // Store info (joined data)
-  final String? storeName;
-  final String? storeLogoUrl;
+/// Base mixin for common model functionality
+mixin BaseModelMixin {
+  String get id;
+  DateTime get createdAt;
+  DateTime? get updatedAt;
 
-  CouponModel({
-    required this.id,
-    required this.code,
-    required this.type,
-    required this.value,
-    this.minOrderAmount,
-    this.maxDiscountAmount,
-    required this.startDate,
-    required this.endDate,
-    this.usageLimit,
-    this.usageCount = 0,
-    this.isActive = true,
-    this.storeId,
-    required this.createdAt,
-    this.updatedAt,
-    this.storeName,
-    this.storeLogoUrl,
-  });
+  String get createdAtFormatted =>
+      DateFormat('dd/MM/yyyy HH:mm').format(createdAt);
+  String get updatedAtFormatted => updatedAt != null
+      ? DateFormat('dd/MM/yyyy HH:mm').format(updatedAt!)
+      : 'لم يتم التحديث';
 
-  Map<String, dynamic> toJson() => toMap();
+  static DateTime parseDateTime(dynamic dateStr) {
+    if (dateStr == null) return DateTime.now();
+    if (dateStr is DateTime) return dateStr;
+    return DateTime.parse(dateStr.toString());
+  }
+}
 
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'code': code,
-      'type': type.toString().split('.').last,
-      'value': value,
-      'min_order_amount': minOrderAmount,
-      'max_discount_amount': maxDiscountAmount,
-      'start_date': startDate.toIso8601String(),
-      'end_date': endDate.toIso8601String(),
-      'usage_limit': usageLimit,
-      'usage_count': usageCount,
-      'is_active': isActive,
-      'store_id': storeId,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt?.toIso8601String(),
-    };
+/// Coupon Type Enum
+enum CouponType {
+  percentage,
+  fixedAmount,
+  freeDelivery;
+
+  static CouponType fromString(String type) {
+    switch (type.toLowerCase()) {
+      case 'percentage':
+        return CouponType.percentage;
+      case 'fixed_amount':
+        return CouponType.fixedAmount;
+      case 'free_delivery':
+        return CouponType.freeDelivery;
+      default:
+        return CouponType.percentage;
+    }
   }
 
-  factory CouponModel.fromJson(Map<String, dynamic> json) => CouponModel.fromMap(json);
+  String get value {
+    switch (this) {
+      case CouponType.percentage:
+        return 'percentage';
+      case CouponType.fixedAmount:
+        return 'fixed_amount';
+      case CouponType.freeDelivery:
+        return 'free_delivery';
+    }
+  }
+
+  String get displayName {
+    switch (this) {
+      case CouponType.percentage:
+        return 'نسبة مئوية';
+      case CouponType.fixedAmount:
+        return 'مبلغ ثابت';
+      case CouponType.freeDelivery:
+        return 'توصيل مجاني';
+    }
+  }
+}
+
+/// Coupon model that matches the Supabase coupons table
+class CouponModel with BaseModelMixin {
+  static const String tableName = 'coupons';
+  static const String schema = 'public';
+
+  @override
+  final String id; // UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  final String code; // TEXT UNIQUE NOT NULL
+  final String? description; // TEXT
+  final CouponType couponType; // coupon_type_enum NOT NULL
+
+  // قيمة الخصم
+  final double discountValue; // DECIMAL(10,2) NOT NULL
+  final double minimumOrderAmount; // DECIMAL(10,2) DEFAULT 0
+  final double? maximumDiscountAmount; // DECIMAL(10,2)
+
+  // حدود الاستخدام
+  final int? usageLimit; // INT
+  final int usedCount; // INT DEFAULT 0
+  final int usageLimitPerUser; // INT DEFAULT 1
+
+  // الفعالية
+  final DateTime validFrom; // TIMESTAMPTZ DEFAULT NOW()
+  final DateTime? validUntil; // TIMESTAMPTZ
+  final bool isActive; // BOOLEAN DEFAULT TRUE
+
+  @override
+  final DateTime createdAt;
+  @override
+  final DateTime? updatedAt;
+
+  const CouponModel({
+    required this.id,
+    required this.code,
+    this.description,
+    required this.couponType,
+    required this.discountValue,
+    required this.minimumOrderAmount,
+    this.maximumDiscountAmount,
+    this.usageLimit,
+    required this.usedCount,
+    required this.usageLimitPerUser,
+    required this.validFrom,
+    this.validUntil,
+    required this.isActive,
+    required this.createdAt,
+    this.updatedAt,
+  });
 
   factory CouponModel.fromMap(Map<String, dynamic> map) {
-    final storeData = map['store'] as Map<String, dynamic>?;
-
     return CouponModel(
-      id: map['id'] ?? '',
-      code: map['code'] ?? '',
-      type: _parseCouponType(map['type']),
-      value: (map['value'] ?? 0.0).toDouble(),
-      minOrderAmount: map['min_order_amount']?.toDouble(),
-      maxDiscountAmount: map['max_discount_amount']?.toDouble(),
-      startDate: DateTime.parse(map['start_date'] ?? DateTime.now().toIso8601String()),
-      endDate: DateTime.parse(map['end_date'] ?? DateTime.now().add(const Duration(days: 30)).toIso8601String()),
-      usageLimit: map['usage_limit'],
-      usageCount: map['usage_count'] ?? 0,
-      isActive: map['is_active'] ?? true,
-      storeId: map['store_id'],
-      createdAt: DateTime.parse(map['created_at'] ?? DateTime.now().toIso8601String()),
-      updatedAt: map['updated_at'] != null ? DateTime.parse(map['updated_at']) : null,
-      // Store info
-      storeName: storeData?['name'],
-      storeLogoUrl: storeData?['logo_url'],
+      id: map['id'] as String,
+      code: map['code'] as String,
+      description: map['description'] as String?,
+      couponType: CouponType.fromString(map['coupon_type'] as String),
+      discountValue: (map['discount_value'] as num).toDouble(),
+      minimumOrderAmount:
+          (map['minimum_order_amount'] as num?)?.toDouble() ?? 0.0,
+      maximumDiscountAmount: (map['maximum_discount_amount'] as num?)
+          ?.toDouble(),
+      usageLimit: map['usage_limit'] as int?,
+      usedCount: (map['used_count'] as int?) ?? 0,
+      usageLimitPerUser: (map['usage_limit_per_user'] as int?) ?? 1,
+      validFrom: BaseModelMixin.parseDateTime(map['valid_from']),
+      validUntil: map['valid_until'] != null
+          ? BaseModelMixin.parseDateTime(map['valid_until'])
+          : null,
+      isActive: (map['is_active'] as bool?) ?? true,
+      createdAt: BaseModelMixin.parseDateTime(map['created_at']),
+      updatedAt: map['updated_at'] != null
+          ? BaseModelMixin.parseDateTime(map['updated_at'])
+          : null,
     );
   }
 
-  static CouponType _parseCouponType(String? type) {
-    return type?.toLowerCase() == 'percentage'
-        ? CouponType.percentage
-        : CouponType.fixed;
+  // Helper methods
+  String get discountValueFormatted {
+    switch (couponType) {
+      case CouponType.percentage:
+        return '${discountValue.toStringAsFixed(0)}%';
+      case CouponType.fixedAmount:
+        return '${discountValue.toStringAsFixed(2)} ر.س';
+      case CouponType.freeDelivery:
+        return 'توصيل مجاني';
+    }
   }
 
-  bool get isExpired => DateTime.now().isAfter(endDate);
+  bool get isValid {
+    final now = DateTime.now();
+    return isActive &&
+        now.isAfter(validFrom) &&
+        (validUntil == null || now.isBefore(validUntil!));
+  }
 
-  bool get isStarted => DateTime.now().isAfter(startDate);
+  bool get canBeUsed =>
+      isValid && (usageLimit == null || usedCount < usageLimit!);
 
-  bool get isValid => isActive && isStarted && !isExpired &&
-      (usageLimit == null || usageCount < usageLimit!);
+  // Backward compatibility getters
+  CouponType get type => couponType;
+  double get value => discountValue;
+  double? get maxDiscountAmount => maximumDiscountAmount;
 
+  /// حساب قيمة الخصم لطلب معين
   double calculateDiscount(double orderAmount) {
-    if (!isValid || (minOrderAmount != null && orderAmount < minOrderAmount!)) {
-      return 0;
+    if (!canBeUsed || orderAmount < minimumOrderAmount) {
+      return 0.0;
     }
 
-    double discount = type == CouponType.percentage
-        ? orderAmount * (value / 100)
-        : value;
+    double discount = 0.0;
 
-    if (maxDiscountAmount != null && discount > maxDiscountAmount!) {
-      discount = maxDiscountAmount!;
+    switch (couponType) {
+      case CouponType.percentage:
+        discount = orderAmount * (discountValue / 100);
+        break;
+      case CouponType.fixedAmount:
+        discount = discountValue;
+        break;
+      case CouponType.freeDelivery:
+        discount = 0.0; // يتم التعامل معه منفصلاً
+        break;
     }
 
-    return discount;
+    // تطبيق الحد الأقصى للخصم
+    if (maximumDiscountAmount != null && discount > maximumDiscountAmount!) {
+      discount = maximumDiscountAmount!;
+    }
+
+    return discount > orderAmount ? orderAmount : discount;
   }
 
   @override
-  String toString() => 'CouponModel(code: $code, type: $type, value: $value)';
+  String toString() {
+    return 'CouponModel(id: $id, code: $code, type: ${couponType.value})';
+  }
+}
+
+/// Service class for coupon operations
+class CouponService {
+  static final SupabaseClient _client = Supabase.instance.client;
+
+  /// التحقق من صحة كوبون
+  static Future<CouponModel?> validateCoupon(String code) async {
+    try {
+      final response = await _client
+          .from(CouponModel.tableName)
+          .select()
+          .eq('code', code.toUpperCase())
+          .eq('is_active', true)
+          .maybeSingle();
+
+      if (response == null) return null;
+
+      final coupon = CouponModel.fromMap(response);
+      return coupon.canBeUsed ? coupon : null;
+    } catch (e) {
+      print('Error validating coupon: $e');
+      return null;
+    }
+  }
 }

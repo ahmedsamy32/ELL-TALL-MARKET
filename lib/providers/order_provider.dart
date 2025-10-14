@@ -3,13 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/models/captain_model.dart';
-import 'package:ell_tall_market/core/api_client.dart';
-
-import '../models/cart_model.dart';
-import '../models/shipping_address.dart';
+import '../core/logger.dart';
 
 class OrderProvider with ChangeNotifier {
-  final ApiClient _apiClient = ApiClient();
   final _supabase = Supabase.instance.client;
 
   List<OrderModel> _orders = [];
@@ -22,6 +18,7 @@ class OrderProvider with ChangeNotifier {
   CaptainModel? _selectedOrderCaptain;
   RealtimeChannel? _ordersChannel;
 
+  // Getters
   List<OrderModel> get orders => _orders;
   List<OrderModel> get currentOrders => _currentOrders;
   List<OrderModel> get pastOrders => _pastOrders;
@@ -36,35 +33,40 @@ class OrderProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  void _setError(String? value) {
-    _error = value;
+  void _setError(String? error) {
+    _error = error;
     notifyListeners();
   }
 
-  OrderProvider() {
-    _initRealtimeSubscription();
-  }
-
-  void _initRealtimeSubscription() {
+  // ===== تهيئة قناة Realtime للطلبات =====
+  void initializeOrdersChannel(String userId) {
     _ordersChannel = _supabase
-        .channel('orders_channel')
+        .channel('orders-$userId')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'orders',
-          callback: (PostgresChangePayload payload) {
-            final record = payload.newRecord;
-            final oldRecord = payload.oldRecord;
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: userId,
+          ),
+          callback: (payload) {
+            final eventType = payload.eventType;
+            final data = payload.newRecord;
 
-            switch (payload.eventType) {
+            switch (eventType) {
               case PostgresChangeEvent.insert:
-                _handleNewOrder(record);
+                _handleNewOrder(data);
                 break;
               case PostgresChangeEvent.update:
-                _handleOrderUpdate(record);
+                _handleOrderUpdate(data);
                 break;
               case PostgresChangeEvent.delete:
-                _handleOrderDelete(oldRecord['id'] as String);
+                final oldData = payload.oldRecord;
+                if (oldData['id'] != null) {
+                  _handleOrderDelete(oldData['id']);
+                }
                 break;
               default:
                 break;
@@ -79,11 +81,16 @@ class OrderProvider with ChangeNotifier {
     _setLoading(true);
 
     try {
-      final orders = await _apiClient.getUserOrders(userId);
-      _orders = orders.map((o) => OrderModel.fromJson(o)).toList();
+      final response = await _supabase
+          .from('orders')
+          .select('*')
+          .eq('client_id', userId)
+          .order('created_at', ascending: false);
+
+      _orders = (response as List).map((o) => OrderModel.fromMap(o)).toList();
       _categorizeOrders();
     } catch (e) {
-      if (kDebugMode) print('❌ Error fetching user orders: $e');
+      AppLogger.error('خطأ في جلب طلبات المستخدم', e);
       _setError(e.toString());
       _orders = [];
     } finally {
@@ -98,13 +105,13 @@ class OrderProvider with ChangeNotifier {
     try {
       final response = await _supabase
           .from('orders')
-          .select('*, profiles!orders_user_id_fkey(*)')
+          .select('*')
           .order('created_at', ascending: false);
 
-      _orders = (response as List).map((o) => OrderModel.fromJson(o)).toList();
+      _orders = (response as List).map((o) => OrderModel.fromMap(o)).toList();
       _categorizeOrders();
     } catch (e) {
-      if (kDebugMode) print('❌ Error fetching all orders: $e');
+      AppLogger.error('خطأ في جلب جميع الطلبات', e);
       _setError(e.toString());
       _orders = [];
     } finally {
@@ -119,14 +126,14 @@ class OrderProvider with ChangeNotifier {
     try {
       final response = await _supabase
           .from('orders')
-          .select('*, profiles!orders_user_id_fkey(*)')
+          .select('*')
           .eq('store_id', storeId)
           .order('created_at', ascending: false);
 
-      _orders = (response as List).map((o) => OrderModel.fromJson(o)).toList();
+      _orders = (response as List).map((o) => OrderModel.fromMap(o)).toList();
       _categorizeOrders();
     } catch (e) {
-      if (kDebugMode) print('❌ Error fetching store orders: $e');
+      AppLogger.error('خطأ في جلب طلبات المتجر', e);
       _setError(e.toString());
       _orders = [];
     } finally {
@@ -141,14 +148,16 @@ class OrderProvider with ChangeNotifier {
     try {
       final response = await _supabase
           .from('orders')
-          .select('*, profiles!orders_user_id_fkey(*)')
+          .select('*')
           .eq('captain_id', captainId)
           .order('created_at', ascending: false);
 
-      _captainOrders = (response as List).map((o) => OrderModel.fromJson(o)).toList();
+      _captainOrders = (response as List)
+          .map((o) => OrderModel.fromMap(o))
+          .toList();
       notifyListeners();
     } catch (e) {
-      if (kDebugMode) print('❌ Error fetching captain orders: $e');
+      AppLogger.error('خطأ في جلب طلبات الكابتن', e);
       _setError(e.toString());
       _captainOrders = [];
     } finally {
@@ -167,10 +176,10 @@ class OrderProvider with ChangeNotifier {
           .eq('store.merchant_id', merchantId)
           .order('created_at', ascending: false);
 
-      _orders = response.map((o) => OrderModel.fromJson(o)).toList();
+      _orders = (response as List).map((o) => OrderModel.fromMap(o)).toList();
       notifyListeners();
     } catch (e) {
-      if (kDebugMode) print('❌ Error fetching merchant orders: $e');
+      AppLogger.error('خطأ في جلب طلبات التاجر', e);
       _setError(e.toString());
       _orders = [];
     } finally {
@@ -181,34 +190,56 @@ class OrderProvider with ChangeNotifier {
   // ===== إنشاء طلب جديد =====
   Future<bool> createOrder(OrderModel order) async {
     try {
-      final response = await _apiClient.createOrder(order.toJson());
-      final newOrder = OrderModel.fromJson(response);
+      final orderData = {
+        'client_id': order.clientId,
+        'merchant_id': order.merchantId,
+        'captain_id': order.captainId,
+        'status': order.status,
+        'total_amount': order.totalAmount,
+        'delivery_address': order.deliveryAddress,
+        'notes': order.notes,
+        'created_at': DateTime.now().toIso8601String(),
+      };
+
+      final response = await _supabase
+          .from('orders')
+          .insert(orderData)
+          .select()
+          .single();
+
+      final newOrder = OrderModel.fromMap(response);
       _orders.insert(0, newOrder);
       _categorizeOrders();
+      AppLogger.info('تم إنشاء الطلب بنجاح: ${newOrder.id}');
       return true;
     } catch (e) {
-      if (kDebugMode) print('❌ Error creating order: $e');
+      AppLogger.error('خطأ في إنشاء الطلب', e);
       _setError(e.toString());
       return false;
     }
   }
 
   // ===== تحديث حالة الطلب =====
-  Future<bool> updateOrderStatus(String orderId, OrderStatus status) async {
+  Future<bool> updateOrderStatus(String orderId, dynamic status) async {
     try {
+      String statusString = status is String ? status : status.toString();
+
       await _supabase
           .from('orders')
-          .update({'status': status.toString()})
+          .update({'status': statusString})
           .eq('id', orderId);
 
       final index = _orders.indexWhere((o) => o.id == orderId);
       if (index != -1) {
-        _orders[index] = _orders[index].copyWith(status: status);
+        _orders[index] = _orders[index].copyWith(
+          status: OrderStatus.fromString(statusString),
+        );
         _categorizeOrders();
       }
+      AppLogger.info('تم تحديث حالة الطلب $orderId إلى $statusString');
       return true;
     } catch (e) {
-      if (kDebugMode) print('❌ Error updating order status: $e');
+      AppLogger.error('خطأ في تحديث حالة الطلب', e);
       _setError(e.toString());
       return false;
     }
@@ -220,13 +251,13 @@ class OrderProvider with ChangeNotifier {
     try {
       final response = await _supabase
           .from('orders')
-          .select('*, profiles!orders_user_id_fkey(*)')
+          .select('*')
           .eq('id', orderId)
           .single();
-      _selectedOrder = OrderModel.fromJson(response);
+      _selectedOrder = OrderModel.fromMap(response);
       notifyListeners();
     } catch (e) {
-      if (kDebugMode) print('�� Error fetching order by ID: $e');
+      AppLogger.error('خطأ في جلب الطلب بالمعرف', e);
       _setError(e.toString());
       _selectedOrder = null;
     } finally {
@@ -236,27 +267,29 @@ class OrderProvider with ChangeNotifier {
 
   // ===== تصنيف الطلبات =====
   void _categorizeOrders() {
-    _currentOrders = _orders.where((order) =>
-      order.status != OrderStatus.delivered &&
-      order.status != OrderStatus.cancelled
-    ).toList();
+    _currentOrders = _orders
+        .where(
+          (order) => order.status != 'delivered' && order.status != 'cancelled',
+        )
+        .toList();
 
-    _pastOrders = _orders.where((order) =>
-      order.status == OrderStatus.delivered ||
-      order.status == OrderStatus.cancelled
-    ).toList();
+    _pastOrders = _orders
+        .where(
+          (order) => order.status == 'delivered' || order.status == 'cancelled',
+        )
+        .toList();
     notifyListeners();
   }
 
   // ===== معالجة التحديثات في الوقت الحقيقي =====
   void _handleNewOrder(Map<String, dynamic> orderData) {
-    final newOrder = OrderModel.fromJson(orderData);
+    final newOrder = OrderModel.fromMap(orderData);
     _orders.insert(0, newOrder);
     _categorizeOrders();
   }
 
   void _handleOrderUpdate(Map<String, dynamic> orderData) {
-    final updatedOrder = OrderModel.fromJson(orderData);
+    final updatedOrder = OrderModel.fromMap(orderData);
     final index = _orders.indexWhere((o) => o.id == updatedOrder.id);
     if (index != -1) {
       _orders[index] = updatedOrder;
@@ -275,204 +308,64 @@ class OrderProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  List<OrderModel> getOrdersByStatus(OrderStatus status) {
-    return _captainOrders.where((order) => order.status == status).toList();
+  void clearSelectedOrder() {
+    _selectedOrder = null;
+    _selectedOrderCaptain = null;
+    notifyListeners();
   }
 
-  Future<void> startOrderTracking(String orderId) async {
+  // ===== تحديث موقع الكابتن =====
+  Future<void> updateCaptainLocation({
+    required String captainId,
+    required double latitude,
+    required double longitude,
+  }) async {
     try {
-      // Subscribe to order updates
-      _ordersChannel = _supabase
-          .channel('order_tracking_$orderId')
-          .onPostgresChanges(
-            event: PostgresChangeEvent.update,
-            schema: 'public',
-            table: 'orders',
-            filter: PostgresChangeFilter(
-              type: PostgresChangeFilterType.eq,
-              column: 'id',
-              value: orderId,
-            ),
-            callback: (payload) async {
-              // Refresh order details when changes occur
-              await getOrderById(orderId);
-            },
-          )
-          .subscribe();
-
-      // Subscribe to captain location updates if order has a captain
-      if (_selectedOrder?.captainId != null) {
-        _ordersChannel = _supabase
-            .channel('captain_location_${_selectedOrder!.captainId}')
-            .onPostgresChanges(
-              event: PostgresChangeEvent.update,
-              schema: 'public',
-              table: 'captain_locations',
-              filter: PostgresChangeFilter(
-                type: PostgresChangeFilterType.eq,
-                column: 'captain_id',
-                value: _selectedOrder!.captainId,
-              ),
-              callback: (payload) async {
-                // Update captain's location
-                await updateCaptainLocation(orderId);
-              },
-            )
-            .subscribe();
-      }
-    } catch (e) {
-      debugPrint('Error starting order tracking: $e');
-      _setError('حدث خطأ في تتبع الطلب');
-    }
-  }
-
-  Future<void> updateCaptainLocation(String orderId) async {
-    try {
-      if (_selectedOrder?.captainId == null) return;
-
-      final response = await _supabase
-          .from('captain_locations')
-          .select()
-          .eq('captain_id', _selectedOrder!.captainId!)
-          .single();
-
-      // Update captain model with new location
-      _selectedOrderCaptain = _selectedOrderCaptain?.copyWith(
-        currentLocation: Location(
-          latitude: response['latitude'] as double,
-          longitude: response['longitude'] as double,
-          timestamp: DateTime.now(),
-        ),
-      );
-      notifyListeners();
-    } catch (e) {
-      debugPrint('Error updating captain location: $e');
-    }
-  }
-
-  // ===== إنشاء طلب من السلة =====
-  Future<void> createOrderFromCart(String userId) async {
-    _setLoading(true);
-    _setError(null);
-
-    try {
-      // Get cart items from Supabase
-      final cartItems = await _supabase
-          .from('cart_items')
-          .select('*, products(*)')
-          .eq('user_id', userId);
-
-      if ((cartItems as List).isEmpty) {
-        throw 'السلة فارغة';
-      }
-
-      // Group items by store
-      final storeGroups = <String, List<Map<String, dynamic>>>{};
-      for (final item in cartItems) {
-        final storeId = item['products']['store_id'] as String;
-        if (!storeGroups.containsKey(storeId)) {
-          storeGroups[storeId] = [];
-        }
-        storeGroups[storeId]!.add(item);
-      }
-
-      // Create an order for each store
-      for (final entry in storeGroups.entries) {
-        final storeId = entry.key;
-        final items = entry.value;
-
-        // Calculate totals
-        double subtotal = 0;
-        final orderItems = items.map((item) {
-          final product = item['products'];
-          final quantity = item['quantity'] as int;
-          final price = product['price'] as double;
-          final total = price * quantity;
-          subtotal += total;
-
-          return {
-            'product_id': item['product_id'],
-            'quantity': quantity,
-            'unit_price': price,
-            'total_price': total,
-          };
-        }).toList();
-
-        // Get user's address and payment method
-        final userProfile = await _supabase
-            .from('profiles')
-            .select()
-            .eq('id', userId)
-            .single();
-
-        // Create the order
-        await _supabase.from('orders').insert({
-          'user_id': userId,
-          'store_id': storeId,
-          'status': 'pending',
-          'total_amount': subtotal,
-          'delivery_fee': 10.0, // Fixed delivery fee
-          'final_amount': subtotal + 10.0,
-          'payment_method': userProfile['preferred_payment_method'] ?? 'cash_on_delivery',
-          'payment_status': 'pending',
-          'items': orderItems,
-          'created_at': DateTime.now().toIso8601String(),
-        });
-      }
-
-      // Clear cart after creating orders
       await _supabase
-          .from('cart_items')
-          .delete()
-          .eq('user_id', userId);
+          .from('captains')
+          .update({
+            'current_location': {'lat': latitude, 'lng': longitude},
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', captainId);
 
-      // Refresh orders list
-      await fetchUserOrders(userId);
+      AppLogger.info('تم تحديث موقع الكابتن');
     } catch (e) {
+      AppLogger.error('خطأ في تحديث موقع الكابتن', e);
       _setError(e.toString());
-      rethrow;
-    } finally {
-      _setLoading(false);
     }
   }
 
-  // ===== إنشاء طلب جديد مع المعلمات الصحيحة =====
-  Future<OrderModel> createOrderFromCheckout({
-    required List<CartItem> cartItems,
-    required ShippingAddress shippingAddress,
-    required PaymentMethod paymentMethod,
+  // ===== إعادة تعيين البيانات =====
+  void reset() {
+    _orders = [];
+    _currentOrders = [];
+    _pastOrders = [];
+    _captainOrders = [];
+    _isLoading = false;
+    _error = null;
+    _selectedOrder = null;
+    _selectedOrderCaptain = null;
+    notifyListeners();
+  }
+
+  // ===== إنشاء طلب بسيط =====
+  Future<OrderModel?> createSimpleOrder({
+    required String clientId,
+    required String merchantId,
+    required double totalAmount,
+    required String deliveryAddress,
     String? notes,
   }) async {
     _setLoading(true);
     try {
-      final user = _supabase.auth.currentUser;
-      if (user == null) throw Exception('User not authenticated');
-
-      // Calculate order totals
-      double subtotal = cartItems.fold(0.0, (sum, item) => sum + (item.quantity * item.product.price));
-      const double deliveryFee = 10.0; // Fixed delivery fee
-      final double totalAmount = subtotal + deliveryFee;
-
       final orderData = {
-        'user_id': user.id,
-        'store_id': cartItems.first.product.storeId, // Assuming all items are from same store
-        'status': OrderStatus.pending.toString().split('.').last,
-        'delivery_address': shippingAddress.formattedAddress,
-        'delivery_location': shippingAddress.coordinates != null
-            ? '${shippingAddress.coordinates!['lat']},${shippingAddress.coordinates!['lng']}'
-            : null,
+        'client_id': clientId,
+        'merchant_id': merchantId,
+        'status': 'pending',
+        'total_amount': totalAmount,
+        'delivery_address': deliveryAddress,
         'notes': notes,
-        'payment_method': paymentMethod.toString().split('.').last,
-        'payment_status': PaymentStatus.pending.toString().split('.').last,
-        'total_amount': subtotal,
-        'delivery_fee': deliveryFee,
-        'final_amount': totalAmount,
-        'items': cartItems.map((item) => {
-          'product_id': item.product.id,
-          'quantity': item.quantity,
-          'unit_price': item.product.price,
-          'total_price': item.quantity * item.product.price,
-        }).toList(),
         'created_at': DateTime.now().toIso8601String(),
       };
 
@@ -485,10 +378,12 @@ class OrderProvider with ChangeNotifier {
       final newOrder = OrderModel.fromMap(response);
       _orders.add(newOrder);
       _categorizeOrders();
+      AppLogger.info('تم إنشاء الطلب بنجاح: ${newOrder.id}');
       return newOrder;
     } catch (e) {
+      AppLogger.error('خطأ في إنشاء الطلب', e);
       _setError('Failed to create order: $e');
-      throw Exception('Failed to create order');
+      return null;
     } finally {
       _setLoading(false);
     }

@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/providers/merchant_provider.dart';
+import 'package:ell_tall_market/models/financial_model.dart';
 import 'package:ell_tall_market/services/financial_service.dart';
-import 'package:ell_tall_market/models/financial_transaction_model.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -14,8 +15,8 @@ class MerchantWalletScreen extends StatefulWidget {
   _MerchantWalletScreenState createState() => _MerchantWalletScreenState();
 }
 
-class _MerchantWalletScreenState extends State<MerchantWalletScreen> with SingleTickerProviderStateMixin {
-  final _financialService = FinancialService();
+class _MerchantWalletScreenState extends State<MerchantWalletScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   DateTime? _startDate;
   DateTime? _endDate;
@@ -32,6 +33,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
     'total_refunded': 0,
     'net_amount': 0,
   };
+  String? _currentStoreId;
 
   @override
   void initState() {
@@ -49,37 +51,72 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      final authProvider = Provider.of<FirebaseAuthProvider>(context, listen: false);
-      final storeId = authProvider.user!.storeId!;
-
-      // جلب الرصيد الحالي
-      final balance = await _financialService.getStoreBalance(storeId);
-
-      // جلب المعاملات
-      final transactions = await _financialService.getStoreTransactions(
-        storeId,
-        startDate: _startDate,
-        endDate: _endDate,
+      final authProvider = Provider.of<SupabaseProvider>(
+        context,
+        listen: false,
       );
 
-      // جلب ملخص المعاملات
-      final summary = await _financialService.getTransactionsSummary(
-        storeId: storeId,
-        startDate: _startDate,
-        endDate: _endDate,
+      // Get current user profile
+      final currentProfile = authProvider.currentUserProfile;
+      if (currentProfile == null) {
+        throw Exception('لم يتم العثور على بيانات المستخدم');
+      }
+
+      // Get merchant provider and fetch merchant data
+      final merchantProvider = Provider.of<MerchantProvider>(
+        context,
+        listen: false,
       );
+
+      // Fetch merchant by profile ID
+      await merchantProvider.fetchMerchantByProfileId(currentProfile.id);
+      final merchant = merchantProvider.selectedMerchant;
+
+      if (merchant == null) {
+        throw Exception('لم يتم العثور على بيانات التاجر');
+      }
+
+      // For now, we'll use the merchant ID as store identifier
+      // In a complete implementation, you'd fetch the actual store
+      _currentStoreId = merchant.id;
+
+      // Use FinancialServiceEnhanced to get store balance details
+      final balanceData = await FinancialServiceEnhanced.instance
+          .getStoreBalanceDetails(_currentStoreId!);
+
+      // Get transactions using advanced method
+      final transactionsData = await FinancialServiceEnhanced.instance
+          .getAdvancedTransactions(
+            storeId: _currentStoreId,
+            startDate: _startDate,
+            endDate: _endDate,
+            limit: 100,
+          );
+
+      final transactionsList = transactionsData['transactions'] as List;
+      final transactions = transactionsList
+          .map((data) => FinancialTransactionModel.fromMap(data))
+          .toList();
+
+      // Calculate summary from balance data
+      final summary = <String, double>{
+        'total_collected': (balanceData['total_revenue'] ?? 0.0).toDouble(),
+        'total_transferred': (balanceData['total_settled'] ?? 0.0).toDouble(),
+        'total_refunded': (balanceData['total_refunded'] ?? 0.0).toDouble(),
+        'net_amount': (balanceData['net_revenue'] ?? 0.0).toDouble(),
+      };
 
       setState(() {
-        _currentBalance = balance;
+        _currentBalance = balanceData['current_balance'] ?? 0.0;
         _transactions = transactions;
         _summary = summary;
-        _filteredTransactions = transactions; // Initialize filtered transactions
+        _filteredTransactions = transactions;
         _isLoading = false;
       });
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('حدث خطأ في تحميل البيانات')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('حدث خطأ في تحميل البيانات')));
       setState(() => _isLoading = false);
     }
   }
@@ -91,10 +128,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
         title: const Text('المحفظة'),
         centerTitle: true,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadData,
-          ),
+          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadData),
         ],
         bottom: TabBar(
           controller: _tabController,
@@ -230,7 +264,12 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
     );
   }
 
-  Widget _buildSummaryCard(String title, double amount, IconData icon, Color color) {
+  Widget _buildSummaryCard(
+    String title,
+    double amount,
+    IconData icon,
+    Color color,
+  ) {
     return Card(
       child: Padding(
         padding: EdgeInsets.all(16),
@@ -352,10 +391,23 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
                         sideTitles: SideTitles(
                           showTitles: true,
                           getTitlesWidget: (value, meta) {
-                            const months = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-                                         'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+                            const months = [
+                              'يناير',
+                              'فبراير',
+                              'مارس',
+                              'أبريل',
+                              'مايو',
+                              'يونيو',
+                              'يوليو',
+                              'أغسطس',
+                              'سبتمبر',
+                              'أكتوبر',
+                              'نوفمبر',
+                              'ديسمبر',
+                            ];
                             if (value >= 0 && value < months.length) {
-                              return Text(months[value.toInt()],
+                              return Text(
+                                months[value.toInt()],
                                 style: const TextStyle(fontSize: 10),
                               );
                             }
@@ -413,13 +465,16 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
 
     // Calculate distribution
     for (var transaction in _transactions) {
-      distribution[transaction.type] = (distribution[transaction.type] ?? 0) + transaction.amount;
+      distribution[transaction.type] =
+          (distribution[transaction.type] ?? 0) + transaction.amount;
       total += transaction.amount;
     }
 
     // Convert to sections
     return distribution.entries.map((entry) {
-      final percentage = total > 0 ? (entry.value / total * 100).toDouble() : 0.0;
+      final percentage = total > 0
+          ? (entry.value / total * 100).toDouble()
+          : 0.0;
       Color color;
 
       switch (entry.key) {
@@ -431,6 +486,8 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
           break;
         case TransactionType.refund:
           color = Colors.orange;
+        default:
+          color = Colors.grey;
           break;
       }
 
@@ -465,10 +522,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
         Container(
           width: 12,
           height: 12,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 4),
         Text(label, style: const TextStyle(fontSize: 12)),
@@ -509,7 +563,12 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
       monthlyTotals[month] = (monthlyTotals[month] ?? 0) + transaction.amount;
     }
 
-    return (monthlyTotals.values.fold<double>(0, (max, value) => value > max ? value : max) * 1.2).toDouble();
+    return (monthlyTotals.values.fold<double>(
+              0,
+              (max, value) => value > max ? value : max,
+            ) *
+            1.2)
+        .toDouble();
   }
 
   Widget _buildTransactionFilters() {
@@ -551,7 +610,10 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
                   items: const [
                     DropdownMenuItem(value: 'all', child: Text('الكل')),
                     DropdownMenuItem(value: 'completed', child: Text('مكتمل')),
-                    DropdownMenuItem(value: 'pending', child: Text('قيد التنفيذ')),
+                    DropdownMenuItem(
+                      value: 'pending',
+                      child: Text('قيد التنفيذ'),
+                    ),
                     DropdownMenuItem(value: 'failed', child: Text('فشل')),
                   ],
                   onChanged: (value) {
@@ -570,7 +632,9 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
               Expanded(
                 child: OutlinedButton.icon(
                   icon: const Icon(Icons.date_range),
-                  label: Text(_startDate == null ? 'من تاريخ' : _formatDate(_startDate!)),
+                  label: Text(
+                    _startDate == null ? 'من تاريخ' : _formatDate(_startDate!),
+                  ),
                   onPressed: () => _selectDate(true),
                 ),
               ),
@@ -578,7 +642,9 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
               Expanded(
                 child: OutlinedButton.icon(
                   icon: const Icon(Icons.date_range),
-                  label: Text(_endDate == null ? 'إلى تاريخ' : _formatDate(_endDate!)),
+                  label: Text(
+                    _endDate == null ? 'إلى تاريخ' : _formatDate(_endDate!),
+                  ),
                   onPressed: () => _selectDate(false),
                 ),
               ),
@@ -592,14 +658,23 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
   void _filterTransactions() {
     setState(() {
       _filteredTransactions = _transactions.where((transaction) {
-        bool matchesType = _selectedTransactionType == 'all' ||
-            transaction.type.toString().split('.').last == _selectedTransactionType;
-        bool matchesStatus = _selectedStatusFilter == 'all' ||
-            transaction.status.toString().split('.').last.toLowerCase() == _selectedStatusFilter;
+        bool matchesType =
+            _selectedTransactionType == 'all' ||
+            transaction.type.code == _selectedTransactionType ||
+            (_selectedTransactionType == 'transfer' &&
+                transaction.type == TransactionType.transferToStore);
+
+        bool matchesStatus =
+            _selectedStatusFilter == 'all' ||
+            transaction.status.code == _selectedStatusFilter;
+
         bool matchesDateRange = true;
         if (_startDate != null && _endDate != null) {
-          matchesDateRange = transaction.createdAt.isAfter(_startDate!) &&
-              transaction.createdAt.isBefore(_endDate!.add(const Duration(days: 1)));
+          matchesDateRange =
+              transaction.createdAt.isAfter(_startDate!) &&
+              transaction.createdAt.isBefore(
+                _endDate!.add(const Duration(days: 1)),
+              );
         }
         return matchesType && matchesStatus && matchesDateRange;
       }).toList();
@@ -608,7 +683,9 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
 
   Widget _buildFilteredTransactionsList() {
     if (_filteredTransactions.isEmpty) {
-      return const Center(child: Text('لا توجد معاملات تطابق المعايير المحددة'));
+      return const Center(
+        child: Text('لا توجد معاملات تطابق المعايير المحددة'),
+      );
     }
 
     return ListView.builder(
@@ -674,7 +751,9 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
         return const Icon(Icons.arrow_forward, color: Colors.blue);
       case TransactionType.refund:
         return const Icon(Icons.reply, color: Colors.red);
-      }
+      default:
+        return const Icon(Icons.help_outline, color: Colors.grey);
+    }
   }
 
   String _getStatusText(TransactionStatus status) {
@@ -685,6 +764,8 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
         return 'قيد التنفيذ';
       case TransactionStatus.failed:
         return 'فشل';
+      default:
+        return 'غير محدد';
     }
   }
 
@@ -696,6 +777,8 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen> with Single
         return 'تحويل للمتجر';
       case TransactionType.refund:
         return 'استرجاع مبلغ';
+      default:
+        return 'معاملة مالية';
     }
   }
 

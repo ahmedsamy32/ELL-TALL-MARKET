@@ -28,5 +28,28 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<!-- Custom App Scheme -->
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>ell_tall_market.custom_scheme</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>elltallmarket</string>
+			</array>
+		</dict>
+		<!-- Supabase Auth Callback -->
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>ell_tall_market.supabase_auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>elltallmarket</string>
+			</array>
+			<key>CFBundleURLPath</key>
+			<string>auth/callback</string>
+		</dict>
+	</array>
 </dict>
 </plist>

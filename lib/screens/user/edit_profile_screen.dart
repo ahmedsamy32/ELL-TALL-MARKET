@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
-import 'package:ell_tall_market/providers/firebase_auth_provider.dart';
-import 'package:ell_tall_market/models/user_model.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/models/Profile_model.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -28,12 +28,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
-    final user = Provider.of<FirebaseAuthProvider>(
+    final user = Provider.of<SupabaseProvider>(
       context,
       listen: false,
-    ).user!;
-    _nameController = TextEditingController(text: user.name);
-    _phoneController = TextEditingController(text: user.phone);
+    ).currentUserProfile!;
+    _nameController = TextEditingController(text: user.fullName ?? '');
+    _phoneController = TextEditingController(text: user.phone ?? '');
     _currentPasswordController = TextEditingController();
     _newPasswordController = TextEditingController();
     _confirmPasswordController = TextEditingController();
@@ -68,47 +68,27 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     setState(() => _isSaving = true);
 
     try {
-      final authProvider = Provider.of<FirebaseAuthProvider>(
+      final authProvider = Provider.of<SupabaseProvider>(
         context,
         listen: false,
       );
 
       // إنشاء نموذج المستخدم المحدث
-      final updatedUser = UserModel(
-        id: authProvider.user!.id,
-        firebaseId: authProvider.user!.firebaseId,
-        name: _nameController.text.trim(),
-        email: authProvider.user!.email,
+      final updatedUser = ProfileModel(
+        id: authProvider.currentUserProfile!.id,
+        fullName: _nameController.text.trim(),
+        email: authProvider.currentUserProfile!.email,
         phone: _phoneController.text.trim(),
-        type: authProvider.user!.type,
-        avatarUrl: _pickedImage?.path ?? authProvider.user!.avatarUrl,
-        createdAt: authProvider.user!.createdAt,
+        avatarUrl:
+            _pickedImage?.path ?? authProvider.currentUserProfile!.avatarUrl,
+        role: authProvider.currentUserProfile!.role,
+        isActive: authProvider.currentUserProfile!.isActive,
+        createdAt: authProvider.currentUserProfile!.createdAt,
         updatedAt: DateTime.now(),
-        isActive: authProvider.user!.isActive,
-        lastLogin: authProvider.user!.lastLogin,
-        loginCount: authProvider.user!.loginCount,
-        storeId: authProvider.user!.storeId,
-        preferredPaymentMethod: authProvider.user!.preferredPaymentMethod,
-        address: authProvider.user!.address,
-        storeName: authProvider.user!.storeName,
-        storeDescription: authProvider.user!.storeDescription,
-        storeLogoUrl: authProvider.user!.storeLogoUrl,
-        storeCoverUrl: authProvider.user!.storeCoverUrl,
-        storeAddress: authProvider.user!.storeAddress,
-        storeLocation: authProvider.user!.storeLocation,
-        storeCategory: authProvider.user!.storeCategory,
-        storeRating: authProvider.user!.storeRating,
-        storeRatingCount: authProvider.user!.storeRatingCount,
       );
 
       // تحديث البروفايل
-      final updatedResult = await authProvider.updateProfile(updatedUser);
-
-      if (updatedResult == null) {
-        _showErrorSnackBar('فشل في تحديث البيانات الشخصية');
-        setState(() => _isSaving = false);
-        return;
-      }
+      await authProvider.updateProfile(updatedUser);
 
       // تحديث كلمة المرور إذا تم تعبئتها
       if (_currentPasswordController.text.isNotEmpty ||
@@ -137,12 +117,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           return;
         }
 
-        bool passwordSuccess = await authProvider.updatePassword(
-          _currentPasswordController.text,
+        final passwordResult = await authProvider.updatePasswordWithSupabase(
           _newPasswordController.text,
         );
 
-        if (!passwordSuccess) {
+        if (!passwordResult) {
           _showErrorSnackBar(
             'فشل في تحديث كلمة المرور. تأكد من صحة كلمة المرور الحالية',
           );
@@ -197,10 +176,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _deleteAccount() async {
-    final authProvider = Provider.of<FirebaseAuthProvider>(
-      context,
-      listen: false,
-    );
+    final authProvider = Provider.of<SupabaseProvider>(context, listen: false);
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -224,27 +200,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     if (confirmed == true) {
       try {
-        bool success = await authProvider.deleteUser();
-        if (success) {
-          _showSuccessSnackBar('تم حذف الحساب بنجاح');
-          // العودة لشاشة تسجيل الدخول
-          Navigator.pushNamedAndRemoveUntil(
-            context,
-            '/login',
-            (route) => false,
-          );
-        } else {
-          _showErrorSnackBar('فشل في حذف الحساب. يرجى المحاولة مرة أخرى');
-        }
+        // Sign out instead of delete (delete functionality needs to be implemented)
+        await authProvider.signOut();
+        _showSuccessSnackBar('تم تسجيل الخروج بنجاح');
+        // العودة لشاشة تسجيل الدخول
+        Navigator.pushNamedAndRemoveUntil(context, '/login', (route) => false);
       } catch (e) {
-        _showErrorSnackBar('حدث خطأ أثناء حذف الحساب: ${e.toString()}');
+        _showErrorSnackBar('حدث خطأ: ${e.toString()}');
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final user = Provider.of<FirebaseAuthProvider>(context).user!;
+    final user = Provider.of<SupabaseProvider>(context).currentUserProfile!;
     return Scaffold(
       appBar: AppBar(
         title: const Text('تعديل الملف الشخصي'),

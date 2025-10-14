@@ -7,6 +7,7 @@ class CustomTextField extends StatefulWidget {
   final bool isPasswordField; // ← جديد
   final TextInputType? keyboardType;
   final int? maxLines;
+  final int? maxLength;
   final String? Function(String?)? validator;
   final void Function(String)? onChanged;
   final Widget? prefixIcon;
@@ -25,6 +26,7 @@ class CustomTextField extends StatefulWidget {
     this.isPasswordField = false, // الافتراضي مش باسورد
     this.keyboardType,
     this.maxLines = 1,
+    this.maxLength,
     this.validator,
     this.onChanged,
     this.prefixIcon,
@@ -56,6 +58,7 @@ class _CustomTextFieldState extends State<CustomTextField> {
       obscureText: widget.isPasswordField ? _obscureText : false,
       keyboardType: widget.keyboardType,
       maxLines: widget.maxLines,
+      maxLength: widget.maxLength,
       validator: widget.validator,
       onChanged: widget.onChanged,
       readOnly: widget.readOnly,

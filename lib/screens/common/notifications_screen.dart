@@ -120,7 +120,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ? Colors.white
             : AppColors.primary.withAlpha(25),
         child: ListTile(
-          leading: _getNotificationIcon(notification.type),
+          leading: _getNotificationIcon(
+            notification.type ?? NotificationType.system,
+          ),
           title: Text(
             notification.title,
             style: TextStyle(
@@ -132,10 +134,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(notification.message),
+              Text(notification.body),
               SizedBox(height: 4),
               Text(
-                notification.timeAgo,
+                notification.createdAtRelative,
                 style: TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ],
@@ -159,7 +161,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     late Color color;
 
     switch (type) {
-      case NotificationType.orderUpdate:
+      case NotificationType.order:
         icon = Icons.shopping_cart;
         color = AppColors.primary;
         break;
@@ -170,22 +172,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       case NotificationType.system:
         icon = Icons.info;
         color = AppColors.info;
-        break;
-      case NotificationType.message:
-        icon = Icons.message;
-        color = AppColors.success;
-        break;
-      case NotificationType.deliveryUpdate:
-        icon = Icons.local_shipping;
-        color = AppColors.warning;
-        break;
-      case NotificationType.payment:
-        icon = Icons.payment;
-        color = AppColors.accent;
-        break;
-      case NotificationType.review:
-        icon = Icons.star;
-        color = AppColors.amber;
         break;
     }
 
@@ -201,18 +187,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   void _handleNotificationTap(NotificationModel notification) {
-    if (notification.actionUrl != null) {
-      // معالجة رابط الإشعار
+    // معالجة رابط الإشعار من data
+    final actionUrl = notification.data?['actionUrl'] as String?;
+
+    if (actionUrl != null || notification.hasData) {
+      // معالجة حسب نوع الإشعار
       switch (notification.type) {
-        case NotificationType.orderUpdate:
-          // Navigator.pushNamed(context, AppRoutes.orderTracking, arguments: notification.data?['orderId']);
+        case NotificationType.order:
+          final orderId = notification.data?['orderId'] as String?;
+          if (orderId != null) {
+            // Navigator.pushNamed(context, AppRoutes.orderTracking, arguments: {'orderId': orderId});
+          }
           break;
         case NotificationType.promotion:
           // Navigator.pushNamed(context, AppRoutes.promotions);
           break;
-        case NotificationType.message:
-          // فتح المحادثة
-          break;
+        case NotificationType.system:
         default:
           break;
       }
