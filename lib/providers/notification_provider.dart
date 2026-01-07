@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../core/logger.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/notification_model.dart';
 
@@ -74,6 +75,7 @@ class NotificationProvider with ChangeNotifier {
   // ===== جلب إشعارات المستخدم =====
   Future<void> loadUserNotifications(String userId) async {
     _setLoading(true);
+    _setError(null); // مسح الأخطاء السابقة
     try {
       final response = await _supabase
           .from('notifications')
@@ -87,8 +89,24 @@ class NotificationProvider with ChangeNotifier {
 
       _updateUnreadCount();
     } catch (e) {
-      if (kDebugMode) print('❌ Error fetching notifications: $e');
-      _setError(e.toString());
+      AppLogger.error('❌ Error fetching notifications', e);
+
+      // معالجة أفضل لرسائل الخطأ
+      String errorMessage = 'حدث خطأ في تحميل الإشعارات';
+
+      if (e.toString().contains('Failed host lookup') ||
+          e.toString().contains('SocketException') ||
+          e.toString().contains('network')) {
+        errorMessage =
+            'لا يوجد اتصال بالإنترنت. تحقق من الاتصال وحاول مرة أخرى';
+      } else if (e.toString().contains('timeout')) {
+        errorMessage = 'انتهت مهلة الاتصال. تحقق من الإنترنت وحاول مرة أخرى';
+      } else if (e.toString().contains('JWTExpiredException') ||
+          e.toString().contains('Invalid')) {
+        errorMessage = 'انتهت جلسة تسجيل الدخول. يرجى تسجيل الدخول مرة أخرى';
+      }
+
+      _setError(errorMessage);
     } finally {
       _setLoading(false);
     }
@@ -108,7 +126,7 @@ class NotificationProvider with ChangeNotifier {
         _updateUnreadCount();
       }
     } catch (e) {
-      if (kDebugMode) print('❌ Error marking notification as read: $e');
+      AppLogger.error('❌ Error marking notification as read', e);
       _setError(e.toString());
     }
   }
@@ -127,7 +145,7 @@ class NotificationProvider with ChangeNotifier {
           .toList();
       _updateUnreadCount();
     } catch (e) {
-      if (kDebugMode) print('❌ Error marking all notifications as read: $e');
+      AppLogger.error('❌ Error marking all notifications as read', e);
       _setError(e.toString());
     }
   }
@@ -140,7 +158,7 @@ class NotificationProvider with ChangeNotifier {
       _notifications.removeWhere((n) => n.id == notificationId);
       _updateUnreadCount();
     } catch (e) {
-      if (kDebugMode) print('❌ Error deleting notification: $e');
+      AppLogger.error('❌ Error deleting notification', e);
       _setError(e.toString());
     }
   }
@@ -156,7 +174,7 @@ class NotificationProvider with ChangeNotifier {
       _notifications.clear();
       _updateUnreadCount();
     } catch (e) {
-      if (kDebugMode) print('❌ Error deleting all notifications: $e');
+      AppLogger.error('❌ Error deleting all notifications', e);
       _setError(e.toString());
     }
   }

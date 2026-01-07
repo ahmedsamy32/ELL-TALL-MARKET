@@ -122,7 +122,7 @@ class BannerCarousel extends StatefulWidget {
   });
 
   @override
-  _BannerCarouselState createState() => _BannerCarouselState();
+  State<BannerCarousel> createState() => _BannerCarouselState();
 }
 
 class _BannerCarouselState extends State<BannerCarousel> {

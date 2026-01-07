@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/banner_model.dart';
 import '../core/logger.dart';
@@ -14,7 +15,48 @@ class BannerService {
   static final SupabaseClient _supabase = Supabase.instance.client;
 
   // ================================
-  // 📢 Banner Retrieval Operations
+  // �️ Image Upload Operations
+  // ================================
+
+  /// رفع صورة البانر إلى Supabase Storage
+  static Future<String?> uploadBannerImage(String imagePath) async {
+    try {
+      AppLogger.info('بدء رفع صورة البانر...');
+
+      final file = File(imagePath);
+      if (!await file.exists()) {
+        throw Exception('ملف الصورة غير موجود');
+      }
+
+      // إنشاء اسم فريد للملف
+      final fileName =
+          'banner_${DateTime.now().millisecondsSinceEpoch}_${imagePath.split('/').last}';
+
+      // رفع الملف إلى bucket 'banners'
+      AppLogger.info('جاري رفع الملف: $fileName');
+      final response = await _supabase.storage
+          .from('banners')
+          .upload(fileName, file);
+
+      if (response.isNotEmpty) {
+        // الحصول على الرابط العام للصورة
+        final publicUrl = _supabase.storage
+            .from('banners')
+            .getPublicUrl(fileName);
+
+        AppLogger.info('تم رفع الصورة بنجاح: $publicUrl');
+        return publicUrl;
+      } else {
+        throw Exception('فشل في رفع الصورة - استجابة فارغة');
+      }
+    } catch (e) {
+      AppLogger.error('خطأ في رفع صورة البانر', e);
+      throw Exception('فشل رفع الصورة: ${e.toString()}');
+    }
+  }
+
+  // ================================
+  // �📢 Banner Retrieval Operations
   // ================================
 
   /// جلب جميع البانرات
@@ -22,24 +64,36 @@ class BannerService {
     bool activeOnly = false,
   }) async {
     try {
+      AppLogger.info('بدء جلب البانرات من قاعدة البيانات...');
+
       var query = _supabase.from('banners').select();
 
       if (activeOnly) {
         query = query
             .eq('is_active', true)
             .lte('start_date', DateTime.now().toIso8601String());
+        AppLogger.info('جلب البانرات النشطة فقط');
       }
 
       final response = await query
-          .order('priority', ascending: false)
           .order('display_order', ascending: true)
           .order('created_at', ascending: false);
+
+      AppLogger.info('تم استلام ${response.length} سجل من قاعدة البيانات');
 
       final banners = (response as List)
           .map((data) => BannerModel.fromMap(data))
           .toList();
 
-      AppLogger.info('تم جلب ${banners.length} بانر');
+      AppLogger.info('تم تحويل ${banners.length} بانر بنجاح');
+
+      // طباعة تفاصيل للتحقق
+      for (var banner in banners) {
+        AppLogger.info(
+          'بانر: ${banner.title} - نشط: ${banner.isActive} - ترتيب: ${banner.displayOrder}',
+        );
+      }
+
       return banners;
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في جلب البانرات: ${e.message}', e);
@@ -73,8 +127,8 @@ class BannerService {
       }
 
       final response = await query
-          .order('priority', ascending: false)
-          .order('display_order', ascending: true);
+          .order('display_order', ascending: true)
+          .order('created_at', ascending: false);
 
       final banners = (response as List)
           .map((data) => BannerModel.fromMap(data))
@@ -181,9 +235,6 @@ class BannerService {
     Map<String, dynamic> updates,
   ) async {
     try {
-      // إضافة updated_at تلقائياً
-      updates['updated_at'] = DateTime.now().toIso8601String();
-
       final response = await _supabase
           .from('banners')
           .update(updates)
@@ -209,10 +260,7 @@ class BannerService {
     try {
       await _supabase
           .from('banners')
-          .update({
-            'is_active': isActive,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
+          .update({'is_active': isActive})
           .eq('id', bannerId);
 
       AppLogger.info(

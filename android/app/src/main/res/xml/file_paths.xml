@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- External storage paths for image_picker -->
+    <external-path name="external_files" path="." />
+    
+    <!-- Cache paths for image_cropper -->
+    <cache-path name="cache" path="." />
+    
+    <!-- Internal app storage -->
+    <files-path name="files" path="." />
+    
+    <!-- External cache directory -->
+    <external-cache-path name="external_cache" path="." />
+</paths>

@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
-import 'package:flutter/foundation.dart';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../core/logger.dart';
 import 'package:ell_tall_market/config/supabase_config.dart';
 
 /// Financial report types
@@ -38,8 +39,6 @@ enum FinancialMetric {
 
 /// Enhanced FinancialService with comprehensive financial management
 class FinancialServiceEnhanced {
-  static const String _logTag = '🏦 FinancialService';
-
   // ===== Singleton Pattern =====
   static FinancialServiceEnhanced? _instance;
   static FinancialServiceEnhanced get instance =>
@@ -66,9 +65,7 @@ class FinancialServiceEnhanced {
     String captainId,
   ) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Getting captain balance details for: $captainId');
-      }
+      AppLogger.info('Getting captain balance details for: $captainId');
 
       // Get all captain transactions
       final transactions = await _supabase
@@ -149,9 +146,7 @@ class FinancialServiceEnhanced {
         'last_updated': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Failed to get captain balance details: $e');
-      }
+      AppLogger.error('Failed to get captain balance details', e);
       return _getEmptyBalanceDetails(captainId);
     }
   }
@@ -159,9 +154,7 @@ class FinancialServiceEnhanced {
   /// Get comprehensive store balance with detailed financial analysis
   Future<Map<String, dynamic>> getStoreBalanceDetails(String storeId) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Getting store balance details for: $storeId');
-      }
+      AppLogger.info('Getting store balance details for: $storeId');
 
       // Get all store transactions
       final transactions = await _supabase
@@ -253,13 +246,11 @@ class FinancialServiceEnhanced {
         'recent_transactions': recentTransactions,
         'monthly_breakdown': monthlyBreakdown,
         'business_analytics': businessAnalytics,
-        'financial_health_score': healthScore,
+        'health_score': healthScore,
         'last_updated': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Failed to get store balance details: $e');
-      }
+      AppLogger.error('Failed to get store balance details', e);
       return _getEmptyStoreBalanceDetails(storeId);
     }
   }
@@ -282,9 +273,7 @@ class FinancialServiceEnhanced {
     DateTime? scheduledDate,
   }) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Recording advanced transaction: $transactionType');
-      }
+      AppLogger.info('Recording advanced transaction: $transactionType');
 
       // Generate transaction ID
       final transactionId = _generateTransactionId();
@@ -343,7 +332,7 @@ class FinancialServiceEnhanced {
         'created_at': transactionData['created_at'],
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to record transaction: $e');
+      AppLogger.error('Failed to record transaction', e);
       return {'success': false, 'error': e.toString()};
     }
   }
@@ -367,9 +356,7 @@ class FinancialServiceEnhanced {
     bool ascending = false,
   }) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Getting advanced transactions with filters...');
-      }
+      AppLogger.info('Getting advanced transactions with filters...');
 
       // Build dynamic query
       var query = _supabase.from('financial_transactions').select('*');
@@ -455,9 +442,7 @@ class FinancialServiceEnhanced {
         },
       };
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Failed to get advanced transactions: $e');
-      }
+      AppLogger.error('❌ Failed to get advanced transactions', e);
       return {
         'transactions': [],
         'total_count': 0,
@@ -480,9 +465,7 @@ class FinancialServiceEnhanced {
     bool includeProjections = false,
   }) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Generating financial report: $reportType');
-      }
+      AppLogger.info('Generating financial report: $reportType');
 
       // Calculate date range based on report type
       final dateRange = _calculateDateRange(reportType, startDate, endDate);
@@ -551,9 +534,7 @@ class FinancialServiceEnhanced {
         },
       };
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Failed to generate financial report: $e');
-      }
+      AppLogger.error('❌ Failed to generate financial report', e);
       return {
         'error': 'Failed to generate financial report: ${e.toString()}',
         'generated_at': DateTime.now().toIso8601String(),
@@ -568,7 +549,7 @@ class FinancialServiceEnhanced {
     List<CurrencyType>? currencies,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Getting financial dashboard data...');
+      AppLogger.info('Getting financial dashboard data...');
 
       final now = DateTime.now();
       final todayStart = DateTime(now.year, now.month, now.day);
@@ -658,7 +639,7 @@ class FinancialServiceEnhanced {
         'last_updated': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get dashboard data: $e');
+      AppLogger.error('❌ Failed to get dashboard data', e);
       return {
         'error': e.toString(),
         'last_updated': DateTime.now().toIso8601String(),
@@ -679,11 +660,9 @@ class FinancialServiceEnhanced {
     List<String>? transactionIds,
   }) async {
     try {
-      if (kDebugMode) {
-        print(
-          '$_logTag Performing advanced settlement for $entityType: $entityId',
-        );
-      }
+      AppLogger.info(
+        'Performing advanced settlement for $entityType: $entityId',
+      );
 
       // Validate settlement
       final validation = await _validateSettlement(
@@ -762,7 +741,7 @@ class FinancialServiceEnhanced {
         'completed_at': settlementRecord['completed_at'],
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Settlement failed: $e');
+      AppLogger.error('❌ Settlement failed', e);
       return {'success': false, 'error': 'Settlement failed: ${e.toString()}'};
     }
   }
@@ -776,9 +755,7 @@ class FinancialServiceEnhanced {
     bool autoResolveDiscrepancies = false,
   }) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Performing reconciliation from $startDate to $endDate');
-      }
+      AppLogger.info('Performing reconciliation from $startDate to $endDate');
 
       // Get all transactions for the period
       final transactionsData = await getAdvancedTransactions(
@@ -860,7 +837,7 @@ class FinancialServiceEnhanced {
         'report': reconciliationReport,
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Reconciliation failed: $e');
+      AppLogger.error('❌ Reconciliation failed', e);
       return {
         'success': false,
         'error': 'Reconciliation failed: ${e.toString()}',
@@ -878,7 +855,7 @@ class FinancialServiceEnhanced {
     Map<String, double>? taxRates,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Calculating tax obligations...');
+      AppLogger.info('Calculating tax obligations...');
 
       // Default tax rates (Egyptian tax system)
       final defaultTaxRates =
@@ -968,7 +945,7 @@ class FinancialServiceEnhanced {
         'calculated_at': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Tax calculation failed: $e');
+      AppLogger.error('❌ Tax calculation failed', e);
       return {
         'error': 'Tax calculation failed: ${e.toString()}',
         'calculated_at': DateTime.now().toIso8601String(),
@@ -1188,9 +1165,9 @@ class FinancialServiceEnhanced {
   /// Cleanup resources
   Future<void> dispose() async {
     try {
-      if (kDebugMode) print('$_logTag ♻️ Financial service disposed');
+      AppLogger.info('♻️ Financial service disposed');
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Error during disposal: $e');
+      AppLogger.warning('⚠️ Error during disposal: $e');
     }
   }
 }

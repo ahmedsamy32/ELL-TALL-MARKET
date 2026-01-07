@@ -1,3 +1,9 @@
+plugins {
+    id("com.android.application") version "8.13.0" apply false
+    id("com.google.gms.google-services") version "4.4.2" apply false
+    id("org.jetbrains.kotlin.android") version "2.1.0" apply false
+}
+
 allprojects {
     repositories {
         google()
@@ -16,8 +22,15 @@ val newBuildDir: Directory =
 rootProject.layout.buildDirectory.value(newBuildDir)
 
 subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
+    val projectDir = project.projectDir.canonicalFile
+    val rootDir = rootProject.projectDir.canonicalFile
+    
+    // Only redirect build directory for projects located within the root project tree
+    // This avoids cross-drive issues on Windows when plugins are in the Pub cache (usually on C:)
+    if (projectDir.path.lowercase().startsWith(rootDir.path.lowercase())) {
+        val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
+        project.layout.buildDirectory.value(newSubprojectBuildDir)
+    }
 
     // Force all Android modules to use compileSdk 36 using reflection to avoid type issues
     afterEvaluate {

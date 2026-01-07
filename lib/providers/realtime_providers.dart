@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../core/logger.dart';
 
 class OrderTrackingProvider with ChangeNotifier {
   final _supabase = Supabase.instance.client;
@@ -121,7 +122,7 @@ class CaptainTrackingProvider with ChangeNotifier {
           })
           .eq('id', captainId);
     } catch (e) {
-      print('خطأ في تحديث موقع الكابتن: $e');
+      AppLogger.error('خطأ في تحديث موقع الكابتن', e);
     }
   }
 
@@ -171,7 +172,7 @@ class LiveAnalyticsProvider with ChangeNotifier {
 
       _liveAnalytics = analytics;
     } catch (e) {
-      print('خطأ في تحديث التحليلات: $e');
+      AppLogger.error('خطأ في تحديث التحليلات', e);
     }
 
     _isLoading = false;
@@ -219,7 +220,7 @@ class LiveAnalyticsProvider with ChangeNotifier {
         'last_updated': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      print('خطأ في حساب التحليلات: $e');
+      AppLogger.error('خطأ في حساب التحليلات', e);
       return {};
     }
   }
@@ -266,7 +267,7 @@ class LiveAnalyticsProvider with ChangeNotifier {
         'daily_stats': analytics,
       };
     } catch (e) {
-      print('خطأ في جلب تحليلات المتجر: $e');
+      AppLogger.error('خطأ في جلب تحليلات المتجر', e);
       return {};
     }
   }
@@ -299,7 +300,7 @@ class LiveAnalyticsProvider with ChangeNotifier {
         'average_order_value': totalOrders > 0 ? totalRevenue / totalOrders : 0,
       };
     } catch (e) {
-      print('خطأ في جلب التحليلات العامة: $e');
+      AppLogger.error('خطأ في جلب التحليلات العامة', e);
       return {};
     }
   }

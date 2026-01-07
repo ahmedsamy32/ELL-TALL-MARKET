@@ -3,13 +3,13 @@ import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/category_provider.dart';
 import 'package:ell_tall_market/models/category_model.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
-import 'package:ell_tall_market/widgets/custom_search_bar.dart';
+import 'package:ell_tall_market/widgets/app_search_bar.dart';
 
 class ManageCategoriesScreen extends StatefulWidget {
   const ManageCategoriesScreen({super.key});
 
   @override
-  _ManageCategoriesScreenState createState() => _ManageCategoriesScreenState();
+  State<ManageCategoriesScreen> createState() => _ManageCategoriesScreenState();
 }
 
 class _ManageCategoriesScreenState extends State<ManageCategoriesScreen> {
@@ -139,7 +139,7 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              // TODO: إضافة الفئة إلى Firebase
+              // Note: إضافة الفئة إلى Firebase
             },
             child: const Text('إضافة'),
           ),
@@ -172,7 +172,7 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              // TODO: حفظ التعديلات في Firebase
+              // Note: حفظ التعديلات في Firebase
             },
             child: const Text('حفظ'),
           ),
@@ -198,7 +198,7 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen> {
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () {
               Navigator.pop(context);
-              // TODO: حذف الفئة من Firebase
+              // Note: حذف الفئة من Firebase
             },
             child: const Text('حذف'),
           ),

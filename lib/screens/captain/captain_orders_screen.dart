@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 import 'package:ell_tall_market/models/order_model.dart' hide OrderStatus;
@@ -52,9 +52,10 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
     final statuses = [
       OrderStatus.pending,
       OrderStatus.confirmed,
-      OrderStatus.inPreparation,
+      OrderStatus.preparing,
       OrderStatus.ready,
-      OrderStatus.onTheWay,
+      OrderStatus.pickedUp,
+      OrderStatus.inTransit,
       OrderStatus.delivered,
     ];
 
@@ -250,13 +251,14 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
         return OrderStatus.confirmed;
       case 'preparing':
       case 'in_preparation':
-        return OrderStatus.inPreparation;
+        return OrderStatus.preparing;
       case 'ready':
         return OrderStatus.ready;
       case 'picked_up':
+        return OrderStatus.pickedUp;
       case 'in_transit':
       case 'on_the_way':
-        return OrderStatus.onTheWay;
+        return OrderStatus.inTransit;
       case 'delivered':
         return OrderStatus.delivered;
       case 'cancelled':
@@ -272,11 +274,13 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
         return Colors.grey;
       case OrderStatus.confirmed:
         return Colors.blue;
-      case OrderStatus.inPreparation:
+      case OrderStatus.preparing:
         return Colors.orange;
       case OrderStatus.ready:
         return Colors.purple;
-      case OrderStatus.onTheWay:
+      case OrderStatus.pickedUp:
+        return Colors.cyan;
+      case OrderStatus.inTransit:
         return Colors.indigo;
       case OrderStatus.delivered:
         return Colors.green;
@@ -291,11 +295,13 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
         return 'في الانتظار';
       case OrderStatus.confirmed:
         return 'تم التأكيد';
-      case OrderStatus.inPreparation:
+      case OrderStatus.preparing:
         return 'يتم التحضير';
       case OrderStatus.ready:
         return 'جاهز للاستلام';
-      case OrderStatus.onTheWay:
+      case OrderStatus.pickedUp:
+        return 'تم الاستلام';
+      case OrderStatus.inTransit:
         return 'في الطريق';
       case OrderStatus.delivered:
         return 'تم التوصيل';
@@ -310,11 +316,13 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
         return 'تأكيد الطلب';
       case OrderStatus.confirmed:
         return 'بدء التحضير';
-      case OrderStatus.inPreparation:
+      case OrderStatus.preparing:
         return 'جاهز للاستلام';
       case OrderStatus.ready:
+        return 'تأكيد الاستلام';
+      case OrderStatus.pickedUp:
         return 'بدء التوصيل';
-      case OrderStatus.onTheWay:
+      case OrderStatus.inTransit:
         return 'تم التسليم';
       default:
         return 'تحديث';
@@ -326,12 +334,14 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
       case OrderStatus.pending:
         return OrderStatus.confirmed;
       case OrderStatus.confirmed:
-        return OrderStatus.inPreparation;
-      case OrderStatus.inPreparation:
+        return OrderStatus.preparing;
+      case OrderStatus.preparing:
         return OrderStatus.ready;
       case OrderStatus.ready:
-        return OrderStatus.onTheWay;
-      case OrderStatus.onTheWay:
+        return OrderStatus.pickedUp;
+      case OrderStatus.pickedUp:
+        return OrderStatus.inTransit;
+      case OrderStatus.inTransit:
         return OrderStatus.delivered;
       default:
         return currentStatus;
@@ -343,9 +353,7 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
       Navigator.pop(context);
       // await Provider.of<OrderProvider>(context, listen: false)
       //     .updateOrderStatus(order.id, newStatus.dbValue);
-      if (kDebugMode) {
-        print('تحديث حالة الطلب: ${order.id} إلى ${newStatus.dbValue}');
-      }
+      AppLogger.info('تحديث حالة الطلب: ${order.id} إلى ${newStatus.dbValue}');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('تم تحديث حالة الطلب بنجاح'),
@@ -353,9 +361,7 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
         ),
       );
     } catch (e) {
-      if (kDebugMode) {
-        print('فشل تحديث حالة الطلب: $e');
-      }
+      AppLogger.error('فشل تحديث حالة الطلب', e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('فشل تحديث حالة الطلب: ${e.toString()}'),

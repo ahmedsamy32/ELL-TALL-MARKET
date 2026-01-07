@@ -4,7 +4,7 @@ class ManageCouponsScreen extends StatefulWidget {
   const ManageCouponsScreen({super.key});
 
   @override
-  _ManageCouponsScreenState createState() => _ManageCouponsScreenState();
+  State<ManageCouponsScreen> createState() => _ManageCouponsScreenState();
 }
 
 class _ManageCouponsScreenState extends State<ManageCouponsScreen> {
@@ -82,10 +82,7 @@ class _ManageCouponsScreenState extends State<ManageCouponsScreen> {
         title: const Text("إدارة الكوبونات"),
         centerTitle: true,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _addCoupon,
-          ),
+          IconButton(icon: const Icon(Icons.add), onPressed: _addCoupon),
         ],
       ),
       body: ListView.builder(

@@ -1,7 +1,9 @@
 import 'dart:typed_data';
+import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../models/merchant_model.dart';
 import '../core/logger.dart';
+import '../models/order_enums.dart';
+import '../models/merchant_model.dart';
 
 /// خدمة إدارة التجار
 /// متوافقة مع الوثائق الرسمية لـ Supabase v2.10.2
@@ -53,6 +55,9 @@ class MerchantService {
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في تسجيل التاجر: ${e.message}', e);
       throw Exception('فشل تسجيل التاجر: ${e.message}');
+    } on SocketException catch (e) {
+      AppLogger.error('لا يوجد اتصال بالشبكة أثناء تسجيل التاجر', e);
+      throw NetworkException('NETWORK_UNAVAILABLE');
     } catch (e) {
       AppLogger.error('خطأ في تسجيل التاجر', e);
       throw Exception('فشل تسجيل التاجر: ${e.toString()}');
@@ -72,6 +77,9 @@ class MerchantService {
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في جلب التاجر: ${e.message}', e);
       return null;
+    } on SocketException catch (e) {
+      AppLogger.error('لا يوجد اتصال بالشبكة أثناء جلب التاجر', e);
+      throw NetworkException('NETWORK_UNAVAILABLE');
     } catch (e) {
       AppLogger.error('خطأ في جلب التاجر', e);
       return null;
@@ -96,6 +104,9 @@ class MerchantService {
         e,
       );
       return null;
+    } on SocketException catch (e) {
+      AppLogger.error('لا يوجد اتصال بالشبكة أثناء جلب التاجر بالبروفايل', e);
+      throw NetworkException('NETWORK_UNAVAILABLE');
     } catch (e) {
       AppLogger.error('خطأ في جلب التاجر بالبروفايل', e);
       return null;
@@ -194,46 +205,33 @@ class MerchantService {
   }
 
   /// تحديث معلومات التاجر
+  /// الأعمدة المتاحة في جدول merchants:
+  /// - store_name, store_description, address
+  /// - latitude, longitude
+  /// - is_verified
   static Future<MerchantModel?> updateMerchant({
     required String merchantId,
-    String? businessName,
-    String? businessType,
-    String? businessAddress,
-    String? contactPhone,
-    String? logoUrl,
-    bool? isActive,
-    Map<String, dynamic>? businessHours,
-    List<String>? businessCategories,
-    String? taxId,
-    String? licenseNumber,
-    Map<String, dynamic>? bankDetails,
-    Map<String, dynamic>? socialMedia,
-    String? verificationStatus,
-    Map<String, dynamic>? metadata,
+    String? storeName,
+    String? storeDescription,
+    String? address,
+    double? latitude,
+    double? longitude,
+    bool? isVerified,
   }) async {
     try {
       final data = <String, dynamic>{
         'updated_at': DateTime.now().toIso8601String(),
       };
 
-      if (businessName != null) data['business_name'] = businessName;
-      if (businessType != null) data['business_type'] = businessType;
-      if (businessAddress != null) data['business_address'] = businessAddress;
-      if (contactPhone != null) data['contact_phone'] = contactPhone;
-      if (logoUrl != null) data['logo_url'] = logoUrl;
-      if (isActive != null) data['is_active'] = isActive;
-      if (businessHours != null) data['business_hours'] = businessHours;
-      if (businessCategories != null) {
-        data['business_categories'] = businessCategories;
+      // Map to actual merchants table columns
+      if (storeName != null) data['store_name'] = storeName;
+      if (storeDescription != null) {
+        data['store_description'] = storeDescription;
       }
-      if (taxId != null) data['tax_id'] = taxId;
-      if (licenseNumber != null) data['license_number'] = licenseNumber;
-      if (bankDetails != null) data['bank_details'] = bankDetails;
-      if (socialMedia != null) data['social_media'] = socialMedia;
-      if (verificationStatus != null) {
-        data['verification_status'] = verificationStatus;
-      }
-      if (metadata != null) data['metadata'] = metadata;
+      if (address != null) data['address'] = address;
+      if (latitude != null) data['latitude'] = latitude;
+      if (longitude != null) data['longitude'] = longitude;
+      if (isVerified != null) data['is_verified'] = isVerified;
 
       final response = await _supabase
           .from('merchants')
@@ -242,7 +240,7 @@ class MerchantService {
           .select('*, profiles(*)')
           .single();
 
-      AppLogger.info('تم تحديث التاجر: ${response['business_name']}');
+      AppLogger.info('تم تحديث التاجر: ${response['store_name']}');
       return MerchantModel.fromMap(response);
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في تحديث التاجر: ${e.message}', e);
@@ -256,15 +254,27 @@ class MerchantService {
   /// حذف تاجر
   static Future<bool> deleteMerchant(String merchantId) async {
     try {
-      // التحقق من عدم وجود منتجات أو طلبات نشطة
-      final products = await _supabase
-          .from('products')
+      // جلب المتاجر للتاجر أولاً
+      final storesResponse = await _supabase
+          .from('stores')
           .select('id')
           .eq('merchant_id', merchantId);
 
-      if (products.isNotEmpty) {
-        AppLogger.error('لا يمكن حذف التاجر لأنه يحتوي على منتجات', null);
-        throw Exception('لا يمكن حذف التاجر لأنه يحتوي على منتجات');
+      // التحقق من عدم وجود منتجات أو طلبات نشطة
+      if (storesResponse.isNotEmpty) {
+        final storeIds = (storesResponse as List)
+            .map((s) => s['id'] as String)
+            .toList();
+
+        final products = await _supabase
+            .from('products')
+            .select('id')
+            .inFilter('store_id', storeIds);
+
+        if (products.isNotEmpty) {
+          AppLogger.error('لا يمكن حذف التاجر لأنه يحتوي على منتجات', null);
+          throw Exception('لا يمكن حذف التاجر لأنه يحتوي على منتجات');
+        }
       }
 
       await _supabase.from('merchants').delete().eq('id', merchantId);
@@ -289,23 +299,48 @@ class MerchantService {
     String merchantId,
   ) async {
     try {
-      // جلب عدد المنتجات
-      final products = await _supabase
-          .from('products')
+      // جلب المتاجر للتاجر أولاً
+      final storesResponse = await _supabase
+          .from('stores')
           .select('id')
           .eq('merchant_id', merchantId);
 
-      // جلب الطلبات
+      if (storesResponse.isEmpty) {
+        return {
+          'total_products': 0,
+          'total_orders': 0,
+          'total_sales': 0.0,
+          'average_rating': 0.0,
+          'review_count': 0,
+          'pending_orders': 0,
+          'processing_orders': 0,
+          'delivered_orders': 0,
+          'cancelled_orders': 0,
+          'completion_rate': 0.0,
+        };
+      }
+
+      final storeIds = (storesResponse as List)
+          .map((s) => s['id'] as String)
+          .toList();
+
+      // جلب عدد المنتجات من خلال المتاجر
+      final products = await _supabase
+          .from('products')
+          .select('id')
+          .inFilter('store_id', storeIds);
+
+      // جلب الطلبات من خلال المتاجر
       final orders = await _supabase
           .from('orders')
           .select('*')
-          .eq('merchant_id', merchantId);
+          .inFilter('store_id', storeIds);
 
       // حساب الإحصائيات
       final totalProducts = products.length;
       final totalOrders = orders.length;
       final totalSales = orders
-          .where((o) => o['status'] == 'delivered')
+          .where((o) => o['status'] == OrderStatus.delivered.value)
           .fold<double>(
             0.0,
             (sum, o) => sum + (o['total_amount'] as num).toDouble(),
@@ -313,9 +348,10 @@ class MerchantService {
 
       // جلب التقييمات
       final reviews = await _supabase
-          .from('merchant_reviews')
+          .from('reviews')
           .select('rating')
-          .eq('merchant_id', merchantId);
+          .eq('target_type', 'store')
+          .eq('target_id', merchantId);
 
       final averageRating = reviews.isNotEmpty
           ? reviews.fold<double>(
@@ -327,16 +363,16 @@ class MerchantService {
 
       // إحصائيات الطلبات حسب الحالة
       final pendingOrders = orders
-          .where((o) => o['status'] == 'pending')
+          .where((o) => o['status'] == OrderStatus.pending.value)
           .length;
       final processingOrders = orders
-          .where((o) => o['status'] == 'processing')
+          .where((o) => o['status'] == OrderStatus.preparing.value)
           .length;
       final deliveredOrders = orders
-          .where((o) => o['status'] == 'delivered')
+          .where((o) => o['status'] == OrderStatus.delivered.value)
           .length;
       final cancelledOrders = orders
-          .where((o) => o['status'] == 'cancelled')
+          .where((o) => o['status'] == OrderStatus.cancelled.value)
           .length;
 
       return {
@@ -524,19 +560,17 @@ class MerchantService {
   // ================================
 
   /// تغيير حالة النشاط
+  /// ملاحظة: جدول merchants لا يحتوي على عمود is_active
+  /// يجب استخدام جدول stores لإدارة حالة النشاط
+  @Deprecated('Use StoreService to manage store active status')
   static Future<bool> toggleMerchantStatus(String merchantId) async {
     try {
-      final merchant = await getMerchantById(merchantId);
-      if (merchant == null) return false;
-
-      final newStatus = !merchant.isActive;
-
-      await updateMerchant(merchantId: merchantId, isActive: newStatus);
-
-      AppLogger.info(
-        'تم تغيير حالة التاجر $merchantId إلى ${newStatus ? "نشط" : "غير نشط"}',
+      // هذا الـ method لا يعمل لأن جدول merchants ليس به is_active
+      // استخدم StoreService.updateStoreFieldsV2 بدلاً منه
+      AppLogger.warning(
+        'toggleMerchantStatus deprecated: use StoreService for is_active',
       );
-      return true;
+      return false;
     } catch (e) {
       AppLogger.error('خطأ في تغيير حالة التاجر', e);
       return false;
@@ -637,23 +671,27 @@ class MerchantService {
     required String fileName,
   }) async {
     try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) {
+        throw Exception('يجب تسجيل الدخول قبل رفع الصور');
+      }
       final fileExt = fileName.split('.').last;
-      final filePath = 'merchants/$merchantId/logo.$fileExt';
+      // التوافق مع سياسات bucket 'avatars': أول مجلد = userId
+      final filePath = '$userId/merchants/$merchantId/logo.$fileExt';
 
       // رفع الصورة
       await _supabase.storage
-          .from('merchant-images')
+          .from('avatars')
           .uploadBinary(filePath, imageBytes);
 
       // الحصول على الرابط العام
-      final imageUrl = _supabase.storage
-          .from('merchant-images')
-          .getPublicUrl(filePath);
+      final imageUrl = _supabase.storage.from('avatars').getPublicUrl(filePath);
 
-      // تحديث التاجر بالشعار الجديد
-      await updateMerchant(merchantId: merchantId, logoUrl: imageUrl);
+      // ملاحظة: جدول merchants لا يحتوي على عمود logo_url
+      // يجب حفظ الصورة في جدول stores بدلاً من ذلك
+      // await StoreService.updateStoreFieldsV2(storeId: storeId, imageUrl: imageUrl);
 
-      AppLogger.info('تم رفع شعار التاجر');
+      AppLogger.info('تم رفع شعار التاجر (يُحفظ في stores فقط)');
       return imageUrl;
     } on StorageException catch (e) {
       AppLogger.error('Storage خطأ في رفع شعار التاجر: ${e.message}', e);
@@ -670,25 +708,26 @@ class MerchantService {
       final merchant = await getMerchantById(merchantId);
       if (merchant == null ||
           merchant.logoUrl == null ||
-          merchant.logoUrl!.isEmpty)
+          merchant.logoUrl!.isEmpty) {
         return false;
+      }
 
       // استخراج مسار الملف من الرابط
       final uri = Uri.parse(merchant.logoUrl!);
       final pathSegments = uri.pathSegments;
-      final bucketIndex = pathSegments.indexOf('merchant-images');
+      final bucketIndex = pathSegments.indexOf('avatars');
 
       if (bucketIndex != -1 && bucketIndex < pathSegments.length - 1) {
         final filePath = pathSegments.sublist(bucketIndex + 1).join('/');
 
         // حذف الصورة من التخزين
-        await _supabase.storage.from('merchant-images').remove([filePath]);
+        await _supabase.storage.from('avatars').remove([filePath]);
       }
 
-      // إزالة رابط الشعار من التاجر
-      await updateMerchant(merchantId: merchantId, logoUrl: null);
+      // ملاحظة: جدول merchants لا يحتوي على عمود logo_url
+      // الشعار محفوظ في جدول stores فقط
 
-      AppLogger.info('تم حذف شعار التاجر');
+      AppLogger.info('تم حذف شعار التاجر من التخزين');
       return true;
     } on StorageException catch (e) {
       AppLogger.error('Storage خطأ في حذف شعار التاجر: ${e.message}', e);
@@ -977,4 +1016,11 @@ class MerchantService {
 
     return true;
   }
+}
+
+class NetworkException implements Exception {
+  final String message;
+  NetworkException(this.message);
+  @override
+  String toString() => message;
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/utils/snackbar_helper.dart';
@@ -8,15 +9,19 @@ import 'package:ell_tall_market/widgets/password_strength_indicator.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/services/network_manager.dart';
 import 'package:flutter/services.dart';
+import 'dart:async';
+import 'package:ell_tall_market/services/merchant_draft_service.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 
   @override
-  _RegisterScreenState createState() => _RegisterScreenState();
+  State<RegisterScreen> createState() => _RegisterScreenState();
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  // Draft save debounce
+  Timer? _draftSaveTimer;
   // بناء صندوق الشروط والأحكام
   Widget _buildTermsCheckbox(ThemeData theme) {
     return TweenAnimationBuilder(
@@ -86,10 +91,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+
+  // FocusNodes للتحكم في الانتقال بين الحقول
+  final _nameFocus = FocusNode();
+  final _emailFocus = FocusNode();
+  final _phoneFocus = FocusNode();
+  final _passwordFocus = FocusNode();
+  final _confirmPasswordFocus = FocusNode();
+
   bool _agreeToTerms = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   String _currentPassword = '';
+  AutovalidateMode _autovalidateMode = AutovalidateMode.disabled;
 
   @override
   void initState() {
@@ -100,16 +114,59 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _currentPassword = _passwordController.text;
       });
     });
+
+    // حفظ مسودة البيانات الشخصية تلقائياً (بدون كلمات المرور)
+    _nameController.addListener(_scheduleDraftSave);
+    _emailController.addListener(_scheduleDraftSave);
+    _phoneController.addListener(_scheduleDraftSave);
+
+    // استرجاع المسودة إن وجدت
+    _restoreDraftIfAny();
   }
 
   @override
   void dispose() {
+    _draftSaveTimer?.cancel();
     _nameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _nameFocus.dispose();
+    _emailFocus.dispose();
+    _phoneFocus.dispose();
+    _passwordFocus.dispose();
+    _confirmPasswordFocus.dispose();
     super.dispose();
+  }
+
+  // Draft persistence helpers (client registration)
+  void _scheduleDraftSave() {
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = Timer(const Duration(milliseconds: 500), _saveDraftNow);
+  }
+
+  Future<void> _saveDraftNow() async {
+    final draft = MerchantDraft(
+      fullName: _nameController.text.trim(),
+      email: _emailController.text.trim(),
+      phone: _phoneController.text.trim(),
+    );
+    await MerchantDraftService.save(draft);
+  }
+
+  Future<void> _restoreDraftIfAny() async {
+    final draft = await MerchantDraftService.load();
+    if (draft == null) return;
+    if (draft.fullName?.isNotEmpty == true) {
+      _nameController.text = draft.fullName!;
+    }
+    if (draft.email?.isNotEmpty == true) {
+      _emailController.text = draft.email!;
+    }
+    if (draft.phone?.isNotEmpty == true) {
+      _phoneController.text = draft.phone!;
+    }
   }
 
   // دالة مساعدة للعمليات التي تحتاج فحص الإنترنت
@@ -136,6 +193,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         errorMessage.contains('SSL') ||
         errorMessage.contains('TLS')) {
       return 'مشكلة في أمان الاتصال 🔒\n\nيرجى:\n• التحقق من تاريخ ووقت الجهاز\n• المحاولة مرة أخرى\n• الاتصال بالدعم الفني';
+    } else if (errorMessage.contains('over_email_send_rate_limit')) {
+      // استخراج عدد الثواني من رسالة الخطأ
+      final match = RegExp(r'after (\d+) seconds').firstMatch(errorMessage);
+      final seconds = match != null ? match.group(1) : '60';
+      return 'تم إرسال عدد كبير من الرسائل 📨\n\nيرجى الانتظار $seconds ثانية والمحاولة مرة أخرى';
     } else if (errorMessage.contains('User already registered') ||
         errorMessage.contains('already exists') ||
         errorMessage.contains('email_already_verified')) {
@@ -152,19 +214,35 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   // دالة مساعدة للتنقل لشاشة تأكيد البريد الإلكتروني
-  Future<void> _navigateToEmailConfirmation(String email) async {
+  Future<void> _navigateToEmailConfirmation(
+    String email,
+    String password,
+  ) async {
     await Future.delayed(const Duration(milliseconds: 800));
     if (mounted) {
       Navigator.pushReplacementNamed(
         context,
         AppRoutes.emailConfirmation,
-        arguments: {'email': email},
+        arguments: {
+          'email': email,
+          'password': password, // إرسال كلمة المرور للتحقق
+        },
       );
     }
   }
 
   Future<void> _handleRegistration(SupabaseProvider authProvider) async {
-    if (_formKey.currentState!.validate()) {
+    // تفعيل التحقق بعد أول محاولة تسجيل
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      setState(() => _autovalidateMode = AutovalidateMode.onUserInteraction);
+      SnackBarHelper.showWarning(
+        context,
+        '⚠️ يرجى تصحيح الأخطاء في النموذج أولاً',
+      );
+      return;
+    }
+
+    if (_formKey.currentState?.validate() ?? false) {
       if (!_agreeToTerms) {
         SnackBarHelper.showWarning(
           context,
@@ -184,16 +262,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final userName = _nameController.text.trim();
       final userPhone = _phoneController.text.trim();
 
-      // إظهار مؤشر التحميل
-      SnackBarHelper.showLoading(context, '🔄 جاري فحص البيانات...');
-
       try {
-        AppLogger.debug("بدء السيناريو: فحص الإيميل $userEmail");
+        AppLogger.debug("🔄 بدء السيناريو: فحص البريد $userEmail");
 
-        // الخطوة الأولى: محاولة تسجيل دخول صامت للتحقق من حالة الحساب
-        AppLogger.debug("الخطوة 1: محاولة تسجيل دخول صامت...");
+        // ═══════════════════════════════════════════════════════════════
+        // 🔍 السيناريو 1: التحقق من وجود البريد في قاعدة البيانات
+        // ═══════════════════════════════════════════════════════════════
+        if (!mounted) return;
+        SnackBarHelper.showLoading(context, '🔄 جاري فحص البيانات...');
 
-        final signInResult = await authProvider.silentSignIn();
+        final existingProfile = await Supabase.instance.client
+            .from('profiles')
+            .select('id, email, role')
+            .eq('email', userEmail)
+            .maybeSingle();
 
         if (!mounted) {
           AppLogger.warning("الشاشة غير مركبة - إنهاء العملية");
@@ -202,20 +284,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
         ScaffoldMessenger.of(context).clearSnackBars();
 
-        if (signInResult == true) {
-          // الحالة 1: الحساب موجود ومؤكد - توجيه مباشرة لتسجيل الدخول
+        if (existingProfile != null) {
+          // ═══════════════════════════════════════════════════════════
+          // ⚠️ السيناريو 2: البريد مسجل مسبقاً
+          // ═══════════════════════════════════════════════════════════
           AppLogger.info(
-            "الحالة 1: الحساب موجود ومؤكد - توجيه مباشرة لتسجيل الدخول",
+            "السيناريو 2: البريد مسجل مسبقاً (${existingProfile['role']}) - توجيه لتسجيل الدخول",
           );
 
-          // إظهار رسالة إعلامية ثم الانتقال مباشرة لصفحة تسجيل الدخول
           SnackBarHelper.showInfo(
             context,
-            '✅ هذا البريد مسجل ومؤكد مسبقاً. سيتم توجيهك لتسجيل الدخول.',
+            '✅ هذا البريد مسجل مسبقاً. سيتم توجيهك لتسجيل الدخول.',
             duration: const Duration(seconds: 2),
           );
 
-          // الانتظار قليلاً ثم الانتقال مباشرة لصفحة تسجيل الدخول
           await Future.delayed(const Duration(milliseconds: 1500));
           if (mounted) {
             Navigator.pushReplacementNamed(
@@ -227,8 +309,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
           return;
         }
 
-        // الحالة 2: الإيميل غير مسجل - إنشاء حساب جديد
-        AppLogger.debug("الحالة 2: الإيميل غير مسجل - إنشاء حساب جديد");
+        // ═══════════════════════════════════════════════════════════
+        // ✨ السيناريو 3: البريد غير مسجل - إنشاء حساب جديد
+        // ═══════════════════════════════════════════════════════════
+        AppLogger.debug("السيناريو 3: البريد غير مسجل - إنشاء حساب جديد");
         SnackBarHelper.showLoading(context, '🔄 جاري إنشاء الحساب...');
 
         final registerResult = await authProvider.signUp(
@@ -246,7 +330,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
         ScaffoldMessenger.of(context).clearSnackBars();
 
-        if (registerResult == true) {
+        if (registerResult?.user != null) {
           AppLogger.info("نجح إنشاء الحساب الجديد - توجيه لشاشة التأكيد");
 
           SnackBarHelper.showSuccess(
@@ -255,9 +339,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
             duration: const Duration(seconds: 3),
           );
 
-          await _navigateToEmailConfirmation(userEmail);
+          // مسح المسودة بعد نجاح إنشاء الحساب
+          await MerchantDraftService.clear();
+
+          await _navigateToEmailConfirmation(userEmail, userPassword);
         } else {
-          AppLogger.warning("فشل في إنشاء الحساب الجديد");
+          if (!mounted) return;
+          SnackBarHelper.showLoading(context, '🔄 جاري إنشاء الحساب...');
 
           final errorMessage = authProvider.errorMessage ?? 'حدث خطأ غير متوقع';
           String userFriendlyMessage = _getErrorMessage(errorMessage);
@@ -301,6 +389,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     try {
       AppLogger.debug("فحص الاتصال قبل تسجيل Google...");
       if (!await _checkInternetAndShowDialog()) return;
+
+      if (!mounted) return;
 
       AppLogger.debug("بدء تسجيل دخول Google...");
       final authProvider = Provider.of<SupabaseProvider>(
@@ -360,6 +450,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     try {
       AppLogger.debug("فحص الاتصال قبل تسجيل Facebook...");
       if (!await _checkInternetAndShowDialog()) return;
+
+      if (!mounted) return;
 
       AppLogger.debug("بدء تسجيل دخول Facebook...");
       final authProvider = Provider.of<SupabaseProvider>(
@@ -636,6 +728,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       padding: const EdgeInsets.all(32),
                       child: Form(
                         key: _formKey,
+                        autovalidateMode: _autovalidateMode,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -703,6 +796,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               hintText: "أحمد سامي عبدالهادي",
                               icon: Icons.person_outline_rounded,
                               keyboardType: TextInputType.name,
+                              textInputAction: TextInputAction.next,
+                              focusNode: _nameFocus,
+                              onFieldSubmitted: (_) =>
+                                  _emailFocus.requestFocus(),
                               validator: Validators.validateName,
                               delay: 100,
                             ),
@@ -713,6 +810,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               hintText: "example@email.com",
                               icon: Icons.email_outlined,
                               keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.next,
+                              focusNode: _emailFocus,
+                              onFieldSubmitted: (_) =>
+                                  _phoneFocus.requestFocus(),
                               validator: Validators.validateEmail,
                               delay: 200,
                             ),
@@ -724,6 +825,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               icon: Icons.phone_outlined,
                               keyboardType: TextInputType.phone,
                               prefixText: "+20 🇪🇬 ",
+                              textInputAction: TextInputAction.next,
+                              focusNode: _phoneFocus,
+                              onFieldSubmitted: (_) =>
+                                  _passwordFocus.requestFocus(),
                               validator: Validators.validatePhone,
                               delay: 300,
                             ),
@@ -734,6 +839,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               hintText: "أدخل كلمة مرور قوية",
                               icon: Icons.lock_outline_rounded,
                               isPassword: true,
+                              textInputAction: TextInputAction.next,
+                              focusNode: _passwordFocus,
+                              onFieldSubmitted: (_) =>
+                                  _confirmPasswordFocus.requestFocus(),
                               validator: Validators.validatePassword,
                               delay: 400,
                             ),
@@ -761,6 +870,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               hintText: "أعد كتابة كلمة المرور",
                               icon: Icons.lock_rounded,
                               isPassword: true,
+                              textInputAction: TextInputAction.done,
+                              focusNode: _confirmPasswordFocus,
+                              onFieldSubmitted: (_) =>
+                                  _handleRegistration(authProvider),
                               validator: (value) =>
                                   Validators.validateConfirmPassword(
                                     value,
@@ -818,6 +931,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     TextInputType? keyboardType,
     bool isPassword = false,
     String? prefixText,
+    TextInputAction? textInputAction,
+    void Function(String)? onFieldSubmitted,
+    FocusNode? focusNode,
   }) {
     // تحديد متغير الإخفاء حسب نوع الحقل
     bool obscureText = false;
@@ -854,6 +970,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 validator: validator,
                 keyboardType: keyboardType,
                 obscureText: obscureText,
+                textInputAction: textInputAction,
+                onFieldSubmitted: onFieldSubmitted,
+                focusNode: focusNode,
                 maxLength: label.contains("رقم الهاتف") ? 11 : null,
                 inputFormatters: label.contains("رقم الهاتف")
                     ? [

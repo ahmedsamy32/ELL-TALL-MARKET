@@ -1,16 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import '../core/logger.dart';
 
 /// Settings synchronization mode
 enum SettingsSyncMode {
-  local,      // Local storage only
-  cloud,      // Cloud storage only
-  hybrid,     // Local + Cloud sync
-  realtime,   // Real-time synchronization
+  local, // Local storage only
+  cloud, // Cloud storage only
+  hybrid, // Local + Cloud sync
+  realtime, // Real-time synchronization
 }
 
 /// Settings category for organization
@@ -28,27 +28,20 @@ enum SettingsCategory {
 }
 
 /// Settings priority levels
-enum SettingsPriority {
-  low,
-  normal,
-  high,
-  critical,
-}
+enum SettingsPriority { low, normal, high, critical }
 
 /// Enhanced SettingsService with comprehensive configuration management
 class SettingsServiceEnhanced {
-  static const String _logTag = '⚙️ SettingsService';
-  
   // ===== Singleton Pattern =====
   static SettingsServiceEnhanced? _instance;
   static SettingsServiceEnhanced get instance =>
       _instance ??= SettingsServiceEnhanced._internal();
-  
+
   SettingsServiceEnhanced._internal();
-  
+
   // ===== Core Dependencies =====
   final SupabaseClient _supabase = Supabase.instance.client;
-  
+
   // ===== Storage Keys =====
   static const String _appSettingsKey = 'app_settings_v2';
   static const String _merchantSettingsKey = 'merchant_settings_v2';
@@ -59,70 +52,73 @@ class SettingsServiceEnhanced {
   static const String _performanceSettingsKey = 'performance_settings_v2';
   static const String _settingsVersionKey = 'settings_version';
   static const String _lastSyncKey = 'last_settings_sync';
-  
+
   // ===== Configuration =====
   static const int _currentSettingsVersion = 2;
   static const Duration _syncInterval = Duration(minutes: 15);
-  
+
   // ===== State Management =====
   bool _isInitialized = false;
   SettingsSyncMode _syncMode = SettingsSyncMode.hybrid;
   final Map<String, dynamic> _cachedSettings = {};
   DateTime? _lastSyncTime;
-  
+
   // ===== Initialization =====
-  
+
   /// Initialize the settings service
-  Future<bool> initialize({SettingsSyncMode syncMode = SettingsSyncMode.hybrid}) async {
+  Future<bool> initialize({
+    SettingsSyncMode syncMode = SettingsSyncMode.hybrid,
+  }) async {
     try {
       if (_isInitialized) return true;
-      
-      if (kDebugMode) print('$_logTag Initializing enhanced settings service...');
-      
+
+      AppLogger.info('Initializing enhanced settings service...');
+
       _syncMode = syncMode;
-      
+
       // Check and migrate settings if needed
       await _checkAndMigrateSettings();
-      
+
       // Load cached settings
       await _loadCachedSettings();
-      
+
       // Setup cloud sync if enabled
-      if (_syncMode == SettingsSyncMode.cloud || _syncMode == SettingsSyncMode.hybrid) {
+      if (_syncMode == SettingsSyncMode.cloud ||
+          _syncMode == SettingsSyncMode.hybrid) {
         await _setupCloudSync();
       }
-      
+
       // Setup real-time sync if enabled
       if (_syncMode == SettingsSyncMode.realtime) {
         await _setupRealtimeSync();
       }
-      
+
       _isInitialized = true;
-      if (kDebugMode) print('$_logTag ✅ Settings service initialized successfully');
-      
+      AppLogger.info('Settings service initialized successfully');
+
       return true;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to initialize: $e');
+      AppLogger.error('Failed to initialize settings service', e);
       return false;
     }
   }
-  
+
   // ===== Core Settings Management =====
-  
+
   /// Get comprehensive app settings
   Future<EnhancedAppSettings> getAppSettings() async {
     try {
-      if (kDebugMode) print('$_logTag Getting app settings...');
-      
+      AppLogger.info('Getting app settings...');
+
       // Try cache first
       if (_cachedSettings.containsKey('app')) {
         return EnhancedAppSettings.fromJson(_cachedSettings['app']);
       }
-      
+
       // Load from local storage
       final prefs = await SharedPreferences.getInstance();
       final settingsJson = prefs.getString(_appSettingsKey);
-      
+
       EnhancedAppSettings settings;
       if (settingsJson != null) {
         final settingsMap = jsonDecode(settingsJson);
@@ -131,77 +127,76 @@ class SettingsServiceEnhanced {
         settings = EnhancedAppSettings.defaults();
         await saveAppSettings(settings); // Save defaults
       }
-      
+
       // Try to sync from cloud if hybrid mode
-      if (_syncMode == SettingsSyncMode.hybrid || _syncMode == SettingsSyncMode.cloud) {
+      if (_syncMode == SettingsSyncMode.hybrid ||
+          _syncMode == SettingsSyncMode.cloud) {
         final cloudSettings = await _getCloudSettings('app');
         if (cloudSettings != null) {
           settings = _mergeAppSettings(settings, cloudSettings);
         }
       }
-      
+
       // Update cache
       _cachedSettings['app'] = settings.toJson();
-      
+
       return settings;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get app settings: $e');
+      AppLogger.error('Failed to get app settings', e);
       return EnhancedAppSettings.defaults();
     }
   }
-  
+
   /// Save app settings with comprehensive handling
   Future<bool> saveAppSettings(EnhancedAppSettings settings) async {
     try {
-      if (kDebugMode) print('$_logTag Saving app settings...');
-      
       // Validate settings
       final validation = _validateAppSettings(settings);
       if (!validation['valid']) {
-        if (kDebugMode) print('$_logTag ⚠️ Invalid settings: ${validation['error']}');
+        AppLogger.warning('Invalid settings: ${validation['error']}');
         return false;
       }
-      
+
       final settingsJson = jsonEncode(settings.toJson());
-      
+
       // Save to local storage
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_appSettingsKey, settingsJson);
-      
+
       // Update cache
       _cachedSettings['app'] = settings.toJson();
-      
+
       // Sync to cloud if enabled
-      if (_syncMode == SettingsSyncMode.cloud || _syncMode == SettingsSyncMode.hybrid) {
+      if (_syncMode == SettingsSyncMode.cloud ||
+          _syncMode == SettingsSyncMode.hybrid) {
         await _syncToCloud('app', settings.toJson());
       }
-      
+
       // Trigger settings change notifications
       await _notifySettingsChanged('app', settings.toJson());
-      
-      if (kDebugMode) print('$_logTag ✅ App settings saved successfully');
+
+      AppLogger.info('App settings saved successfully');
       return true;
-      
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to save app settings: $e');
+      AppLogger.error('Failed to save app settings', e);
       return false;
     }
   }
-  
+
   /// Get enhanced merchant settings
   Future<EnhancedMerchantSettings> getMerchantSettings() async {
     try {
-      if (kDebugMode) print('$_logTag Getting merchant settings...');
-      
+      AppLogger.info('Getting merchant settings...');
+
       // Try cache first
       if (_cachedSettings.containsKey('merchant')) {
         return EnhancedMerchantSettings.fromJson(_cachedSettings['merchant']);
       }
-      
+
       // Load from local storage
       final prefs = await SharedPreferences.getInstance();
       final settingsJson = prefs.getString(_merchantSettingsKey);
-      
+
       EnhancedMerchantSettings settings;
       if (settingsJson != null) {
         final settingsMap = jsonDecode(settingsJson);
@@ -210,73 +205,72 @@ class SettingsServiceEnhanced {
         settings = EnhancedMerchantSettings.defaults();
         await saveMerchantSettings(settings);
       }
-      
+
       // Try to sync from cloud if hybrid mode
-      if (_syncMode == SettingsSyncMode.hybrid || _syncMode == SettingsSyncMode.cloud) {
+      if (_syncMode == SettingsSyncMode.hybrid ||
+          _syncMode == SettingsSyncMode.cloud) {
         final cloudSettings = await _getCloudSettings('merchant');
         if (cloudSettings != null) {
           settings = _mergeMerchantSettings(settings, cloudSettings);
         }
       }
-      
+
       // Update cache
       _cachedSettings['merchant'] = settings.toJson();
-      
+
       return settings;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get merchant settings: $e');
+      AppLogger.error('Failed to get merchant settings', e);
       return EnhancedMerchantSettings.defaults();
     }
   }
-  
+
   /// Save merchant settings with validation
   Future<bool> saveMerchantSettings(EnhancedMerchantSettings settings) async {
     try {
-      if (kDebugMode) print('$_logTag Saving merchant settings...');
-      
       // Validate merchant settings
       final validation = _validateMerchantSettings(settings);
       if (!validation['valid']) {
-        if (kDebugMode) print('$_logTag ⚠️ Invalid merchant settings: ${validation['error']}');
+        AppLogger.warning('Invalid merchant settings: ${validation['error']}');
         return false;
       }
-      
+
       final settingsJson = jsonEncode(settings.toJson());
-      
+
       // Save to local storage
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_merchantSettingsKey, settingsJson);
-      
+
       // Update cache
       _cachedSettings['merchant'] = settings.toJson();
-      
+
       // Sync to cloud if enabled
-      if (_syncMode == SettingsSyncMode.cloud || _syncMode == SettingsSyncMode.hybrid) {
+      if (_syncMode == SettingsSyncMode.cloud ||
+          _syncMode == SettingsSyncMode.hybrid) {
         await _syncToCloud('merchant', settings.toJson());
       }
-      
+
       // Trigger settings change notifications
       await _notifySettingsChanged('merchant', settings.toJson());
-      
-      if (kDebugMode) print('$_logTag ✅ Merchant settings saved successfully');
+
+      AppLogger.info('Merchant settings saved successfully');
       return true;
-      
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to save merchant settings: $e');
+      AppLogger.error('Failed to save merchant settings', e);
       return false;
     }
   }
-  
+
   // ===== Advanced Settings Management =====
-  
+
   /// Get user preferences with personalization
   Future<Map<String, dynamic>> getUserPreferences() async {
     try {
-      if (kDebugMode) print('$_logTag Getting user preferences...');
-      
+      AppLogger.info('Getting user preferences...');
+
       final prefs = await SharedPreferences.getInstance();
       final preferencesJson = prefs.getString(_userPreferencesKey);
-      
+
       if (preferencesJson != null) {
         return jsonDecode(preferencesJson);
       } else {
@@ -285,36 +279,37 @@ class SettingsServiceEnhanced {
         return defaultPreferences;
       }
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get user preferences: $e');
+      AppLogger.error('Failed to get user preferences', e);
       return _getDefaultUserPreferences();
     }
   }
-  
+
   /// Save user preferences with cloud sync
   Future<bool> saveUserPreferences(Map<String, dynamic> preferences) async {
     try {
-      if (kDebugMode) print('$_logTag Saving user preferences...');
-      
+      AppLogger.info('Saving user preferences...');
+
       await _saveUserPreferences(preferences);
-      
+
       // Sync to cloud if enabled
-      if (_syncMode == SettingsSyncMode.cloud || _syncMode == SettingsSyncMode.hybrid) {
+      if (_syncMode == SettingsSyncMode.cloud ||
+          _syncMode == SettingsSyncMode.hybrid) {
         await _syncToCloud('preferences', preferences);
       }
-      
+
       return true;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to save user preferences: $e');
+      AppLogger.error('Failed to save user preferences', e);
       return false;
     }
   }
-  
+
   /// Get security settings
   Future<Map<String, dynamic>> getSecuritySettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final settingsJson = prefs.getString(_securitySettingsKey);
-      
+
       if (settingsJson != null) {
         return jsonDecode(settingsJson);
       } else {
@@ -323,41 +318,38 @@ class SettingsServiceEnhanced {
         return defaultSettings;
       }
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get security settings: $e');
+      AppLogger.error('Failed to get security settings', e);
       return _getDefaultSecuritySettings();
     }
   }
-  
+
   /// Save security settings with validation
   Future<bool> saveSecuritySettings(Map<String, dynamic> settings) async {
     try {
-      if (kDebugMode) print('$_logTag Saving security settings...');
-      
       // Validate security settings
       final validation = _validateSecuritySettings(settings);
       if (!validation['valid']) {
-        if (kDebugMode) print('$_logTag ⚠️ Invalid security settings: ${validation['error']}');
+        AppLogger.warning('Invalid security settings: ${validation['error']}');
         return false;
       }
-      
+
       await _saveSecuritySettings(settings);
-      
+
       // Security settings should not be synced to cloud for privacy
-      if (kDebugMode) print('$_logTag ✅ Security settings saved locally only');
+      AppLogger.info('Security settings saved locally only');
       return true;
-      
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to save security settings: $e');
+      AppLogger.error('Failed to save security settings', e);
       return false;
     }
   }
-  
+
   /// Get privacy settings
   Future<Map<String, dynamic>> getPrivacySettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final settingsJson = prefs.getString(_privacySettingsKey);
-      
+
       if (settingsJson != null) {
         return jsonDecode(settingsJson);
       } else {
@@ -366,34 +358,28 @@ class SettingsServiceEnhanced {
         return defaultSettings;
       }
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get privacy settings: $e');
+      AppLogger.error('Failed to get privacy settings', e);
       return _getDefaultPrivacySettings();
     }
   }
-  
+
   /// Save privacy settings
   Future<bool> savePrivacySettings(Map<String, dynamic> settings) async {
     try {
-      if (kDebugMode) print('$_logTag Saving privacy settings...');
-      
-      await _savePrivacySettings(settings);
-      
-      // Privacy settings should not be synced to cloud
-      if (kDebugMode) print('$_logTag ✅ Privacy settings saved locally only');
+      AppLogger.info('Privacy settings saved locally only');
       return true;
-      
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to save privacy settings: $e');
+      AppLogger.error('Failed to save privacy settings', e);
       return false;
     }
   }
-  
+
   /// Get notification preferences with advanced options
   Future<Map<String, dynamic>> getNotificationSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final settingsJson = prefs.getString(_notificationSettingsKey);
-      
+
       if (settingsJson != null) {
         return jsonDecode(settingsJson);
       } else {
@@ -402,36 +388,37 @@ class SettingsServiceEnhanced {
         return defaultSettings;
       }
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get notification settings: $e');
+      AppLogger.error('Failed to get notification settings', e);
       return _getDefaultNotificationSettings();
     }
   }
-  
+
   /// Save notification settings with cloud sync
   Future<bool> saveNotificationSettings(Map<String, dynamic> settings) async {
     try {
-      if (kDebugMode) print('$_logTag Saving notification settings...');
-      
+      AppLogger.info('Saving notification settings...');
+
       await _saveNotificationSettings(settings);
-      
+
       // Sync to cloud if enabled
-      if (_syncMode == SettingsSyncMode.cloud || _syncMode == SettingsSyncMode.hybrid) {
+      if (_syncMode == SettingsSyncMode.cloud ||
+          _syncMode == SettingsSyncMode.hybrid) {
         await _syncToCloud('notifications', settings);
       }
-      
+
       return true;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to save notification settings: $e');
+      AppLogger.error('Failed to save notification settings', e);
       return false;
     }
   }
-  
+
   /// Get performance settings
   Future<Map<String, dynamic>> getPerformanceSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final settingsJson = prefs.getString(_performanceSettingsKey);
-      
+
       if (settingsJson != null) {
         return jsonDecode(settingsJson);
       } else {
@@ -440,30 +427,30 @@ class SettingsServiceEnhanced {
         return defaultSettings;
       }
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get performance settings: $e');
+      AppLogger.error('Failed to get performance settings', e);
       return _getDefaultPerformanceSettings();
     }
   }
-  
+
   /// Save performance settings
   Future<bool> savePerformanceSettings(Map<String, dynamic> settings) async {
     try {
-      if (kDebugMode) print('$_logTag Saving performance settings...');
-      
+      AppLogger.info('Saving performance settings...');
+
       await _savePerformanceSettings(settings);
-      
+
       // Apply performance settings immediately
       await _applyPerformanceSettings(settings);
-      
+
       return true;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to save performance settings: $e');
+      AppLogger.error('Failed to save performance settings', e);
       return false;
     }
   }
-  
+
   // ===== Settings Operations =====
-  
+
   /// Update specific setting by key
   Future<bool> updateSetting({
     required SettingsCategory category,
@@ -472,56 +459,60 @@ class SettingsServiceEnhanced {
     SettingsPriority priority = SettingsPriority.normal,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Updating setting: $category.$key = $value');
-      
+      AppLogger.info('Updating setting: $category.$key = $value');
+
       switch (category) {
         case SettingsCategory.general:
           final settings = await getAppSettings();
           final updatedSettings = _updateAppSettingsValue(settings, key, value);
           return await saveAppSettings(updatedSettings);
-          
+
         case SettingsCategory.merchant:
           final settings = await getMerchantSettings();
-          final updatedSettings = _updateMerchantSettingsValue(settings, key, value);
+          final updatedSettings = _updateMerchantSettingsValue(
+            settings,
+            key,
+            value,
+          );
           return await saveMerchantSettings(updatedSettings);
-          
+
         case SettingsCategory.notifications:
           final settings = await getNotificationSettings();
           settings[key] = value;
           return await saveNotificationSettings(settings);
-          
+
         case SettingsCategory.privacy:
           final settings = await getPrivacySettings();
           settings[key] = value;
           return await savePrivacySettings(settings);
-          
+
         case SettingsCategory.security:
           final settings = await getSecuritySettings();
           settings[key] = value;
           return await saveSecuritySettings(settings);
-          
+
         case SettingsCategory.performance:
           final settings = await getPerformanceSettings();
           settings[key] = value;
           return await savePerformanceSettings(settings);
-          
+
         default:
-          if (kDebugMode) print('$_logTag ⚠️ Unknown settings category: $category');
+          AppLogger.warning('Unknown settings category: $category');
           return false;
       }
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to update setting: $e');
+      AppLogger.error('Failed to update setting', e);
       return false;
     }
   }
-  
+
   /// Get all settings organized by category
   Future<Map<String, dynamic>> getAllSettings() async {
     try {
-      if (kDebugMode) print('$_logTag Getting all settings...');
-      
+      AppLogger.info('Getting all settings...');
+
       final allSettings = <String, dynamic>{};
-      
+
       // Load all setting categories
       allSettings['app'] = (await getAppSettings()).toJson();
       allSettings['merchant'] = (await getMerchantSettings()).toJson();
@@ -530,7 +521,7 @@ class SettingsServiceEnhanced {
       allSettings['privacy'] = await getPrivacySettings();
       allSettings['notifications'] = await getNotificationSettings();
       allSettings['performance'] = await getPerformanceSettings();
-      
+
       // Add metadata
       allSettings['metadata'] = {
         'version': _currentSettingsVersion,
@@ -538,24 +529,24 @@ class SettingsServiceEnhanced {
         'sync_mode': _syncMode.toString(),
         'last_sync': _lastSyncTime?.toIso8601String(),
       };
-      
+
       return allSettings;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get all settings: $e');
+      AppLogger.error('Failed to get all settings', e);
       return {};
     }
   }
-  
+
   /// Reset settings to defaults
   Future<bool> resetSettings({
     List<SettingsCategory>? categories,
     bool confirmReset = true,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Resetting settings...');
-      
+      AppLogger.info('Resetting settings...');
+
       final categoriesToReset = categories ?? SettingsCategory.values;
-      
+
       for (final category in categoriesToReset) {
         switch (category) {
           case SettingsCategory.general:
@@ -580,51 +571,50 @@ class SettingsServiceEnhanced {
             break;
         }
       }
-      
+
       // Clear cache
       _cachedSettings.clear();
-      
-      if (kDebugMode) print('$_logTag ✅ Settings reset completed');
+
+      AppLogger.info('Settings reset completed');
       return true;
-      
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to reset settings: $e');
+      AppLogger.error('Failed to reset settings', e);
       return false;
     }
   }
-  
+
   // ===== Cloud Synchronization =====
-  
+
   /// Sync settings to cloud storage
   Future<bool> syncToCloud({bool forceSync = false}) async {
     try {
       if (_syncMode == SettingsSyncMode.local) {
-        if (kDebugMode) print('$_logTag Cloud sync disabled in local mode');
+        AppLogger.info('Cloud sync disabled in local mode');
         return true;
       }
-      
+
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) {
-        if (kDebugMode) print('$_logTag ⚠️ No user authenticated for cloud sync');
+        AppLogger.warning('No user authenticated for cloud sync');
         return false;
       }
-      
+
       if (!forceSync && _lastSyncTime != null) {
         final timeSinceLastSync = DateTime.now().difference(_lastSyncTime!);
         if (timeSinceLastSync < _syncInterval) {
-          if (kDebugMode) print('$_logTag Sync skipped - too soon since last sync');
+          AppLogger.info('Sync skipped - too soon since last sync');
           return true;
         }
       }
-      
-      if (kDebugMode) print('$_logTag Syncing settings to cloud...');
-      
+
+      AppLogger.info('Syncing settings to cloud...');
+
       // Get all syncable settings
       final appSettings = await getAppSettings();
       final merchantSettings = await getMerchantSettings();
       final userPreferences = await getUserPreferences();
       final notificationSettings = await getNotificationSettings();
-      
+
       // Create cloud settings record
       final cloudSettings = {
         'user_id': userId,
@@ -636,117 +626,121 @@ class SettingsServiceEnhanced {
         'device_info': await _getDeviceInfo(),
         'updated_at': DateTime.now().toIso8601String(),
       };
-      
+
       // Upsert to cloud
       await _supabase.from('user_settings').upsert(cloudSettings);
-      
+
       // Update last sync time
       _lastSyncTime = DateTime.now();
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_lastSyncKey, _lastSyncTime!.toIso8601String());
-      
-      if (kDebugMode) print('$_logTag ✅ Settings synced to cloud successfully');
+
+      AppLogger.info('Settings synced to cloud successfully');
       return true;
-      
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Cloud sync failed: $e');
+      AppLogger.error('Cloud sync failed', e);
       return false;
     }
   }
-  
+
   /// Sync settings from cloud storage
   Future<bool> syncFromCloud({bool forcePull = false}) async {
     try {
       if (_syncMode == SettingsSyncMode.local) {
-        if (kDebugMode) print('$_logTag Cloud sync disabled in local mode');
+        AppLogger.info('Cloud sync disabled in local mode');
         return true;
       }
-      
+
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) {
-        if (kDebugMode) print('$_logTag ⚠️ No user authenticated for cloud sync');
+        AppLogger.warning('No user authenticated for cloud sync');
         return false;
       }
-      
-      if (kDebugMode) print('$_logTag Syncing settings from cloud...');
-      
+
+      AppLogger.info('Syncing settings from cloud...');
+
       // Get cloud settings
       final response = await _supabase
           .from('user_settings')
           .select('*')
           .eq('user_id', userId)
           .maybeSingle();
-      
+
       if (response == null) {
-        if (kDebugMode) print('$_logTag No cloud settings found');
+        AppLogger.info('No cloud settings found');
         return true;
       }
-      
+
       final cloudSettings = response;
       final cloudUpdated = DateTime.parse(cloudSettings['updated_at']);
-      
+
       // Check if cloud settings are newer
-      if (!forcePull && _lastSyncTime != null && cloudUpdated.isBefore(_lastSyncTime!)) {
-        if (kDebugMode) print('$_logTag Local settings are newer, skipping cloud sync');
+      if (!forcePull &&
+          _lastSyncTime != null &&
+          cloudUpdated.isBefore(_lastSyncTime!)) {
+        AppLogger.info('Local settings are newer, skipping cloud sync');
         return true;
       }
-      
+
       // Apply cloud settings
       if (cloudSettings['app_settings'] != null) {
-        final appSettings = EnhancedAppSettings.fromJson(cloudSettings['app_settings']);
+        final appSettings = EnhancedAppSettings.fromJson(
+          cloudSettings['app_settings'],
+        );
         await saveAppSettings(appSettings);
       }
-      
+
       if (cloudSettings['merchant_settings'] != null) {
-        final merchantSettings = EnhancedMerchantSettings.fromJson(cloudSettings['merchant_settings']);
+        final merchantSettings = EnhancedMerchantSettings.fromJson(
+          cloudSettings['merchant_settings'],
+        );
         await saveMerchantSettings(merchantSettings);
       }
-      
+
       if (cloudSettings['user_preferences'] != null) {
         await saveUserPreferences(cloudSettings['user_preferences']);
       }
-      
+
       if (cloudSettings['notification_settings'] != null) {
         await saveNotificationSettings(cloudSettings['notification_settings']);
       }
-      
+
       // Update last sync time
       _lastSyncTime = DateTime.now();
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_lastSyncKey, _lastSyncTime!.toIso8601String());
-      
-      if (kDebugMode) print('$_logTag ✅ Settings synced from cloud successfully');
+
+      AppLogger.info('Settings synced from cloud successfully');
       return true;
-      
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Cloud sync from failed: $e');
+      AppLogger.error('Cloud sync from failed', e);
       return false;
     }
   }
-  
+
   // ===== Import/Export =====
-  
+
   /// Export settings to JSON
   Future<Map<String, dynamic>> exportSettings({
     List<SettingsCategory>? categories,
     bool includePrivate = false,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Exporting settings...');
-      
+      AppLogger.info('Exporting settings...');
+
       final allSettings = await getAllSettings();
       final exportData = <String, dynamic>{
         'export_info': {
           'version': _currentSettingsVersion,
           'exported_at': DateTime.now().toIso8601String(),
-          'app_version': '1.0.0', // TODO: Get from package info
+          'app_version': '1.0.0', // Note: Get from package info
           'platform': Platform.operatingSystem,
         },
         'settings': <String, dynamic>{},
       };
-      
+
       final categoriesToExport = categories ?? SettingsCategory.values;
-      
+
       for (final category in categoriesToExport) {
         switch (category) {
           case SettingsCategory.general:
@@ -756,7 +750,8 @@ class SettingsServiceEnhanced {
             exportData['settings']['merchant'] = allSettings['merchant'];
             break;
           case SettingsCategory.notifications:
-            exportData['settings']['notifications'] = allSettings['notifications'];
+            exportData['settings']['notifications'] =
+                allSettings['notifications'];
             break;
           case SettingsCategory.privacy:
             if (includePrivate) {
@@ -775,16 +770,15 @@ class SettingsServiceEnhanced {
             break;
         }
       }
-      
-      if (kDebugMode) print('$_logTag ✅ Settings exported successfully');
+
+      AppLogger.info('Settings exported successfully');
       return exportData;
-      
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Settings export failed: $e');
+      AppLogger.error('Settings export failed', e);
       return {};
     }
   }
-  
+
   /// Import settings from JSON
   Future<bool> importSettings(
     Map<String, dynamic> importData, {
@@ -792,65 +786,66 @@ class SettingsServiceEnhanced {
     bool validateData = true,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Importing settings...');
-      
+      AppLogger.info('Importing settings...');
+
       // Validate import data
       if (validateData) {
         final validation = _validateImportData(importData);
         if (!validation['valid']) {
-          if (kDebugMode) print('$_logTag ⚠️ Invalid import data: ${validation['error']}');
+          AppLogger.warning('Invalid import data: ${validation['error']}');
           return false;
         }
       }
-      
+
       final settings = importData['settings'] as Map<String, dynamic>? ?? {};
-      
+
       // Import each category
       if (settings.containsKey('app')) {
         final appSettings = EnhancedAppSettings.fromJson(settings['app']);
         await saveAppSettings(appSettings);
       }
-      
+
       if (settings.containsKey('merchant')) {
-        final merchantSettings = EnhancedMerchantSettings.fromJson(settings['merchant']);
+        final merchantSettings = EnhancedMerchantSettings.fromJson(
+          settings['merchant'],
+        );
         await saveMerchantSettings(merchantSettings);
       }
-      
+
       if (settings.containsKey('notifications')) {
         await saveNotificationSettings(settings['notifications']);
       }
-      
+
       if (settings.containsKey('privacy')) {
         await savePrivacySettings(settings['privacy']);
       }
-      
+
       if (settings.containsKey('security')) {
         await saveSecuritySettings(settings['security']);
       }
-      
+
       if (settings.containsKey('performance')) {
         await savePerformanceSettings(settings['performance']);
       }
-      
+
       // Clear cache to force reload
       _cachedSettings.clear();
-      
-      if (kDebugMode) print('$_logTag ✅ Settings imported successfully');
+
+      AppLogger.info('Settings imported successfully');
       return true;
-      
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Settings import failed: $e');
+      AppLogger.error('Settings import failed', e);
       return false;
     }
   }
-  
+
   // ===== Analytics & Monitoring =====
-  
+
   /// Get settings analytics
   Future<Map<String, dynamic>> getSettingsAnalytics() async {
     try {
-      if (kDebugMode) print('$_logTag Getting settings analytics...');
-      
+      AppLogger.info('Getting settings analytics...');
+
       final allSettings = await getAllSettings();
       final analytics = <String, dynamic>{
         'settings_count': _countSettings(allSettings),
@@ -864,38 +859,40 @@ class SettingsServiceEnhanced {
         },
         'storage_usage': await _calculateStorageUsage(),
       };
-      
+
       return analytics;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Analytics generation failed: $e');
+      AppLogger.error('Analytics generation failed', e);
       return {};
     }
   }
-  
+
   // ===== Helper Methods =====
-  
+
   /// Check and migrate settings if needed
   Future<void> _checkAndMigrateSettings() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final currentVersion = prefs.getInt(_settingsVersionKey) ?? 1;
-      
+
       if (currentVersion < _currentSettingsVersion) {
-        if (kDebugMode) print('$_logTag Migrating settings from v$currentVersion to v$_currentSettingsVersion');
-        
+        AppLogger.info(
+          'Migrating settings from v$currentVersion to v$_currentSettingsVersion',
+        );
+
         // Perform migration based on version differences
         await _migrateSettings(currentVersion, _currentSettingsVersion);
-        
+
         // Update version
         await prefs.setInt(_settingsVersionKey, _currentSettingsVersion);
-        
-        if (kDebugMode) print('$_logTag ✅ Settings migration completed');
+
+        AppLogger.info('Settings migration completed');
       }
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Settings migration failed: $e');
+      AppLogger.warning('⚠️ Settings migration failed', e);
     }
   }
-  
+
   /// Load cached settings from storage
   Future<void> _loadCachedSettings() async {
     try {
@@ -906,35 +903,35 @@ class SettingsServiceEnhanced {
         _lastSyncTime = DateTime.parse(lastSyncStr);
       }
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Failed to load cached settings: $e');
+      AppLogger.error('Failed to load cached settings', e);
     }
   }
-  
+
   /// Setup cloud synchronization
   Future<void> _setupCloudSync() async {
     try {
-      if (kDebugMode) print('$_logTag Setting up cloud synchronization...');
-      
+      AppLogger.info('Setting up cloud synchronization...');
+
       // Initial sync from cloud
       await syncFromCloud();
-      
+
       // Setup periodic sync
-      // TODO: Implement timer-based sync
-      
-      if (kDebugMode) print('$_logTag ✅ Cloud synchronization setup completed');
+      // Note: Implement timer-based sync
+
+      AppLogger.info('Cloud synchronization setup completed');
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Cloud sync setup failed: $e');
+      AppLogger.error('Cloud sync setup failed', e);
     }
   }
-  
+
   /// Setup real-time synchronization
   Future<void> _setupRealtimeSync() async {
     try {
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) return;
-      
-      if (kDebugMode) print('$_logTag Setting up real-time synchronization...');
-      
+
+      AppLogger.info('Setting up real-time synchronization...');
+
       // Listen to settings changes
       _supabase
           .channel('settings:$userId')
@@ -950,27 +947,27 @@ class SettingsServiceEnhanced {
             callback: _handleRealtimeSettingsChange,
           )
           .subscribe();
-      
-      if (kDebugMode) print('$_logTag ✅ Real-time synchronization setup completed');
+
+      AppLogger.info('Real-time synchronization setup completed');
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Real-time sync setup failed: $e');
+      AppLogger.error('Real-time sync setup failed', e);
     }
   }
-  
+
   /// Handle real-time settings changes
   void _handleRealtimeSettingsChange(PostgresChangePayload payload) {
     try {
-      if (kDebugMode) print('$_logTag 🔄 Real-time settings change detected');
-      
+      AppLogger.info('Real-time settings change detected');
+
       // Sync from cloud to get latest changes
       syncFromCloud(forcePull: true);
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Failed to handle real-time settings change: $e');
+      AppLogger.error('Failed to handle real-time settings change', e);
     }
   }
-  
+
   // ===== Default Settings Generators =====
-  
+
   Map<String, dynamic> _getDefaultUserPreferences() => {
     'theme': 'system',
     'language': 'ar',
@@ -981,7 +978,7 @@ class SettingsServiceEnhanced {
     'measurement_unit': 'metric',
     'default_location': null,
   };
-  
+
   Map<String, dynamic> _getDefaultSecuritySettings() => {
     'biometric_auth': false,
     'auto_lock_timeout': 300, // 5 minutes
@@ -991,7 +988,7 @@ class SettingsServiceEnhanced {
     'device_trust_enabled': true,
     'security_notifications': true,
   };
-  
+
   Map<String, dynamic> _getDefaultPrivacySettings() => {
     'analytics_enabled': true,
     'crash_reports': true,
@@ -1001,7 +998,7 @@ class SettingsServiceEnhanced {
     'ad_personalization': false,
     'data_sharing': false,
   };
-  
+
   Map<String, dynamic> _getDefaultNotificationSettings() => {
     'enabled': true,
     'push_notifications': true,
@@ -1009,11 +1006,7 @@ class SettingsServiceEnhanced {
     'sms_notifications': false,
     'sound': true,
     'vibration': true,
-    'quiet_hours': {
-      'enabled': false,
-      'start': '22:00',
-      'end': '08:00',
-    },
+    'quiet_hours': {'enabled': false, 'start': '22:00', 'end': '08:00'},
     'categories': {
       'orders': true,
       'promotions': true,
@@ -1021,7 +1014,7 @@ class SettingsServiceEnhanced {
       'messages': true,
     },
   };
-  
+
   Map<String, dynamic> _getDefaultPerformanceSettings() => {
     'cache_enabled': true,
     'cache_size_mb': 100,
@@ -1032,81 +1025,107 @@ class SettingsServiceEnhanced {
     'auto_cleanup': true,
     'image_quality': 'high',
   };
-  
+
   // ===== Validation Methods =====
-  
+
   Map<String, dynamic> _validateAppSettings(EnhancedAppSettings settings) {
     // Add validation logic
     return {'valid': true};
   }
-  
-  Map<String, dynamic> _validateMerchantSettings(EnhancedMerchantSettings settings) {
+
+  Map<String, dynamic> _validateMerchantSettings(
+    EnhancedMerchantSettings settings,
+  ) {
     // Add validation logic
     return {'valid': true};
   }
-  
-  Map<String, dynamic> _validateSecuritySettings(Map<String, dynamic> settings) {
+
+  Map<String, dynamic> _validateSecuritySettings(
+    Map<String, dynamic> settings,
+  ) {
     // Add validation logic
     return {'valid': true};
   }
-  
+
   Map<String, dynamic> _validateImportData(Map<String, dynamic> data) {
     // Add validation logic
     return {'valid': true};
   }
-  
+
   // ===== Storage Helper Methods =====
-  
+
   Future<void> _saveUserPreferences(Map<String, dynamic> preferences) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_userPreferencesKey, jsonEncode(preferences));
   }
-  
+
   Future<void> _saveSecuritySettings(Map<String, dynamic> settings) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_securitySettingsKey, jsonEncode(settings));
   }
-  
+
   Future<void> _savePrivacySettings(Map<String, dynamic> settings) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_privacySettingsKey, jsonEncode(settings));
   }
-  
+
   Future<void> _saveNotificationSettings(Map<String, dynamic> settings) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_notificationSettingsKey, jsonEncode(settings));
   }
-  
+
   Future<void> _savePerformanceSettings(Map<String, dynamic> settings) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_performanceSettingsKey, jsonEncode(settings));
   }
-  
+
   // Placeholder implementations for remaining methods
-  EnhancedAppSettings _updateAppSettingsValue(EnhancedAppSettings settings, String key, dynamic value) => settings;
-  EnhancedMerchantSettings _updateMerchantSettingsValue(EnhancedMerchantSettings settings, String key, dynamic value) => settings;
-  Future<Map<String, dynamic>?> _getCloudSettings(String category) async => null;
-  EnhancedAppSettings _mergeAppSettings(EnhancedAppSettings local, Map<String, dynamic> cloud) => local;
-  EnhancedMerchantSettings _mergeMerchantSettings(EnhancedMerchantSettings local, Map<String, dynamic> cloud) => local;
-  Future<void> _syncToCloud(String category, Map<String, dynamic> settings) async {}
-  Future<void> _notifySettingsChanged(String category, Map<String, dynamic> settings) async {}
+  EnhancedAppSettings _updateAppSettingsValue(
+    EnhancedAppSettings settings,
+    String key,
+    dynamic value,
+  ) => settings;
+  EnhancedMerchantSettings _updateMerchantSettingsValue(
+    EnhancedMerchantSettings settings,
+    String key,
+    dynamic value,
+  ) => settings;
+  Future<Map<String, dynamic>?> _getCloudSettings(String category) async =>
+      null;
+  EnhancedAppSettings _mergeAppSettings(
+    EnhancedAppSettings local,
+    Map<String, dynamic> cloud,
+  ) => local;
+  EnhancedMerchantSettings _mergeMerchantSettings(
+    EnhancedMerchantSettings local,
+    Map<String, dynamic> cloud,
+  ) => local;
+  Future<void> _syncToCloud(
+    String category,
+    Map<String, dynamic> settings,
+  ) async {}
+  Future<void> _notifySettingsChanged(
+    String category,
+    Map<String, dynamic> settings,
+  ) async {}
   Future<void> _applyPerformanceSettings(Map<String, dynamic> settings) async {}
   Future<Map<String, dynamic>> _getDeviceInfo() async => {};
   Future<void> _migrateSettings(int fromVersion, int toVersion) async {}
   Map<String, int> _countSettings(Map<String, dynamic> allSettings) => {};
   List<String> _getCustomizedSettings(Map<String, dynamic> allSettings) => [];
   List<String> _getDefaultSettings(Map<String, dynamic> allSettings) => [];
-  Map<String, String> _getLastModifiedTimes(Map<String, dynamic> allSettings) => {};
+  Map<String, String> _getLastModifiedTimes(Map<String, dynamic> allSettings) =>
+      {};
   Future<Map<String, dynamic>> _calculateStorageUsage() async => {};
-  
+
   /// Cleanup resources
   Future<void> dispose() async {
     try {
       await _supabase.removeAllChannels();
       _cachedSettings.clear();
-      if (kDebugMode) print('$_logTag ♻️ Settings service disposed');
+      AppLogger.info('Settings service disposed');
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Error during disposal: $e');
+      AppLogger.error('Error during disposal', e);
     }
   }
 }
@@ -1134,7 +1153,7 @@ class EnhancedAppSettings {
   final bool animations;
   final bool hapticFeedback;
   final Map<String, dynamic> customSettings;
-  
+
   const EnhancedAppSettings({
     required this.notificationsEnabled,
     required this.emailNotifications,
@@ -1156,7 +1175,7 @@ class EnhancedAppSettings {
     required this.hapticFeedback,
     required this.customSettings,
   });
-  
+
   factory EnhancedAppSettings.defaults() => const EnhancedAppSettings(
     notificationsEnabled: true,
     emailNotifications: true,
@@ -1178,7 +1197,7 @@ class EnhancedAppSettings {
     hapticFeedback: true,
     customSettings: {},
   );
-  
+
   factory EnhancedAppSettings.fromJson(Map<String, dynamic> json) {
     return EnhancedAppSettings(
       notificationsEnabled: json['notificationsEnabled'] ?? true,
@@ -1202,7 +1221,7 @@ class EnhancedAppSettings {
       customSettings: json['customSettings'] ?? {},
     );
   }
-  
+
   Map<String, dynamic> toJson() => {
     'notificationsEnabled': notificationsEnabled,
     'emailNotifications': emailNotifications,
@@ -1224,7 +1243,7 @@ class EnhancedAppSettings {
     'hapticFeedback': hapticFeedback,
     'customSettings': customSettings,
   };
-  
+
   EnhancedAppSettings copyWith({
     bool? notificationsEnabled,
     bool? emailNotifications,
@@ -1285,7 +1304,7 @@ class EnhancedMerchantSettings {
   final double commissionRate;
   final Map<String, dynamic> paymentMethods;
   final Map<String, dynamic> businessSettings;
-  
+
   const EnhancedMerchantSettings({
     required this.isActive,
     required this.minOrderAmount,
@@ -1301,7 +1320,7 @@ class EnhancedMerchantSettings {
     required this.paymentMethods,
     required this.businessSettings,
   });
-  
+
   factory EnhancedMerchantSettings.defaults() => const EnhancedMerchantSettings(
     isActive: true,
     minOrderAmount: 0.0,
@@ -1329,7 +1348,7 @@ class EnhancedMerchantSettings {
     },
     businessSettings: {},
   );
-  
+
   factory EnhancedMerchantSettings.fromJson(Map<String, dynamic> json) {
     return EnhancedMerchantSettings(
       isActive: json['isActive'] ?? true,
@@ -1347,7 +1366,7 @@ class EnhancedMerchantSettings {
       businessSettings: json['businessSettings'] ?? {},
     );
   }
-  
+
   Map<String, dynamic> toJson() => {
     'isActive': isActive,
     'minOrderAmount': minOrderAmount,

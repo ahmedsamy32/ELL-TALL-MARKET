@@ -291,19 +291,21 @@ class _FavoritesScreenState extends State<FavoritesScreen> {
           product: product,
           onTap: () => _navigateToProductDetail(context, product),
           onFavoritePressed: () => _checkLoginForAction(context, () async {
+            final messenger = ScaffoldMessenger.of(context);
             // Remove from favorites
             final success = await favoritesProvider.removeFromFavorites(
               product.id,
             );
-            if (mounted && success) {
-              ScaffoldMessenger.of(context).showSnackBar(
+            if (!mounted) return;
+            if (success) {
+              messenger.showSnackBar(
                 SnackBar(
                   content: Text('تمت إزالة ${product.name} من المفضلة'),
                   backgroundColor: Colors.green,
                 ),
               );
-            } else if (mounted && !success) {
-              ScaffoldMessenger.of(context).showSnackBar(
+            } else {
+              messenger.showSnackBar(
                 SnackBar(
                   content: Text(favoritesProvider.error ?? 'فشلت الإزالة'),
                   backgroundColor: Colors.red,

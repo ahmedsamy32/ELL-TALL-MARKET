@@ -52,10 +52,13 @@ class ProfileModel {
   final String? fullName; // full_name TEXT
   final String? email; // email TEXT UNIQUE
   final String? phone; // phone TEXT
+  final String? password; // password TEXT
   final String? avatarUrl; // avatar_url TEXT
   final UserRole role; // role TEXT DEFAULT 'client'
   final String? fcmToken; // fcm_token TEXT
   final bool isActive; // is_active BOOLEAN DEFAULT TRUE
+  final DateTime? birthDate; // birth_date DATE
+  final String? gender; // gender TEXT CHECK (gender IN ('male', 'female'))
   final DateTime createdAt; // created_at TIMESTAMPTZ DEFAULT NOW()
   final DateTime? updatedAt; // updated_at TIMESTAMPTZ
 
@@ -64,10 +67,13 @@ class ProfileModel {
     this.fullName,
     this.email,
     this.phone,
+    this.password,
     this.avatarUrl,
     required this.role,
     this.fcmToken,
     this.isActive = true,
+    this.birthDate,
+    this.gender,
     required this.createdAt,
     this.updatedAt,
   });
@@ -79,10 +85,15 @@ class ProfileModel {
       fullName: map['full_name'] as String?,
       email: map['email'] as String?,
       phone: map['phone'] as String?,
+      password: map['password'] as String?,
       avatarUrl: map['avatar_url'] as String?,
       role: UserRole.fromString(map['role'] as String?),
       fcmToken: map['fcm_token'] as String?,
       isActive: (map['is_active'] as bool?) ?? true,
+      birthDate: map['birth_date'] != null
+          ? DateTime.parse(map['birth_date'] as String)
+          : null,
+      gender: map['gender'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String),
       updatedAt: map['updated_at'] != null
           ? DateTime.parse(map['updated_at'] as String)
@@ -97,10 +108,15 @@ class ProfileModel {
       'full_name': fullName,
       'email': email,
       'phone': phone,
+      'password': password,
       'avatar_url': avatarUrl,
       'role': role.value,
       'fcm_token': fcmToken,
       'is_active': isActive,
+      'birth_date': birthDate?.toIso8601String().split(
+        'T',
+      )[0], // yyyy-MM-dd format
+      'gender': gender,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
     };
@@ -112,10 +128,13 @@ class ProfileModel {
     String? fullName,
     String? email,
     String? phone,
+    String? password,
     String? avatarUrl,
     UserRole? role,
     String? fcmToken,
     bool? isActive,
+    DateTime? birthDate,
+    String? gender,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -124,10 +143,13 @@ class ProfileModel {
       fullName: fullName ?? this.fullName,
       email: email ?? this.email,
       phone: phone ?? this.phone,
+      password: password ?? this.password,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       role: role ?? this.role,
       fcmToken: fcmToken ?? this.fcmToken,
       isActive: isActive ?? this.isActive,
+      birthDate: birthDate ?? this.birthDate,
+      gender: gender ?? this.gender,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

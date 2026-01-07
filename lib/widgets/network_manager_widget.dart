@@ -413,6 +413,10 @@ class _ConnectivityDiagnosticsWidgetState
   }
 
   Widget _buildDiagnosticsResults() {
+    if (_diagnostics == null) {
+      return const SizedBox.shrink();
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

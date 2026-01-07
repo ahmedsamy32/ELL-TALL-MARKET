@@ -51,19 +51,13 @@ class GoogleSignInService {
       }
 
       // الخطوة 1: تسجيل الدخول مع Google (استخدام authenticate في الإصدار الجديد)
-      final GoogleSignInAccount? googleUser = await _googleSignIn
-          .authenticate();
-
-      if (googleUser == null) {
-        AppLogger.warning('❌ تم إلغاء تسجيل الدخول من قِبل المستخدم');
-        return null;
-      }
+      final GoogleSignInAccount googleUser = await _googleSignIn.authenticate();
 
       AppLogger.info('✅ تم الحصول على بيانات Google: ${googleUser.email}');
 
       // الخطوة 2: الحصول على Google ID Token
       final GoogleSignInAuthentication googleAuth =
-          await googleUser.authentication;
+          googleUser.authentication;
 
       if (googleAuth.idToken == null) {
         AppLogger.error('❌ فشل في الحصول على Google ID Token');

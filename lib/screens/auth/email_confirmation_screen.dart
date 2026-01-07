@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/utils/snackbar_helper.dart';
@@ -7,8 +8,15 @@ import 'package:ell_tall_market/core/logger.dart';
 
 class EmailConfirmationScreen extends StatefulWidget {
   final String email;
+  final String? password; // كلمة المرور للتحقق من التأكيد
+  final String? userType; // نوع المستخدم (merchant أو client)
 
-  const EmailConfirmationScreen({super.key, required this.email});
+  const EmailConfirmationScreen({
+    super.key,
+    required this.email,
+    this.password,
+    this.userType,
+  });
 
   @override
   State<EmailConfirmationScreen> createState() =>
@@ -37,32 +45,26 @@ class _EmailConfirmationScreenState extends State<EmailConfirmationScreen>
       AppLogger.info("معاملات التوجيه: $args");
       if (args is Map<String, dynamic>) {
         AppLogger.info("الإيميل من المعاملات: ${args['email']}");
+        AppLogger.info("نوع المستخدم من المعاملات: ${args['userType']}");
 
         // Check if there's an expired link error in arguments
         if (args['expired_link'] == true) {
-          _handleExpiredLinkError();
+          final errorMessage =
+              args['error_message'] as String? ?? 'انتهت صلاحية رابط التأكيد';
+          _handleExpiredLinkError(errorMessage);
+          return; // لا نعرض أخطاء Provider إذا كان هناك خطأ رابط منتهي
         }
       }
 
-      // الاستماع لأخطاء SupabaseProvider
+      // مسح الأخطاء السابقة من Provider أولاً
       final authProvider = Provider.of<SupabaseProvider>(
         context,
         listen: false,
       );
-      if (authProvider.errorMessage != null) {
-        final errorMessage = authProvider.errorMessage!;
-        // فحص نوع الخطأ وعرض رسالة مناسبة
-        if (errorMessage.contains('انتهت صلاحية رابط التأكيد') ||
-            errorMessage.contains('رابط التأكيد غير صالح')) {
-          _handleExpiredLinkError();
-        } else {
-          SnackBarHelper.showError(
-            context,
-            errorMessage,
-            duration: const Duration(seconds: 4),
-          );
-        }
-      }
+      authProvider.clearError();
+
+      // ملاحظة: لا نحتاج للتحقق من errorMessage هنا لأننا مسحناها
+      // فقط روابط Deep Links المنتهية هي التي تعرض رسالة خطأ
     });
 
     AppLogger.debug("نجح استلام معاملات التوجيه");
@@ -100,13 +102,15 @@ class _EmailConfirmationScreenState extends State<EmailConfirmationScreen>
   }
 
   /// Handle expired or invalid email link errors
-  void _handleExpiredLinkError() {
+  void _handleExpiredLinkError([String? customMessage]) {
     if (!mounted) return;
+
+    final message = customMessage ?? 'انتهت صلاحية رابط التأكيد';
 
     // Show warning and resend immediately
     SnackBarHelper.showWarning(
       context,
-      '⚠️ انتهت صلاحية رابط التأكيد. جاري إرسال رابط جديد...',
+      '⚠️ $message. جاري إرسال رابط جديد...',
       duration: const Duration(seconds: 3),
     );
 
@@ -198,78 +202,160 @@ class _EmailConfirmationScreenState extends State<EmailConfirmationScreen>
     Navigator.pushReplacementNamed(context, AppRoutes.login);
   }
 
-  // فحص حالة تأكيد البريد الإلكتروني والتوجه لتسجيل الدخول
+  /// التحقق من تأكيد البريد ثم الانتقال لتسجيل الدخول
   Future<void> _checkConfirmationAndLogin() async {
     try {
-      SnackBarHelper.showLoading(context, '🔍 جاري فحص حالة تأكيد البريد...');
+      // الحصول على البريد الإلكتروني
+      String emailToCheck = widget.email;
+      String? passwordToCheck = widget.password;
 
-      final authProvider = Provider.of<SupabaseProvider>(
-        context,
-        listen: false,
-      );
+      if (emailToCheck.isEmpty) {
+        final args = ModalRoute.of(context)?.settings.arguments;
+        if (args is Map<String, dynamic>) {
+          emailToCheck = args['email'] ?? '';
+          passwordToCheck = args['password'];
+        }
+      }
 
-      // فحص حالة تأكيد البريد الإلكتروني
-      final status = await authProvider.checkEmailVerificationStatus();
+      if (emailToCheck.isEmpty) {
+        SnackBarHelper.showError(context, '❌ البريد الإلكتروني غير محدد');
+        return;
+      }
 
-      if (!mounted) return;
+      // إذا مافيش كلمة مرور، نوجه مباشرة لتسجيل الدخول
+      if (passwordToCheck == null || passwordToCheck.isEmpty) {
+        AppLogger.info('⚠️ لا توجد كلمة مرور - التوجيه لتسجيل الدخول');
 
-      ScaffoldMessenger.of(context).clearSnackBars();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).clearSnackBars();
 
-      if (status == 'verified') {
-        // البريد مؤكد - الذهاب لتسجيل الدخول
-        SnackBarHelper.showSuccess(
+        SnackBarHelper.showInfo(
           context,
-          '✅ تم تأكيد البريد بنجاح! يمكنك تسجيل الدخول الآن',
+          'ℹ️ سيتم توجيهك لتسجيل الدخول',
+          duration: const Duration(seconds: 2),
         );
 
-        await Future.delayed(const Duration(seconds: 1));
+        await Future.delayed(const Duration(milliseconds: 1000));
 
         if (mounted) {
-          Navigator.pushReplacementNamed(context, AppRoutes.login);
+          Navigator.pushReplacementNamed(
+            context,
+            AppRoutes.login,
+            arguments: {'prefillEmail': emailToCheck},
+          );
         }
-      } else if (status == 'pending') {
-        // لا يزال في انتظار التأكيد
-        SnackBarHelper.showWarning(
-          context,
-          '⏳ البريد الإلكتروني لم يتم تأكيده بعد. تحقق من بريدك مرة أخرى',
-          duration: const Duration(seconds: 4),
+        return;
+      }
+
+      SnackBarHelper.showLoading(context, '� جاري التحقق من حالة التأكيد...');
+
+      // محاولة تسجيل دخول بكلمة المرور الحقيقية
+      try {
+        await Supabase.instance.client.auth.signInWithPassword(
+          email: emailToCheck,
+          password: passwordToCheck,
         );
-      } else {
-        // خطأ في الفحص
-        SnackBarHelper.showError(
+
+        // ✅ نجح تسجيل الدخول = البريد مؤكد!
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).clearSnackBars();
+
+        AppLogger.info('✅ تم تسجيل الدخول بنجاح - البريد مؤكد');
+
+        // فحص نوع المستخدم من arguments
+        final args = ModalRoute.of(context)?.settings.arguments;
+        final String? userType = args is Map<String, dynamic>
+            ? args['userType']
+            : widget.userType;
+        final bool isMerchant = userType == 'merchant';
+
+        // ملاحظة: سجل التاجر يتم إنشاؤه تلقائياً عبر trigger في قاعدة البيانات
+        // عند إنشاء profile بـ role='merchant'، يتم إنشاء سجل في merchants تلقائياً
+
+        SnackBarHelper.showSuccess(
           context,
-          '❌ حدث خطأ أثناء فحص حالة التأكيد. حاول مرة أخرى',
+          isMerchant
+              ? '✅ رائع! بريدك الإلكتروني مؤكد ✓\n\nجاري نقلك لإكمال بيانات المتجر...'
+              : '✅ رائع! بريدك الإلكتروني مؤكد ✓\n\nجاري نقلك لصفحة تسجيل الدخول...',
+          duration: const Duration(seconds: 2),
         );
+
+        // لا نحتاج تسجيل الخروج إذا كان تاجر (سيحتاج الجلسة لإنشاء المتجر)
+        if (!isMerchant) {
+          // تسجيل الخروج لأننا كنا بنجرب فقط
+          await Supabase.instance.client.auth.signOut();
+        }
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+
+        if (mounted) {
+          // توجيه المستخدم (تاجر أو عميل) لتسجيل الدخول
+          Navigator.pushReplacementNamed(
+            context,
+            AppRoutes.login,
+            arguments: {'prefillEmail': emailToCheck},
+          );
+        }
+      } on AuthException catch (authError) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).clearSnackBars();
+
+        final errorMessage = authError.message.toLowerCase();
+        AppLogger.info('🔍 نتيجة التحقق: ${authError.message}');
+
+        if (errorMessage.contains('email not confirmed') ||
+            errorMessage.contains('email_not_confirmed') ||
+            errorMessage.contains('confirm your email')) {
+          // ❌ البريد غير مؤكد
+          AppLogger.warning('⏳ البريد غير مؤكد');
+
+          SnackBarHelper.showWarning(
+            context,
+            '⏳ البريد الإلكتروني لم يتم تأكيده بعد!\n\n'
+            '📧 تحقق من صندوق بريدك واضغط على رابط التأكيد\n\n'
+            '💡 لم تجد الرسالة؟\n'
+            '• تحقق من مجلد Spam\n'
+            '• اضغط "إعادة إرسال رسالة التأكيد"',
+            duration: const Duration(seconds: 6),
+          );
+        } else if (errorMessage.contains('invalid login credentials') ||
+            errorMessage.contains('invalid email or password')) {
+          // كلمة المرور خاطئة - ممكن المستخدم غيرها
+          SnackBarHelper.showWarning(
+            context,
+            '⚠️ كلمة المرور غير صحيحة\n\n'
+            'استخدم زر "لدي حساب مؤكد - تسجيل الدخول"\n'
+            'وأدخل كلمة المرور الصحيحة',
+            duration: const Duration(seconds: 5),
+          );
+        } else if (errorMessage.contains('security purposes') ||
+            errorMessage.contains('rate limit')) {
+          SnackBarHelper.showWarning(
+            context,
+            '⏰ انتظر قليلاً ثم حاول مرة أخرى',
+            duration: const Duration(seconds: 4),
+          );
+        } else {
+          // خطأ آخر
+          SnackBarHelper.showWarning(
+            context,
+            '⚠️ ${authError.message}\n\n'
+            'استخدم زر "لدي حساب مؤكد - تسجيل الدخول"',
+            duration: const Duration(seconds: 5),
+          );
+        }
       }
     } catch (e) {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).clearSnackBars();
+      AppLogger.error('خطأ في فحص التأكيد', e);
 
-      String errorMessage = e.toString();
-
-      // Check for specific error types
-      if (errorMessage.contains('otp_expired') ||
-          errorMessage.contains('Email link is invalid or has expired')) {
-        SnackBarHelper.showWarning(
-          context,
-          '⚠️ انتهت صلاحية رابط التأكيد. جاري إرسال رابط جديد...',
-          duration: const Duration(seconds: 3),
-        );
-
-        // Resend immediately
-        _resendConfirmationEmail();
-      } else if (errorMessage.contains('access_denied')) {
-        SnackBarHelper.showError(
-          context,
-          '🚫 تم رفض الوصول. تحقق من رابط التأكيد أو اطلب إرسال رابط جديد',
-        );
-      } else {
-        SnackBarHelper.showError(
-          context,
-          '❌ حدث خطأ أثناء فحص حالة التأكيد: ${e.toString()}',
-        );
-      }
+      SnackBarHelper.showError(
+        context,
+        '❌ حدث خطأ في التحقق\n\nحاول مرة أخرى',
+        duration: const Duration(seconds: 3),
+      );
     }
   }
 

@@ -4,5 +4,6 @@
         "plaintext": true,
         "markdown": true,
         "scminput": true
-    }
+    },
+    "java.configuration.updateBuildConfiguration": "interactive"
 }

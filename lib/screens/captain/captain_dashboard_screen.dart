@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
-import 'package:ell_tall_market/models/order_model.dart' hide OrderStatus;
-import 'package:ell_tall_market/models/order_enums.dart';
+import 'package:ell_tall_market/models/order_model.dart';
+
 import 'package:ell_tall_market/utils/app_colors.dart';
 
 class CaptainDashboard extends StatefulWidget {
@@ -56,7 +56,7 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
   Widget _buildQuickStats(OrderProvider orderProvider) {
     final activeOrders = orderProvider.currentOrders;
     final completedOrders = orderProvider.pastOrders
-        .where((order) => order.status == 'delivered')
+        .where((order) => order.status.value == 'delivered')
         .toList();
 
     return GridView(
@@ -286,11 +286,11 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
       case 'confirmed':
         return OrderStatus.confirmed;
       case 'in_preparation':
-        return OrderStatus.inPreparation;
+        return OrderStatus.preparing;
       case 'ready':
         return OrderStatus.ready;
       case 'on_the_way':
-        return OrderStatus.onTheWay;
+        return OrderStatus.inTransit;
       case 'delivered':
         return OrderStatus.delivered;
       case 'cancelled':
@@ -306,11 +306,13 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
         return Colors.grey;
       case OrderStatus.confirmed:
         return Colors.blue;
-      case OrderStatus.inPreparation:
+      case OrderStatus.preparing:
         return Colors.orange;
       case OrderStatus.ready:
         return Colors.purple;
-      case OrderStatus.onTheWay:
+      case OrderStatus.pickedUp:
+        return Colors.cyan;
+      case OrderStatus.inTransit:
         return Colors.indigo;
       case OrderStatus.delivered:
         return Colors.green;
@@ -325,11 +327,13 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
         return 'في الانتظار';
       case OrderStatus.confirmed:
         return 'تم التأكيد';
-      case OrderStatus.inPreparation:
+      case OrderStatus.preparing:
         return 'يتم التحضير';
       case OrderStatus.ready:
         return 'جاهز للاستلام';
-      case OrderStatus.onTheWay:
+      case OrderStatus.pickedUp:
+        return 'تم الاستلام';
+      case OrderStatus.inTransit:
         return 'في الطريق';
       case OrderStatus.delivered:
         return 'تم التوصيل';
@@ -344,11 +348,13 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
         return 'تأكيد الطلب';
       case OrderStatus.confirmed:
         return 'بدء التحضير';
-      case OrderStatus.inPreparation:
+      case OrderStatus.preparing:
         return 'جاهز للاستلام';
       case OrderStatus.ready:
         return 'بدء التوصيل';
-      case OrderStatus.onTheWay:
+      case OrderStatus.pickedUp:
+        return 'تم الاستلام والاستلام';
+      case OrderStatus.inTransit:
         return 'تم التسليم';
       case OrderStatus.delivered:
         return 'مكتمل';
@@ -360,14 +366,12 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
   OrderStatus _getNextStatus(OrderStatus currentStatus) {
     switch (currentStatus) {
       case OrderStatus.pending:
-        return OrderStatus.confirmed;
-      case OrderStatus.confirmed:
-        return OrderStatus.inPreparation;
-      case OrderStatus.inPreparation:
+        return OrderStatus.preparing;
+      case OrderStatus.preparing:
         return OrderStatus.ready;
       case OrderStatus.ready:
-        return OrderStatus.onTheWay;
-      case OrderStatus.onTheWay:
+        return OrderStatus.inTransit;
+      case OrderStatus.inTransit:
         return OrderStatus.delivered;
       default:
         return currentStatus;
@@ -378,9 +382,7 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
     try {
       // await Provider.of<OrderProvider>(context, listen: false)
       //     .updateOrderStatus(order.id, newStatus.dbValue);
-      if (kDebugMode) {
-        print('تحديث حالة الطلب: ${order.id} إلى ${newStatus.dbValue}');
-      }
+      AppLogger.info('تحديث حالة الطلب: ${order.id} إلى ${newStatus.dbValue}');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('تم تحديث حالة الطلب بنجاح'),
@@ -388,9 +390,7 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
         ),
       );
     } catch (e) {
-      if (kDebugMode) {
-        print('فشل تحديث حالة الطلب: $e');
-      }
+      AppLogger.error('فشل تحديث حالة الطلب', e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('فشل تحديث حالة الطلب: ${e.toString()}'),
@@ -402,8 +402,6 @@ class _CaptainDashboardState extends State<CaptainDashboard> {
 
   void _callCustomer(String phoneNumber) {
     // تنفيذ الاتصال بالعميل
-    if (kDebugMode) {
-      print('اتصال بالعميل: $phoneNumber');
-    }
+    AppLogger.info('اتصال بالعميل: $phoneNumber');
   }
 }

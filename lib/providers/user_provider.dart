@@ -3,7 +3,7 @@ library;
 
 import 'package:flutter/foundation.dart';
 import '../models/user_model.dart';
-import '../models/Profile_model.dart';
+import '../models/profile_model.dart';
 import '../services/user_service.dart';
 
 class UserProvider with ChangeNotifier {

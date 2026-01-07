@@ -1,18 +1,18 @@
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:ell_tall_market/models/product_model.dart';
 import '../core/logger.dart';
+import 'package:ell_tall_market/models/product_model.dart';
 
 /// 🛍️ خدمة إدارة المنتجات المتقدمة (Product Management Service)
-/// 
+///
 /// نظام شامل لإدارة المنتجات والمخزون مع جميع العمليات المتقدمة
 /// متوافقة مع الوثائق الرسمية لـ Supabase v2.10.2
-/// 
+///
 /// @author Ell Tall Market Development Team
 /// @version 2.0.0 - Enhanced Phase 5
 /// @created 2024-01-01
 /// @updated 2024-12-28
-/// 
+///
 /// 🎯 الميزات الأساسية:
 /// ✅ إدارة CRUD كاملة للمنتجات (40+ methods)
 /// ✅ نظام إدارة المخزون المتقدم والآمن
@@ -23,7 +23,7 @@ import '../core/logger.dart';
 /// ✅ مراقبة المنتجات الفورية
 /// ✅ تحليلات وإحصائيات شاملة
 /// ✅ عمليات كمية وتصدير البيانات
-/// 
+///
 /// 🔧 العمليات المتقدمة (40+ methods):
 /// • CRUD: addProduct, updateProduct, deleteProduct, addProductWithImages
 /// • Stock: updateStock, reduceStock, addStock, getLowStockProducts, processOrderItems
@@ -34,20 +34,20 @@ import '../core/logger.dart';
 /// • Analytics: getProductStats, getTopSellingProducts, getGeneralStats
 /// • Bulk: bulkUpdateProducts, exportProducts, cancelOrderItems
 /// • Real-time: watchProducts, watchProduct
-/// 
+///
 /// 📊 الإحصائيات والتحليلات:
 /// - أداء المبيعات والشعبية
 /// - إدارة المخزون الذكية
 /// - تحليل الأسعار والخصومات
 /// - إحصائيات التفاعل والمراجعات
-/// 
+///
 /// 🛡️ الأمان والموثوقية:
 /// - PostgrestException handling شامل
 /// - Stock management safety
 /// - Image validation وضغط
 /// - Business rules validation
 /// - Comprehensive logging
-/// 
+///
 /// استخدام النمط المتقدم:
 /// ```dart
 /// // إضافة منتج مع صور
@@ -55,7 +55,7 @@ import '../core/logger.dart';
 ///   product: newProduct,
 ///   images: imageFiles,
 /// );
-/// 
+///
 /// // بحث ذكي متعدد المعايير
 /// final products = await ProductService.advancedSearch(
 ///   query: 'iPhone',
@@ -64,7 +64,7 @@ import '../core/logger.dart';
 ///   inStock: true,
 ///   sortBy: ProductSortBy.popularity,
 /// );
-/// 
+///
 /// // إدارة المخزون الآمنة
 /// await ProductService.processOrderItems(orderItems);
 /// ```
@@ -291,9 +291,23 @@ class ProductService {
         throw Exception('لا يمكن حذف المنتج لأنه مرتبط بطلبات');
       }
 
-      await _supabase.from('products').delete().eq('id', productId);
+      final deleted = await _supabase
+          .from('products')
+          .delete()
+          .eq('id', productId)
+          .select('id')
+          .maybeSingle();
 
-      AppLogger.info('تم حذف المنتج بنجاح');
+      if (deleted == null) {
+        // إما أن المنتج غير موجود أو ليس لديك صلاحية الحذف
+        AppLogger.error(
+          'تعذر حذف المنتج: غير موجود أو لا توجد صلاحية (productId=$productId)',
+          null,
+        );
+        throw Exception('تعذر حذف المنتج: غير موجود أو لا توجد صلاحية');
+      }
+
+      AppLogger.info('تم حذف المنتج بنجاح: ${deleted['id']}');
       return true;
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في حذف المنتج: ${e.message}', e);
@@ -301,6 +315,41 @@ class ProductService {
     } catch (e) {
       AppLogger.error('خطأ في حذف المنتج', e);
       throw Exception('فشل حذف المنتج: ${e.toString()}');
+    }
+  }
+
+  /// حذف جميع صور المنتج من التخزين (اختياري)
+  static Future<void> deleteProductImages({
+    required String storeId,
+    required String productId,
+  }) async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) return;
+
+      final basePath = '$userId/products/$storeId/$productId';
+      final files = await _supabase.storage
+          .from('products')
+          .list(path: basePath);
+
+      if (files.isEmpty) return;
+      final paths = <String>[];
+      for (final f in files) {
+        try {
+          final name = (f as dynamic).name as String?;
+          if (name != null) paths.add('$basePath/$name');
+        } catch (_) {}
+      }
+      if (paths.isEmpty) return;
+      await _supabase.storage.from('products').remove(paths);
+      AppLogger.info(
+        'تم حذف ${paths.length} صورة للمنتج $productId من التخزين',
+      );
+    } on StorageException catch (e) {
+      AppLogger.error('Storage خطأ في حذف صور المنتج: ${e.message}', e);
+      // لا نرمي الخطأ حتى لا نعطل حذف المنتج بالكامل
+    } catch (e) {
+      AppLogger.error('خطأ في حذف صور المنتج من التخزين', e);
     }
   }
 
@@ -520,27 +569,34 @@ class ProductService {
   /// رفع صور المنتج
   static Future<List<String>> uploadProductImages({
     required String productId,
+    required String storeId,
     required List<Uint8List> imagesBytesList,
     required List<String> fileNames,
   }) async {
     final uploadedUrls = <String>[];
 
     try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) {
+        throw Exception('يجب تسجيل الدخول قبل رفع الصور');
+      }
       for (int i = 0; i < imagesBytesList.length; i++) {
         final imageBytes = imagesBytesList[i];
         final fileName = fileNames[i];
         final fileExt = fileName.split('.').last;
+        // Align with products bucket. We keep a folder per product to support multiple images
+        // Path: {userId}/products/{storeId}/{productId}/{timestamp_index}.{ext}
         final filePath =
-            'products/$productId/${DateTime.now().millisecondsSinceEpoch}_$i.$fileExt';
+            '$userId/products/$storeId/$productId/${DateTime.now().millisecondsSinceEpoch}_$i.$fileExt';
 
         // رفع الصورة
         await _supabase.storage
-            .from('product-images')
+            .from('products')
             .uploadBinary(filePath, imageBytes);
 
         // الحصول على الرابط العام
         final imageUrl = _supabase.storage
-            .from('product-images')
+            .from('products')
             .getPublicUrl(filePath);
 
         uploadedUrls.add(imageUrl);
@@ -554,6 +610,94 @@ class ProductService {
     } catch (e) {
       AppLogger.error('خطأ في رفع صور المنتج', e);
       throw Exception('فشل رفع صور المنتج: ${e.toString()}');
+    }
+  }
+
+  /// إرجاع قائمة روابط الصور من التخزين لمسار المنتج
+  static Future<List<String>> listProductImageUrls({
+    required String storeId,
+    required String productId,
+  }) async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) return [];
+
+      final basePath = '$userId/products/$storeId/$productId';
+      final files = await _supabase.storage
+          .from('products')
+          .list(path: basePath);
+      if (files.isEmpty) return [];
+      final urls = <String>[];
+      for (final f in files) {
+        try {
+          final name = (f as dynamic).name as String?;
+          if (name != null && name.isNotEmpty) {
+            final fp = '$basePath/$name';
+            final url = _supabase.storage.from('products').getPublicUrl(fp);
+            urls.add(url);
+          }
+        } catch (_) {}
+      }
+      return urls;
+    } on StorageException catch (e) {
+      AppLogger.error('Storage خطأ في قراءة صور المنتج: ${e.message}', e);
+      return [];
+    } catch (e) {
+      AppLogger.error('خطأ في قراءة صور المنتج من التخزين', e);
+      return [];
+    }
+  }
+
+  /// يحذف من التخزين أي صور غير موجودة ضمن finalUrls
+  static Future<void> removeProductImagesNotInUrls({
+    required String storeId,
+    required String productId,
+    required List<String> finalUrls,
+    String? primaryUrl, // لا تحذف الصورة الأساسية أبداً
+  }) async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) return;
+
+      final basePath = '$userId/products/$storeId/$productId';
+      final files = await _supabase.storage
+          .from('products')
+          .list(path: basePath);
+      if (files.isEmpty) return;
+
+      // Build a set for quick lookup
+      final finalSet = finalUrls.toSet();
+
+      final toRemovePaths = <String>[];
+      for (final f in files) {
+        try {
+          final name = (f as dynamic).name as String?;
+          if (name == null) continue;
+          final path = '$basePath/$name';
+          final url = _supabase.storage.from('products').getPublicUrl(path);
+          if (primaryUrl != null && url == primaryUrl) {
+            // لا تحذف الصورة الأساسية حتى لو لم تكن ضمن القائمة
+            continue;
+          }
+          if (!finalSet.contains(url)) {
+            toRemovePaths.add(path);
+          }
+        } catch (_) {}
+      }
+
+      if (toRemovePaths.isNotEmpty) {
+        await _supabase.storage.from('products').remove(toRemovePaths);
+        AppLogger.info(
+          'تم حذف ${toRemovePaths.length} صورة غير مستخدمة من التخزين',
+        );
+      }
+    } on StorageException catch (e) {
+      AppLogger.error(
+        'Storage خطأ في حذف الصور غير المستخدمة: ${e.message}',
+        e,
+      );
+    } catch (e) {
+      AppLogger.error('خطأ في حذف الصور غير المستخدمة من التخزين', e);
     }
   }
 
@@ -766,14 +910,16 @@ class ProductService {
       if (images != null && images.isNotEmpty && imageNames != null) {
         final uploadedUrls = await uploadProductImages(
           productId: createdProduct.id,
+          storeId: createdProduct.storeId,
           imagesBytesList: images,
           fileNames: imageNames,
         );
 
         if (uploadedUrls.isNotEmpty) {
-          // تحديث المنتج بالصورة الأولى كصورة رئيسية
+          // حدّث الصورة الرئيسية وجميع الصور
           final updatedProduct = createdProduct.copyWith(
-            imageUrl: uploadedUrls.first,
+            imageUrl: uploadedUrls.first, // الصورة الأولى = الرئيسية
+            imageUrls: uploadedUrls, // جميع الصور (بما فيها الرئيسية)
           );
           return await updateProduct(updatedProduct);
         }
@@ -1340,5 +1486,267 @@ class ProductService {
         .stream(primaryKey: ['id'])
         .eq('id', productId)
         .map((list) => list.isNotEmpty ? list.first : null);
+  }
+
+  // ===== حفظ المتغيرات والأسعار المتقدمة =====
+
+  /// حفظ مجموعات المتغيرات للمنتج
+  static Future<void> saveProductVariantGroups(
+    String productId,
+    List<ProductVariantGroup> variantGroups,
+  ) async {
+    try {
+      // حذف المجموعات القديمة أولاً
+      await _supabase
+          .from('product_variant_groups')
+          .delete()
+          .eq('product_id', productId);
+
+      // إدراج المجموعات الجديدة
+      final groupsData = variantGroups
+          .map(
+            (group) => {
+              'id': group.id,
+              'product_id': productId,
+              'name': group.name,
+              'type': group.type,
+              'options': group.options
+                  .map(
+                    (option) => {
+                      'id': option.id,
+                      'name': option.name,
+                      'value': option.value,
+                      'sort_order': option.sortOrder,
+                    },
+                  )
+                  .toList(),
+              'is_required': group.isRequired,
+              'sort_order': group.sortOrder,
+              'is_active': group.isActive,
+              'created_at': group.createdAt.toIso8601String(),
+            },
+          )
+          .toList();
+
+      await _supabase.from('product_variant_groups').insert(groupsData);
+
+      AppLogger.info(
+        'تم حفظ ${variantGroups.length} مجموعة متغيرات للمنتج $productId',
+      );
+    } on PostgrestException catch (e) {
+      AppLogger.error(
+        'PostgreSQL خطأ في حفظ مجموعات المتغيرات: ${e.message}',
+        e,
+      );
+      throw Exception('فشل حفظ مجموعات المتغيرات: ${e.message}');
+    } catch (e) {
+      AppLogger.error('خطأ في حفظ مجموعات المتغيرات', e);
+      throw Exception('فشل حفظ مجموعات المتغيرات: ${e.toString()}');
+    }
+  }
+
+  /// حفظ المتغيرات للمنتج
+  static Future<void> saveProductVariants(
+    String productId,
+    List<ProductVariant> variants,
+  ) async {
+    try {
+      // حذف المتغيرات القديمة
+      await _supabase
+          .from('product_variants')
+          .delete()
+          .eq('product_id', productId);
+
+      // إدراج المتغيرات الجديدة
+      final variantsData = variants
+          .map(
+            (variant) => {
+              'id': variant.id,
+              'product_id': productId,
+              'selected_options': variant.selectedOptions
+                  .map(
+                    (option) => {
+                      'id': option.id,
+                      'name': option.name,
+                      'value': option.value,
+                    },
+                  )
+                  .toList(),
+              'sku': variant.sku,
+              'price': variant.price,
+              'stock_quantity': variant.stockQuantity,
+              'is_active': variant.isActive,
+              'created_at': variant.createdAt.toIso8601String(),
+            },
+          )
+          .toList();
+
+      await _supabase.from('product_variants').insert(variantsData);
+
+      AppLogger.info('تم حفظ ${variants.length} متغير للمنتج $productId');
+    } on PostgrestException catch (e) {
+      AppLogger.error('PostgreSQL خطأ في حفظ المتغيرات: ${e.message}', e);
+      throw Exception('فشل حفظ المتغيرات: ${e.message}');
+    } catch (e) {
+      AppLogger.error('خطأ في حفظ المتغيرات', e);
+      throw Exception('فشل حفظ المتغيرات: ${e.toString()}');
+    }
+  }
+
+  /// حفظ الأسعار حسب الكمية
+  static Future<void> saveQuantityBasedPrices(
+    String productId,
+    List<QuantityBasedPrice> prices,
+  ) async {
+    try {
+      await _supabase
+          .from('quantity_based_prices')
+          .delete()
+          .eq('product_id', productId);
+
+      final pricesData = prices
+          .map(
+            (price) => {
+              'product_id': productId,
+              'min_quantity': price.minQuantity,
+              'max_quantity': price.maxQuantity,
+              'price': price.price,
+              'discount_percentage': price.discountPercentage,
+              'description': price.description,
+              'created_at': price.createdAt.toIso8601String(),
+            },
+          )
+          .toList();
+
+      await _supabase.from('quantity_based_prices').insert(pricesData);
+
+      AppLogger.info(
+        'تم حفظ ${prices.length} سعر حسب الكمية للمنتج $productId',
+      );
+    } on PostgrestException catch (e) {
+      AppLogger.error(
+        'PostgreSQL خطأ في حفظ الأسعار حسب الكمية: ${e.message}',
+        e,
+      );
+      throw Exception('فشل حفظ الأسعار حسب الكمية: ${e.message}');
+    } catch (e) {
+      AppLogger.error('خطأ في حفظ الأسعار حسب الكمية', e);
+      throw Exception('فشل حفظ الأسعار حسب الكمية: ${e.toString()}');
+    }
+  }
+
+  /// حفظ العروض الموسمية
+  static Future<void> saveSeasonalOffers(
+    String productId,
+    List<SeasonalOffer> offers,
+  ) async {
+    try {
+      await _supabase
+          .from('seasonal_offers')
+          .delete()
+          .eq('product_id', productId);
+
+      final offersData = offers
+          .map(
+            (offer) => {
+              'product_id': productId,
+              'title': offer.title,
+              'description': offer.description,
+              'discount_percentage': offer.discountPercentage,
+              'fixed_discount': offer.fixedDiscount,
+              'offer_price': offer.offerPrice,
+              'start_date': offer.startDate.toIso8601String(),
+              'end_date': offer.endDate.toIso8601String(),
+              'created_at': offer.createdAt.toIso8601String(),
+            },
+          )
+          .toList();
+
+      await _supabase.from('seasonal_offers').insert(offersData);
+
+      AppLogger.info('تم حفظ ${offers.length} عرض موسمي للمنتج $productId');
+    } on PostgrestException catch (e) {
+      AppLogger.error('PostgreSQL خطأ في حفظ العروض الموسمية: ${e.message}', e);
+      throw Exception('فشل حفظ العروض الموسمية: ${e.message}');
+    } catch (e) {
+      AppLogger.error('خطأ في حفظ العروض الموسمية', e);
+      throw Exception('فشل حفظ العروض الموسمية: ${e.toString()}');
+    }
+  }
+
+  /// حفظ الأسعار VIP
+  static Future<void> saveVIPPrices(
+    String productId,
+    List<VIPPrice> prices,
+  ) async {
+    try {
+      await _supabase.from('vip_prices').delete().eq('product_id', productId);
+
+      final pricesData = prices
+          .map(
+            (price) => {
+              'product_id': productId,
+              'customer_group_name': price.customerGroupName,
+              'price': price.price,
+              'discount_percentage': price.discountPercentage,
+              'description': price.description,
+              'created_at': price.createdAt.toIso8601String(),
+            },
+          )
+          .toList();
+
+      await _supabase.from('vip_prices').insert(pricesData);
+
+      AppLogger.info('تم حفظ ${prices.length} سعر VIP للمنتج $productId');
+    } on PostgrestException catch (e) {
+      AppLogger.error('PostgreSQL خطأ في حفظ الأسعار VIP: ${e.message}', e);
+      throw Exception('فشل حفظ الأسعار VIP: ${e.message}');
+    } catch (e) {
+      AppLogger.error('خطأ في حفظ الأسعار VIP', e);
+      throw Exception('فشل حفظ الأسعار VIP: ${e.toString()}');
+    }
+  }
+
+  /// حفظ الخصومات الترويجية
+  static Future<void> savePromotionalDiscounts(
+    String productId,
+    List<PromotionalDiscount> discounts,
+  ) async {
+    try {
+      await _supabase
+          .from('promotional_discounts')
+          .delete()
+          .eq('product_id', productId);
+
+      final discountsData = discounts
+          .map(
+            (discount) => {
+              'product_id': productId,
+              'title': discount.title,
+              'description': discount.description,
+              'discount_percentage': discount.discountPercentage,
+              'fixed_discount': discount.fixedDiscount,
+              'max_discount_amount': discount.maxDiscountAmount,
+              'usage_limit': discount.usageLimit,
+              'start_date': discount.startDate?.toIso8601String(),
+              'end_date': discount.endDate?.toIso8601String(),
+              'created_at': discount.createdAt.toIso8601String(),
+            },
+          )
+          .toList();
+
+      await _supabase.from('promotional_discounts').insert(discountsData);
+
+      AppLogger.info('تم حفظ ${discounts.length} خصم ترويجي للمنتج $productId');
+    } on PostgrestException catch (e) {
+      AppLogger.error(
+        'PostgreSQL خطأ في حفظ الخصومات الترويجية: ${e.message}',
+        e,
+      );
+      throw Exception('فشل حفظ الخصومات الترويجية: ${e.message}');
+    } catch (e) {
+      AppLogger.error('خطأ في حفظ الخصومات الترويجية', e);
+      throw Exception('فشل حفظ الخصومات الترويجية: ${e.toString()}');
+    }
   }
 }

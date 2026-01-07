@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/user_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
@@ -22,7 +23,7 @@ class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
 
   @override
-  _AdminDashboardState createState() => _AdminDashboardState();
+  State<AdminDashboard> createState() => _AdminDashboardState();
 }
 
 class _AdminDashboardState extends State<AdminDashboard> {
@@ -48,7 +49,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       appBar: AppBar(
         title: Row(
           children: [
-            Image.asset('assets/logo.png', height: 30),
+            Icon(Icons.admin_panel_settings, color: Colors.white),
             const SizedBox(width: 10),
             const Text('لوحة تحكم المسؤول'),
           ],
@@ -77,7 +78,25 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   leading: const Icon(Icons.logout),
                   title: const Text('تسجيل الخروج'),
                   onTap: () async {
-                    await authProvider.signOut();
+                    // Get all providers to clear their data on sign out
+                    final merchantProvider = Provider.of<MerchantProvider>(
+                      context,
+                      listen: false,
+                    );
+                    final productProvider = Provider.of<ProductProvider>(
+                      context,
+                      listen: false,
+                    );
+                    final orderProvider = Provider.of<OrderProvider>(
+                      context,
+                      listen: false,
+                    );
+
+                    await authProvider.signOut(
+                      merchantProvider: merchantProvider,
+                      productProvider: productProvider,
+                      orderProvider: orderProvider,
+                    );
                     if (context.mounted) {
                       Navigator.pushReplacementNamed(context, AppRoutes.login);
                     }
@@ -197,8 +216,31 @@ class _AdminDashboardState extends State<AdminDashboard> {
 }
 
 // ==================== Dashboard Home ====================
-class DashboardHome extends StatelessWidget {
+class DashboardHome extends StatefulWidget {
   const DashboardHome({super.key});
+
+  @override
+  State<DashboardHome> createState() => _DashboardHomeState();
+}
+
+class _DashboardHomeState extends State<DashboardHome> {
+  @override
+  void initState() {
+    super.initState();
+    // تحميل البيانات عند بدء الشاشة
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final userProvider = Provider.of<UserProvider>(context, listen: false);
+      final productProvider = Provider.of<ProductProvider>(
+        context,
+        listen: false,
+      );
+      final orderProvider = Provider.of<OrderProvider>(context, listen: false);
+
+      userProvider.fetchUsers();
+      productProvider.fetchProducts();
+      orderProvider.fetchAllOrders();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -206,13 +248,20 @@ class DashboardHome extends StatelessWidget {
     final productProvider = Provider.of<ProductProvider>(context);
     final orderProvider = Provider.of<OrderProvider>(context);
 
+    // عرض مؤشر التحميل إذا كانت البيانات تُحمل
+    if (userProvider.isLoading ||
+        productProvider.isLoading ||
+        orderProvider.isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // بطاقات الإحصائيا��
+            // بطاقات الإحصائيات
             GridView(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
@@ -382,7 +431,7 @@ class DashboardHome extends StatelessWidget {
   }
 
   double _calculateTotalRevenue(List<dynamic> orders) {
-    return orders.fold(0.0, (sum, order) => sum + (order.totalPrice ?? 0));
+    return orders.fold(0.0, (sum, order) => sum + (order.totalAmount ?? 0));
   }
 
   Widget _buildRecentOrdersTable() {
@@ -452,67 +501,163 @@ class AdminDashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<SupabaseProvider>(context);
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text('لوحة تحكم المشرف'),
-        centerTitle: true,
+        elevation: 0,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: 0.1),
+                    Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: 0.2),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.admin_panel_settings,
+                color: Theme.of(context).colorScheme.primary,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              'لوحة تحكم المشرف',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ],
+        ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await authProvider.signOut();
-              if (context.mounted) {
-                Navigator.pushReplacementNamed(context, '/login');
-              }
-            },
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: IconButton(
+              icon: Icon(
+                Icons.home,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              onPressed: () {
+                Navigator.pushReplacementNamed(context, AppRoutes.home);
+              },
+              tooltip: 'العودة للرئيسية',
+            ),
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(
+            height: 1,
+            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
+          ),
+        ),
       ),
-      body: GridView.count(
-        padding: const EdgeInsets.all(16),
-        crossAxisCount: 2,
-        mainAxisSpacing: 16,
-        crossAxisSpacing: 16,
-        children: [
-          _buildDashboardCard(
-            context,
-            title: 'المستخدمين',
-            icon: Icons.people,
-            onTap: () => Navigator.pushNamed(context, '/admin/users'),
+      body: SafeArea(
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Theme.of(context).colorScheme.surface,
+                Theme.of(context).colorScheme.surfaceContainerLowest,
+              ],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
           ),
-          _buildDashboardCard(
-            context,
-            title: 'المتاجر',
-            icon: Icons.store,
-            onTap: () => Navigator.pushNamed(context, '/admin/stores'),
+          child: GridView.count(
+            padding: const EdgeInsets.all(20),
+            crossAxisCount: 2,
+            mainAxisSpacing: 16,
+            crossAxisSpacing: 16,
+            childAspectRatio: 1.0,
+            children: [
+              _buildDashboardCard(
+                context,
+                title: 'المستخدمين',
+                icon: Icons.people,
+                onTap: () =>
+                    Navigator.pushNamed(context, AppRoutes.manageUsers),
+              ),
+              _buildDashboardCard(
+                context,
+                title: 'المنتجات',
+                icon: Icons.shopping_bag,
+                onTap: () =>
+                    Navigator.pushNamed(context, AppRoutes.manageProducts),
+              ),
+              _buildDashboardCard(
+                context,
+                title: 'الطلبات',
+                icon: Icons.shopping_cart,
+                onTap: () =>
+                    Navigator.pushNamed(context, AppRoutes.manageOrders),
+              ),
+              _buildDashboardCard(
+                context,
+                title: 'الفئات',
+                icon: Icons.category,
+                onTap: () =>
+                    Navigator.pushNamed(context, AppRoutes.manageCategories),
+              ),
+              _buildDashboardCard(
+                context,
+                title: 'الكوبونات',
+                icon: Icons.local_offer,
+                onTap: () =>
+                    Navigator.pushNamed(context, AppRoutes.manageCoupons),
+              ),
+              _buildDashboardCard(
+                context,
+                title: 'الكباتن',
+                icon: Icons.delivery_dining,
+                onTap: () =>
+                    Navigator.pushNamed(context, AppRoutes.manageCaptains),
+              ),
+              _buildDashboardCard(
+                context,
+                title: 'الإحصائيات',
+                icon: Icons.analytics,
+                onTap: () => Navigator.pushNamed(context, AppRoutes.analytics),
+              ),
+              _buildDashboardCard(
+                context,
+                title: 'الإعدادات',
+                icon: Icons.settings,
+                onTap: () =>
+                    Navigator.pushNamed(context, AppRoutes.appSettings),
+              ),
+              _buildDashboardCard(
+                context,
+                title: 'منشئ الواجهات',
+                icon: Icons.design_services,
+                onTap: () =>
+                    Navigator.pushNamed(context, AppRoutes.dynamicUIBuilder),
+              ),
+              _buildDashboardCard(
+                context,
+                title: 'إدارة البانرات',
+                icon: Icons.image,
+                onTap: () =>
+                    Navigator.pushNamed(context, AppRoutes.manageBanners),
+              ),
+            ],
           ),
-          _buildDashboardCard(
-            context,
-            title: 'الطلبات',
-            icon: Icons.shopping_cart,
-            onTap: () => Navigator.pushNamed(context, '/admin/orders'),
-          ),
-          _buildDashboardCard(
-            context,
-            title: 'التقارير',
-            icon: Icons.bar_chart,
-            onTap: () => Navigator.pushNamed(context, '/admin/reports'),
-          ),
-          _buildDashboardCard(
-            context,
-            title: 'الإعدادات',
-            icon: Icons.settings,
-            onTap: () => Navigator.pushNamed(context, '/admin/settings'),
-          ),
-          _buildDashboardCard(
-            context,
-            title: 'المندوبين',
-            icon: Icons.delivery_dining,
-            onTap: () => Navigator.pushNamed(context, '/admin/drivers'),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -523,22 +668,84 @@ class AdminDashboardScreen extends StatelessWidget {
     required IconData icon,
     required VoidCallback onTap,
   }) {
-    return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(15),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 40, color: Theme.of(context).primaryColor),
-            const SizedBox(height: 8),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Theme.of(context).colorScheme.surface,
+            Theme.of(
+              context,
+            ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
           ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(20),
+          splashColor: Theme.of(
+            context,
+          ).colorScheme.primary.withValues(alpha: 0.1),
+          highlightColor: Theme.of(
+            context,
+          ).colorScheme.primary.withValues(alpha: 0.05),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.1),
+                        Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.2),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 32,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

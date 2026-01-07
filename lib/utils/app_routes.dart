@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/models/product_model.dart';
+import 'package:ell_tall_market/models/store_model.dart';
 import 'package:ell_tall_market/widgets/main_navigation.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -10,7 +13,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/screens/auth/login_screen.dart';
 import 'package:ell_tall_market/screens/auth/register_screen.dart';
 import 'package:ell_tall_market/screens/auth/reset_password_screen.dart';
-import 'package:ell_tall_market/screens/auth/Register_Merchant_Screen.dart';
+import 'package:ell_tall_market/screens/auth/register_merchant_screen.dart';
 import 'package:ell_tall_market/screens/auth/email_confirmation_screen.dart';
 
 import 'package:ell_tall_market/screens/user/category_screen.dart';
@@ -18,12 +21,13 @@ import 'package:ell_tall_market/screens/user/product_detail_screen.dart';
 import 'package:ell_tall_market/screens/user/cart_screen.dart';
 import 'package:ell_tall_market/screens/user/checkout_screen.dart';
 import 'package:ell_tall_market/screens/user/order_tracking_screen.dart';
-import 'package:ell_tall_market/screens/user/store_detail_Screen.dart';
+import 'package:ell_tall_market/screens/user/store_detail_screen.dart';
 
 import 'package:ell_tall_market/screens/merchant/merchant_dashboard_screen.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_products_screen.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_orders_screen.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_wallet_screen.dart';
+import 'package:ell_tall_market/screens/merchant/add_edit_product_screen.dart';
 
 import 'package:ell_tall_market/screens/captain/captain_orders_screen.dart';
 import 'package:ell_tall_market/screens/captain/order_delivery_screen.dart';
@@ -38,18 +42,20 @@ import 'package:ell_tall_market/screens/admin/app_settings_screen.dart';
 import 'package:ell_tall_market/screens/admin/dynamic_ui_builder_screen.dart';
 import 'package:ell_tall_market/screens/admin/analytics_screen.dart';
 import 'package:ell_tall_market/screens/admin/manage_captains_screen.dart';
+import 'package:ell_tall_market/screens/admin/manage_banners_screen.dart';
 
 import 'package:ell_tall_market/screens/common/splash_screen.dart';
 import 'package:ell_tall_market/screens/common/onboarding_screen.dart';
 import 'package:ell_tall_market/screens/common/search_screen.dart';
 import 'package:ell_tall_market/screens/common/notifications_screen.dart';
+import 'package:ell_tall_market/screens/user/settings_screen.dart';
 
-import '../screens/captain/captain_dashboard.Screen.dart';
+import '../screens/captain/captain_dashboard_screen.dart';
 import '../screens/captain/captain_wallet_screen.dart';
-import '../screens/user/Returns_screen.dart';
 import '../screens/user/addresses_screen.dart';
 import '../screens/user/stores_screen.dart';
 import '../screens/user/edit_profile_screen.dart';
+import '../screens/user/order_history_screen.dart';
 
 class AppRoutes {
   // ===== Route Names =====
@@ -78,7 +84,7 @@ class AppRoutes {
   static const String notifications = '/notifications';
   static const String addresses = '/addresses';
   static const String editProfile = '/edit-profile';
-  static const String returns = '/returns';
+  static const String settings = '/settings';
   static const String paymentMethods = '/payment-methods';
   static const String main = '/main'; // New main navigation route
 
@@ -108,6 +114,7 @@ class AppRoutes {
   static const String dynamicUIBuilder = '/dynamic-ui-builder';
   static const String analytics = '/analytics';
   static const String manageCaptains = '/manage-captains';
+  static const String manageBanners = '/manage-banners';
 
   // ===== Routes Map =====
   static Map<String, WidgetBuilder> get routes {
@@ -127,12 +134,21 @@ class AppRoutes {
       notifications: (_) => const NotificationsScreen(),
       cart: (_) => const CartScreen(),
       checkout: (_) => const CheckoutScreen(),
-      orderHistory: (_) => const MainNavigationScreen(initialIndex: 1),
+      orderHistory: (_) => const OrderHistoryScreen(),
       profile: (_) => const MainNavigationScreen(initialIndex: 3),
       favorites: (_) => const MainNavigationScreen(initialIndex: 2),
 
       merchantDashboard: (_) => const MerchantDashboardScreen(),
       merchantWallet: (_) => const MerchantWalletScreen(),
+      // مهم: استخدم args لتمرير المنتج عند التعديل، وأبقها null عند الإضافة
+      addEditProduct: (context) {
+        final args = ModalRoute.of(context)?.settings.arguments;
+        final product = args is ProductModel ? args : null;
+        return AddEditProductScreen(
+          key: ValueKey<String>('addEdit-${product?.id ?? 'new'}'),
+          product: product,
+        );
+      },
 
       captainDashboard: (_) => const CaptainDashboard(),
       captainWallet: (_) => const CaptainWalletScreen(),
@@ -148,10 +164,10 @@ class AppRoutes {
       dynamicUIBuilder: (_) => const DynamicUIBuilderScreen(),
       analytics: (_) => const AnalyticsScreen(),
       manageCaptains: (_) => const ManageCaptainsScreen(),
+      manageBanners: (_) => const ManageBannersScreen(),
       editProfile: (_) => const EditProfileScreen(),
+      settings: (_) => const SettingsScreen(),
       addresses: (_) => const AddressesScreen(),
-      returns: (_) => const ReturnsScreen(),
-      storeDetail: (_) => const StoreDetailScreen(),
     };
   }
 
@@ -196,6 +212,15 @@ class AppRoutes {
         }
         return _errorRoute('Product data not provided');
 
+      case storeDetail:
+        if (args is StoreModel) {
+          return MaterialPageRoute(
+            builder: (_) => const StoreDetailScreen(),
+            settings: RouteSettings(name: storeDetail, arguments: args),
+          );
+        }
+        return _errorRoute('Store data not provided');
+
       case resetPassword:
         if (args is Map<String, dynamic>) {
           final String? token = args['token'];
@@ -215,8 +240,14 @@ class AppRoutes {
       case emailConfirmation:
         if (args is Map<String, dynamic>) {
           final String email = args['email'] ?? '';
+          final String? password = args['password'];
+          final String? userType = args['userType'];
           return MaterialPageRoute(
-            builder: (_) => EmailConfirmationScreen(email: email),
+            builder: (_) => EmailConfirmationScreen(
+              email: email,
+              password: password,
+              userType: userType,
+            ),
           );
         }
         return _errorRoute('Email not provided for confirmation');
@@ -242,11 +273,7 @@ class AppRoutes {
               return _buildRedirectScreen(context, login);
             }
             if (authProvider.isMerchant) {
-              return MerchantProductsScreen(
-                merchantId: authProvider.currentUserProfile!.id,
-                merchantName:
-                    authProvider.currentUserProfile!.fullName ?? 'تاجر',
-              );
+              return const MerchantProductsScreen();
             }
             return _errorScaffold('Merchant not authenticated');
           },
@@ -263,11 +290,7 @@ class AppRoutes {
               return _buildRedirectScreen(context, login);
             }
             if (authProvider.isMerchant) {
-              return MerchantOrdersScreen(
-                merchantId: authProvider.currentUserProfile!.id,
-                merchantName:
-                    authProvider.currentUserProfile!.fullName ?? 'تاجر',
-              );
+              return const MerchantOrdersScreen();
             }
             return _errorScaffold('Merchant not authenticated');
           },
@@ -355,11 +378,17 @@ class AppRoutes {
       final refreshToken = queryParams['refresh_token'];
       final code = queryParams['code']; // الكود الجديد لتأكيد البريد
       final type = queryParams['type'];
+      final provider = queryParams['provider']; // مثال: google عند OAuth
       final error = queryParams['error'];
       final errorDescription = queryParams['error_description'];
 
-      // ===== معالجة النوع الجديد - Code Exchange =====
-      if (code != null) {
+      // ===== معالجة النوع الجديد - Code Exchange (Email Confirmation فقط) =====
+      // ملاحظة: عند OAuth قد يأتي code أيضاً، لكن يتم معالجته داخلياً من مكتبة Supabase
+      // لذلك نتأكد من عدم وجود provider أو access tokens قبل محاولة التبديل يدوياً
+      if (code != null &&
+          provider == null &&
+          accessToken == null &&
+          refreshToken == null) {
         AppLogger.info('🔄 معالجة رابط تأكيد بريد (code exchange): $code');
 
         return MaterialPageRoute(
@@ -383,7 +412,7 @@ class AppRoutes {
         );
       }
 
-      // ===== معالجة النوع القديم - Access Token =====
+      // ===== معالجة النوع القديم - Access Token (عادة في OAuth) =====
       // إذا كان تأكيد بريد، ضع علامة منع التسجيل التلقائي فوراً
       if (type == 'signup') {
         // استخدام callback لتعيين العلامة فور بناء أول widget
@@ -397,14 +426,25 @@ class AppRoutes {
                 AppLogger.error('خطأ في تعيين علامة منع التسجيل التلقائي', e);
               }
             });
-            return _EmailConfirmedSuccessScreen();
+            return _emailConfirmedSuccessScreen();
           },
+        );
+      }
+
+      // في حالة وجود access_token أو provider (تبع OAuth): دع Supabase يدير الجلسة
+      if (accessToken != null || provider != null) {
+        AppLogger.info(
+          '✅ OAuth callback detected (provider=$provider), الاعتماد على onAuthStateChange',
+        );
+        return MaterialPageRoute(
+          builder: (_) => const LoginScreen(),
+          settings: const RouteSettings(name: AppRoutes.login),
         );
       }
 
       // معالجة أخطاء الروابط المنتهية الصلاحية أو غير الصالحة
       if (error != null) {
-        debugPrint('Auth callback error: $error - $errorDescription');
+        AppLogger.error('Auth callback error: $error - $errorDescription');
 
         if (error == 'access_denied' ||
             errorDescription?.contains('expired') == true) {
@@ -440,20 +480,20 @@ class AppRoutes {
         return MaterialPageRoute(
           builder: (context) {
             // Note: Email confirmation handled automatically by Supabase
-            return _EmailConfirmedSuccessScreen();
+            return _emailConfirmedSuccessScreen();
           },
         );
       }
 
       // في حالة عدم وجود معاملات صحيحة
-      debugPrint('معاملات auth callback غير صحيحة: $queryParams');
+      AppLogger.warning('معاملات auth callback غير صحيحة: $queryParams');
       return MaterialPageRoute(
         builder: (_) => const LoginScreen(),
         settings: const RouteSettings(name: AppRoutes.login),
       );
     } catch (e) {
       // في حالة وجود خطأ في معالجة الرابط
-      debugPrint('خطأ في معالجة auth callback: $e');
+      AppLogger.error('خطأ في معالجة auth callback', e);
       return MaterialPageRoute(
         builder: (_) => const LoginScreen(),
         settings: const RouteSettings(name: AppRoutes.login),
@@ -644,7 +684,7 @@ class AppRoutes {
   }
 
   /// شاشة نجاح تأكيد البريد الإلكتروني مع معالجة أفضل للأخطاء
-  static Widget _EmailConfirmedSuccessScreen() {
+  static Widget _emailConfirmedSuccessScreen() {
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
@@ -759,7 +799,7 @@ class AppRoutes {
                             });
                           } catch (e) {
                             // في حالة وجود خطأ، توجه للصفحة الرئيسية
-                            debugPrint('خطأ في معالجة تأكيد البريد: $e');
+                            AppLogger.error('خطأ في معالجة تأكيد البريد', e);
                             if (context.mounted) {
                               Navigator.pushNamedAndRemoveUntil(
                                 context,
@@ -833,7 +873,7 @@ class AppRoutes {
 
         // معالجة أخطاء الروابط المنتهية الصلاحية
         if (error != null) {
-          debugPrint('Deep link error: $error - $errorDescription');
+          AppLogger.error('Deep link error: $error - $errorDescription');
 
           if (error == 'access_denied' ||
               errorDescription?.contains('expired') == true) {
@@ -863,12 +903,12 @@ class AppRoutes {
           // تأكيد البريد الإلكتروني
           Navigator.pushAndRemoveUntil(
             context,
-            MaterialPageRoute(builder: (_) => _EmailConfirmedSuccessScreen()),
+            MaterialPageRoute(builder: (_) => _emailConfirmedSuccessScreen()),
             (route) => false,
           );
         } else {
           // في حالة عدم وجود معاملات صحيحة، توجه لشاشة تسجيل الدخول
-          debugPrint('معاملات deep link غير صحيحة: $queryParams');
+          AppLogger.warning('معاملات deep link غير صحيحة: $queryParams');
           Navigator.pushNamedAndRemoveUntil(
             context,
             AppRoutes.login,
@@ -878,7 +918,7 @@ class AppRoutes {
       }
     } catch (e) {
       // في حالة وجود خطأ في معالجة الرابط
-      debugPrint('خطأ في معالجة deep link: $e');
+      AppLogger.error('خطأ في معالجة deep link', e);
       Navigator.pushNamedAndRemoveUntil(
         context,
         AppRoutes.login,
@@ -903,6 +943,9 @@ class _CallbackScreenState extends State<_CallbackScreen> {
 
   Future<void> _handleCallback() async {
     try {
+      final navigator = Navigator.of(context);
+      final messenger = ScaffoldMessenger.of(context);
+
       // الحصول على المعاملات من URL
       final uri = Uri.base;
       final code = uri.queryParameters['code'];
@@ -913,45 +956,39 @@ class _CallbackScreenState extends State<_CallbackScreen> {
         // معالجة callback للحصول على session
         await _handleSupabaseAuthCallback(code);
 
+        if (!mounted) return;
+
         // التوجه للصفحة الرئيسية مع رسالة نجاح
         if (mounted) {
-          Navigator.pushNamedAndRemoveUntil(
-            context,
-            AppRoutes.home,
-            (route) => false,
-          );
+          navigator.pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
 
           // إظهار رسالة نجاح بعد التوجيه
           Future.delayed(const Duration(milliseconds: 500), () {
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('✅ تم تأكيد بريدك الإلكتروني بنجاح! مرحباً بك'),
-                  backgroundColor: Colors.green,
-                  duration: Duration(seconds: 4),
-                ),
-              );
-            }
+            if (!mounted) return;
+            messenger.showSnackBar(
+              const SnackBar(
+                content: Text('✅ تم تأكيد بريدك الإلكتروني بنجاح! مرحباً بك'),
+                backgroundColor: Colors.green,
+                duration: Duration(seconds: 4),
+              ),
+            );
           });
         }
       } else {
         // لا يوجد كود، توجه للصفحة الرئيسية مع رسالة خطأ
+        if (!mounted) return;
+
         if (mounted) {
-          Navigator.pushNamedAndRemoveUntil(
-            context,
-            AppRoutes.home,
-            (route) => false,
-          );
+          navigator.pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
 
           Future.delayed(const Duration(milliseconds: 500), () {
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('❌ رابط تأكيد غير صالح'),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            }
+            if (!mounted) return;
+            messenger.showSnackBar(
+              const SnackBar(
+                content: Text('❌ رابط تأكيد غير صالح'),
+                backgroundColor: Colors.red,
+              ),
+            );
           });
         }
       }
@@ -959,21 +996,19 @@ class _CallbackScreenState extends State<_CallbackScreen> {
       AppLogger.error('خطأ في معالجة callback', e);
 
       if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          AppRoutes.home,
-          (route) => false,
-        );
+        final navigator = Navigator.of(context);
+        final messenger = ScaffoldMessenger.of(context);
+
+        navigator.pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
 
         Future.delayed(const Duration(milliseconds: 500), () {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('❌ خطأ في معالجة رابط التأكيد: $e'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
+          if (!mounted) return;
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text('❌ خطأ في معالجة رابط التأكيد: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
         });
       }
     }
@@ -1038,8 +1073,18 @@ class _CodeExchangeScreenState extends State<_CodeExchangeScreen> {
     try {
       AppLogger.info('🔄 بدء معالجة code exchange: ${widget.code}');
 
+      final navigator = Navigator.of(context);
+      final messenger = ScaffoldMessenger.of(context);
+
       // معالجة code exchange مع Supabase
-      await Supabase.instance.client.auth.exchangeCodeForSession(widget.code);
+      await Supabase.instance.client.auth
+          .exchangeCodeForSession(widget.code)
+          .timeout(
+            const Duration(seconds: 8),
+            onTimeout: () {
+              throw TimeoutException('exchangeCodeForSession timeout');
+            },
+          );
 
       AppLogger.info('✅ تم تأكيد البريد الإلكتروني بنجاح');
 
@@ -1051,45 +1096,59 @@ class _CodeExchangeScreenState extends State<_CodeExchangeScreen> {
       AppLogger.info('✅ المستخدم سيبقى مسجل دخول');
 
       // التوجه للصفحة الرئيسية مع رسالة نجاح
+      if (!mounted) return;
+
       if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          AppRoutes.home,
-          (route) => false,
-        );
+        navigator.pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
 
         // إظهار رسالة نجاح بعد التوجيه
         Future.delayed(const Duration(milliseconds: 500), () {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('✅ تم تأكيد بريدك الإلكتروني بنجاح! مرحباً بك'),
-                backgroundColor: Colors.green,
-                duration: Duration(seconds: 4),
-              ),
-            );
-          }
+          if (!mounted) return;
+          messenger.showSnackBar(
+            const SnackBar(
+              content: Text('✅ تم تأكيد بريدك الإلكتروني بنجاح! مرحباً بك'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 4),
+            ),
+          );
         });
       }
     } catch (e) {
       AppLogger.error('خطأ في معالجة code exchange', e);
 
-      if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          AppRoutes.home,
-          (route) => false,
-        );
+      // معالجة خاصة لخطأ flow state
+      String errorMessage = '❌ خطأ في معالجة رابط التأكيد';
+      if (e is TimeoutException) {
+        errorMessage =
+            '⏳ الاتصال استغرق وقتاً طويلاً. تأكد من الشبكة ثم أعد المحاولة';
+      } else if (e.toString().contains('HandshakeException')) {
+        errorMessage =
+            '🔐 تعذر إنشاء اتصال آمن مع الخادم. تحقق من الإنترنت أو جرب شبكة أخرى';
+      } else if (e.toString().contains('SocketException') ||
+          e.toString().contains('_NativeSocket')) {
+        errorMessage =
+            '🌐 تعذر الوصول إلى خادم Supabase. تحقق من الشبكة أو إعدادات DNS ثم أعد المحاولة';
+      } else if (e.toString().contains('flow_state_not_found')) {
+        errorMessage = '⏱️ انتهت صلاحية رابط التأكيد. يرجى المحاولة مرة أخرى';
+      } else if (e.toString().contains('invalid flow state')) {
+        errorMessage = '🔄 رابط التأكيد غير صالح. يرجى تسجيل الدخول مرة أخرى';
+      }
+
+      if (context.mounted) {
+        final navigator = Navigator.of(context);
+        final messenger = ScaffoldMessenger.of(context);
+
+        navigator.pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
 
         Future.delayed(const Duration(milliseconds: 500), () {
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('❌ خطأ في معالجة رابط التأكيد: $e'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
+          if (!mounted) return;
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(errorMessage),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 5),
+            ),
+          );
         });
       }
     }

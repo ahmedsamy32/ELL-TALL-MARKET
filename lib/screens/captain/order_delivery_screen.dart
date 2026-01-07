@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
-import 'package:ell_tall_market/models/order_model.dart' hide OrderStatus;
-import 'package:ell_tall_market/models/order_enums.dart';
+import 'package:ell_tall_market/models/order_model.dart';
 
 class OrderDeliveryScreen extends StatefulWidget {
   final String orderId;
@@ -42,9 +41,7 @@ class _OrderDeliveryScreenState extends State<OrderDeliveryScreen> {
       if (!mounted) return;
 
       setState(() => _isLoading = false);
-      if (kDebugMode) {
-        print('فشل تحميل تفاصيل الطلب: $e');
-      }
+      AppLogger.error('فشل تحميل تفاصيل الطلب', e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('فشل تحميل تفاصيل الطلب: ${e.toString()}'),
@@ -141,7 +138,7 @@ class _OrderDeliveryScreenState extends State<OrderDeliveryScreen> {
             _buildInfoRow('وقت الطلب:', order.createdAtFormatted),
             _buildInfoRow(
               'المجموع:',
-              '${order.totalAmount.toStringAsFixed(2)} ر.س',
+              '${order.totalAmount.toStringAsFixed(2)} ج.م',
             ),
             const SizedBox(height: 8),
             const Text(
@@ -214,9 +211,16 @@ class _OrderDeliveryScreenState extends State<OrderDeliveryScreen> {
             'تم استلام الطلب من المتجر',
             Icons.inventory,
             Colors.blue,
-            () => _updateOrderStatus(OrderStatus.onTheWay),
+            () => _updateOrderStatus(OrderStatus.pickedUp),
           ),
-        if (orderStatus == OrderStatus.onTheWay)
+        if (orderStatus == OrderStatus.pickedUp)
+          _buildActionButton(
+            'بدء التحرك لتسليم الطلب',
+            Icons.directions_bike,
+            Colors.orange,
+            () => _updateOrderStatus(OrderStatus.inTransit),
+          ),
+        if (orderStatus == OrderStatus.inTransit)
           _buildActionButton(
             'تم تسليم الطلب للعميل',
             Icons.check_circle,
@@ -291,13 +295,14 @@ class _OrderDeliveryScreenState extends State<OrderDeliveryScreen> {
         return OrderStatus.confirmed;
       case 'preparing':
       case 'in_preparation':
-        return OrderStatus.inPreparation;
+        return OrderStatus.preparing;
       case 'ready':
         return OrderStatus.ready;
       case 'picked_up':
+        return OrderStatus.pickedUp;
       case 'in_transit':
       case 'on_the_way':
-        return OrderStatus.onTheWay;
+        return OrderStatus.inTransit;
       case 'delivered':
         return OrderStatus.delivered;
       case 'cancelled':
@@ -313,11 +318,13 @@ class _OrderDeliveryScreenState extends State<OrderDeliveryScreen> {
         return Colors.grey;
       case OrderStatus.confirmed:
         return Colors.blue;
-      case OrderStatus.inPreparation:
+      case OrderStatus.preparing:
         return Colors.orange;
       case OrderStatus.ready:
         return Colors.purple;
-      case OrderStatus.onTheWay:
+      case OrderStatus.pickedUp:
+        return Colors.cyan;
+      case OrderStatus.inTransit:
         return Colors.indigo;
       case OrderStatus.delivered:
         return Colors.green;
@@ -332,11 +339,13 @@ class _OrderDeliveryScreenState extends State<OrderDeliveryScreen> {
         return 'في الانتظار';
       case OrderStatus.confirmed:
         return 'تم التأكيد';
-      case OrderStatus.inPreparation:
+      case OrderStatus.preparing:
         return 'يتم التحضير';
       case OrderStatus.ready:
         return 'جاهز للاستلام';
-      case OrderStatus.onTheWay:
+      case OrderStatus.pickedUp:
+        return 'تم الاستلام';
+      case OrderStatus.inTransit:
         return 'في الطريق';
       case OrderStatus.delivered:
         return 'تم التوصيل';
@@ -349,9 +358,9 @@ class _OrderDeliveryScreenState extends State<OrderDeliveryScreen> {
     try {
       // await Provider.of<OrderProvider>(context, listen: false)
       //     .updateOrderStatus(_order!.id, newStatus.dbValue);
-      if (kDebugMode) {
-        print('تحديث حالة الطلب: ${_order!.id} إلى ${newStatus.dbValue}');
-      }
+      AppLogger.info(
+        'تحديث حالة الطلب: ${_order!.id} إلى ${newStatus.dbValue}',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('تم تحديث حالة الطلب بنجاح'),
@@ -360,9 +369,7 @@ class _OrderDeliveryScreenState extends State<OrderDeliveryScreen> {
       );
       _loadOrderDetails();
     } catch (e) {
-      if (kDebugMode) {
-        print('فشل تحديث حالة الطلب: $e');
-      }
+      AppLogger.error('فشل تحديث حالة الطلب', e);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('فشل تحديث حالة الطلب: ${e.toString()}'),
@@ -373,16 +380,12 @@ class _OrderDeliveryScreenState extends State<OrderDeliveryScreen> {
   }
 
   void _callCustomer() {
-    if (kDebugMode) {
-      print('اتصال بالعميل');
-    }
+    AppLogger.info('اتصال بالعميل');
     // تنفيذ الاتصال بالعميل
   }
 
   void _messageCustomer() {
-    if (kDebugMode) {
-      print('إرسال رسالة للعميل');
-    }
+    AppLogger.info('إرسال رسالة للعميل');
     // تنفيذ إرسال رسالة للعميل
   }
 

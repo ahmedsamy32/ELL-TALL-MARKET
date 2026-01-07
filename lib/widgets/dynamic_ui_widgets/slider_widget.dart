@@ -27,7 +27,7 @@ class CustomSlider extends StatefulWidget {
   });
 
   @override
-  _CustomSliderState createState() => _CustomSliderState();
+  State<CustomSlider> createState() => _CustomSliderState();
 }
 
 class _CustomSliderState extends State<CustomSlider> {
@@ -106,7 +106,7 @@ class RangeSliderWidget extends StatefulWidget {
   });
 
   @override
-  _RangeSliderWidgetState createState() => _RangeSliderWidgetState();
+  State<RangeSliderWidget> createState() => _RangeSliderWidgetState();
 }
 
 class _RangeSliderWidgetState extends State<RangeSliderWidget> {
@@ -232,7 +232,7 @@ class VolumeSlider extends StatefulWidget {
   });
 
   @override
-  _VolumeSliderState createState() => _VolumeSliderState();
+  State<VolumeSlider> createState() => _VolumeSliderState();
 }
 
 class _VolumeSliderState extends State<VolumeSlider> {

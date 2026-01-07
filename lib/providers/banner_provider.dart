@@ -69,8 +69,14 @@ class BannerProvider with ChangeNotifier {
     _clearError();
 
     try {
+      AppLogger.info('بدء جلب البانرات من قاعدة البيانات...');
       _banners = await BannerService.getAllBanners();
       AppLogger.info('تم تحميل ${_banners.length} بانر بنجاح');
+
+      // طباعة تفاصيل البانرات للتحقق
+      for (var banner in _banners) {
+        AppLogger.info('بانر: ${banner.title} - نشط: ${banner.isActive}');
+      }
     } catch (e) {
       _setError('فشل تحميل البانرات: ${e.toString()}');
       AppLogger.error('خطأ في جلب البانرات', e);
@@ -85,8 +91,16 @@ class BannerProvider with ChangeNotifier {
     _clearError();
 
     try {
+      AppLogger.info('بدء جلب البانرات النشطة من قاعدة البيانات...');
       _banners = await BannerService.getActiveBanners();
       AppLogger.info('تم تحميل ${_banners.length} بانر نشط');
+
+      // طباعة تفاصيل البانرات للتحقق
+      for (var banner in _banners) {
+        AppLogger.info(
+          'بانر نشط: ${banner.title} - ترتيب: ${banner.displayOrder}',
+        );
+      }
     } catch (e) {
       _setError('فشل تحميل البانرات: ${e.toString()}');
       AppLogger.error('خطأ في جلب البانرات النشطة', e);

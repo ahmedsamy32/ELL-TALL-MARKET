@@ -3,7 +3,6 @@
 library;
 
 import 'package:intl/intl.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Base mixin for common model functionality
 mixin BaseModelMixin {
@@ -66,6 +65,9 @@ enum CouponType {
   }
 }
 
+/// Coupon lifecycle status derived from validity window & activation
+enum CouponStatus { active, scheduled, expired }
+
 /// Coupon model that matches the Supabase coupons table
 class CouponModel with BaseModelMixin {
   static const String tableName = 'coupons';
@@ -73,9 +75,13 @@ class CouponModel with BaseModelMixin {
 
   @override
   final String id; // UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  final String name;
   final String code; // TEXT UNIQUE NOT NULL
   final String? description; // TEXT
   final CouponType couponType; // coupon_type_enum NOT NULL
+  final String? storeId;
+  final String? merchantId;
+  final String? createdBy;
 
   // قيمة الخصم
   final double discountValue; // DECIMAL(10,2) NOT NULL
@@ -99,9 +105,13 @@ class CouponModel with BaseModelMixin {
 
   const CouponModel({
     required this.id,
+    required this.name,
     required this.code,
     this.description,
     required this.couponType,
+    this.storeId,
+    this.merchantId,
+    this.createdBy,
     required this.discountValue,
     required this.minimumOrderAmount,
     this.maximumDiscountAmount,
@@ -118,9 +128,16 @@ class CouponModel with BaseModelMixin {
   factory CouponModel.fromMap(Map<String, dynamic> map) {
     return CouponModel(
       id: map['id'] as String,
+      name:
+          (map['name'] as String?) ??
+          (map['description'] as String?) ??
+          (map['code'] as String),
       code: map['code'] as String,
       description: map['description'] as String?,
       couponType: CouponType.fromString(map['coupon_type'] as String),
+      storeId: map['store_id'] as String?,
+      merchantId: map['merchant_id'] as String?,
+      createdBy: map['created_by'] as String?,
       discountValue: (map['discount_value'] as num).toDouble(),
       minimumOrderAmount:
           (map['minimum_order_amount'] as num?)?.toDouble() ?? 0.0,
@@ -147,7 +164,7 @@ class CouponModel with BaseModelMixin {
       case CouponType.percentage:
         return '${discountValue.toStringAsFixed(0)}%';
       case CouponType.fixedAmount:
-        return '${discountValue.toStringAsFixed(2)} ر.س';
+        return '${discountValue.toStringAsFixed(2)} ج.م';
       case CouponType.freeDelivery:
         return 'توصيل مجاني';
     }
@@ -163,10 +180,82 @@ class CouponModel with BaseModelMixin {
   bool get canBeUsed =>
       isValid && (usageLimit == null || usedCount < usageLimit!);
 
+  CouponStatus get status {
+    if (!isActive ||
+        (validUntil != null && DateTime.now().isAfter(validUntil!))) {
+      return CouponStatus.expired;
+    }
+    if (DateTime.now().isBefore(validFrom)) {
+      return CouponStatus.scheduled;
+    }
+    return CouponStatus.active;
+  }
+
+  String get statusLabel {
+    switch (status) {
+      case CouponStatus.active:
+        return 'فعّال';
+      case CouponStatus.scheduled:
+        return 'مجدوَل';
+      case CouponStatus.expired:
+        return 'منتهي';
+    }
+  }
+
+  String get validUntilFormatted {
+    if (validUntil == null) return 'دائم';
+    return DateFormat('dd/MM/yyyy').format(validUntil!);
+  }
+
   // Backward compatibility getters
   CouponType get type => couponType;
   double get value => discountValue;
   double? get maxDiscountAmount => maximumDiscountAmount;
+
+  CouponModel copyWith({
+    String? id,
+    String? name,
+    String? code,
+    String? description,
+    CouponType? couponType,
+    String? storeId,
+    String? merchantId,
+    String? createdBy,
+    double? discountValue,
+    double? minimumOrderAmount,
+    double? maximumDiscountAmount,
+    int? usageLimit,
+    int? usedCount,
+    int? usageLimitPerUser,
+    DateTime? validFrom,
+    DateTime? validUntil,
+    bool? isActive,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) {
+    return CouponModel(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      code: code ?? this.code,
+      description: description ?? this.description,
+      couponType: couponType ?? this.couponType,
+      storeId: storeId ?? this.storeId,
+      merchantId: merchantId ?? this.merchantId,
+      createdBy: createdBy ?? this.createdBy,
+      discountValue: discountValue ?? this.discountValue,
+      minimumOrderAmount: minimumOrderAmount ?? this.minimumOrderAmount,
+      maximumDiscountAmount:
+          maximumDiscountAmount ?? this.maximumDiscountAmount,
+      usageLimit: usageLimit ?? this.usageLimit,
+      usedCount: usedCount ?? this.usedCount,
+      usageLimitPerUser: usageLimitPerUser ?? this.usageLimitPerUser,
+      validFrom: validFrom ?? this.validFrom,
+      validUntil: validUntil ?? this.validUntil,
+      isActive: isActive ?? this.isActive,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
 
   /// حساب قيمة الخصم لطلب معين
   double calculateDiscount(double orderAmount) {
@@ -199,30 +288,5 @@ class CouponModel with BaseModelMixin {
   @override
   String toString() {
     return 'CouponModel(id: $id, code: $code, type: ${couponType.value})';
-  }
-}
-
-/// Service class for coupon operations
-class CouponService {
-  static final SupabaseClient _client = Supabase.instance.client;
-
-  /// التحقق من صحة كوبون
-  static Future<CouponModel?> validateCoupon(String code) async {
-    try {
-      final response = await _client
-          .from(CouponModel.tableName)
-          .select()
-          .eq('code', code.toUpperCase())
-          .eq('is_active', true)
-          .maybeSingle();
-
-      if (response == null) return null;
-
-      final coupon = CouponModel.fromMap(response);
-      return coupon.canBeUsed ? coupon : null;
-    } catch (e) {
-      print('Error validating coupon: $e');
-      return null;
-    }
   }
 }

@@ -6,7 +6,7 @@ import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/utils/snackbar_helper.dart';
 import 'package:ell_tall_market/utils/validators.dart';
 import 'package:ell_tall_market/core/logger.dart';
-import 'package:ell_tall_market/models/Profile_model.dart';
+import 'package:ell_tall_market/models/profile_model.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -19,9 +19,12 @@ class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _emailFocus = FocusNode();
+  final _passwordFocus = FocusNode();
   bool _rememberMe = false;
   bool _obscurePassword = true;
   bool _isLoading = false;
+  AutovalidateMode _autovalidateMode = AutovalidateMode.disabled;
 
   @override
   void initState() {
@@ -51,10 +54,112 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _emailFocus.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
+  /// إعادة إرسال رسالة التأكيد للبريد الإلكتروني
+  Future<void> _resendConfirmationEmail(String email) async {
+    try {
+      AppLogger.info("📧 إعادة إرسال رسالة التأكيد إلى: $email");
+
+      setState(() => _isLoading = true);
+
+      SnackBarHelper.showLoading(context, '🔄 جاري إرسال رسالة التأكيد...');
+
+      // إعادة إرسال رسالة التأكيد باستخدام Auth API (لا يحتاج RLS)
+      await Supabase.instance.client.auth.resend(
+        type: OtpType.signup,
+        email: email,
+      );
+
+      AppLogger.info("✅ تم إرسال رسالة التأكيد بنجاح");
+
+      AppLogger.info("[Login] ✅ تم إعادة إرسال رسالة التأكيد إلى: $email");
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+
+      SnackBarHelper.showSuccess(
+        context,
+        "✅ تم إرسال رسالة التأكيد!\n"
+        "يرجى التحقق من بريدك الإلكتروني",
+        duration: const Duration(seconds: 4),
+      );
+
+      // الانتقال لصفحة تأكيد البريد
+      await Future.delayed(const Duration(milliseconds: 1000));
+
+      if (!mounted) return;
+
+      Navigator.pushReplacementNamed(
+        context,
+        AppRoutes.emailConfirmation,
+        arguments: {'email': email},
+      );
+    } on AuthException catch (e) {
+      AppLogger.error("❌ خطأ Auth في إعادة الإرسال", e);
+
+      AppLogger.error(
+        "[Login] ❌ AuthException في إعادة إرسال التأكيد: ${e.message}",
+        e,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+
+      // معالجة أخطاء محددة
+      String errorMsg = "❌ فشل إرسال رسالة التأكيد";
+
+      if (e.message.contains('rate_limit') ||
+          e.message.contains('too_many_requests')) {
+        errorMsg =
+            "⏰ تم إرسال كثير من الرسائل\nيرجى الانتظار قليلاً ثم المحاولة مرة أخرى";
+      } else if (e.message.contains('not_found') ||
+          e.message.contains('user_not_found')) {
+        errorMsg = "❌ لم يتم العثور على المستخدم\nيرجى التسجيل أولاً";
+      } else {
+        errorMsg = "❌ فشل إرسال رسالة التأكيد\n${e.message}";
+      }
+
+      SnackBarHelper.showError(
+        context,
+        errorMsg,
+        duration: const Duration(seconds: 5),
+      );
+    } catch (e) {
+      AppLogger.error("❌ خطأ عام في إعادة الإرسال", e);
+
+      AppLogger.error("[Login] ❌ خطأ عام في إعادة إرسال التأكيد", e);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+
+      SnackBarHelper.showError(
+        context,
+        "❌ حدث خطأ غير متوقع\nيرجى المحاولة مرة أخرى",
+        duration: const Duration(seconds: 4),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _handleLogin(SupabaseProvider authProvider) async {
+    // تفعيل التحقق بعد أول محاولة تسجيل دخول
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      setState(() => _autovalidateMode = AutovalidateMode.onUserInteraction);
+      SnackBarHelper.showWarning(
+        context,
+        '⚠️ يرجى تصحيح الأخطاء في النموذج أولاً',
+      );
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) return;
 
     final email = _emailController.text.trim();
@@ -62,10 +167,69 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
 
-    // عرض رسالة تحميل
-    SnackBarHelper.showLoading(context, '🔄 جاري تسجيل الدخول...');
-
     try {
+      AppLogger.info("[Login] 🔄 بدء السيناريو: فحص البريد $email");
+
+      // 🔍 السيناريو 1: التحقق من وجود البريد في قاعدة البيانات
+      AppLogger.info("═══════════════════════════════════════");
+      AppLogger.info("🔍 الخطوة 1: فحص البريد في profiles...");
+      AppLogger.info("   Email: $email");
+
+      SnackBarHelper.showLoading(context, '🔄 جاري التحقق من البيانات...');
+
+      final existingProfile = await Supabase.instance.client
+          .from('profiles')
+          .select('id, email, role')
+          .eq('email', email)
+          .maybeSingle();
+
+      if (!mounted) return;
+
+      if (existingProfile == null) {
+        // ❌ السيناريو 2: البريد غير مسجل
+        AppLogger.info("❌ السيناريو 2: البريد غير مسجل");
+        AppLogger.info("   التوجيه: صفحة التسجيل");
+        AppLogger.info("═══════════════════════════════════════");
+
+        AppLogger.warning("[Login] ⚠️ البريد غير مسجل: $email");
+
+        setState(() => _isLoading = false);
+
+        ScaffoldMessenger.of(context).clearSnackBars();
+
+        SnackBarHelper.showInfo(
+          context,
+          "📧 هذا البريد غير مسجل\n"
+          "سيتم توجيهك لإنشاء حساب جديد...",
+          duration: const Duration(seconds: 2),
+        );
+
+        await Future.delayed(const Duration(milliseconds: 1500));
+
+        if (!mounted) return;
+
+        Navigator.pushReplacementNamed(
+          context,
+          AppRoutes.register,
+          arguments: {'prefillEmail': email},
+        );
+
+        return;
+      }
+
+      // ✅ البريد موجود - المتابعة بتسجيل الدخول
+      AppLogger.info("✅ البريد موجود في قاعدة البيانات!");
+      AppLogger.info("   Email: ${existingProfile['email']}");
+      AppLogger.info("   Role: ${existingProfile['role']}");
+
+      // ✨ السيناريو 3: المتابعة بتسجيل الدخول
+      AppLogger.info("═══════════════════════════════════════");
+      AppLogger.info("✨ السيناريو 3: المتابعة بتسجيل الدخول");
+      AppLogger.info("═══════════════════════════════════════");
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      SnackBarHelper.showLoading(context, '🔄 جاري تسجيل الدخول...');
+
       AppLogger.info("[Login] بدء تسجيل الدخول - Email: $email");
 
       // تسجيل الدخول عبر Supabase
@@ -75,11 +239,17 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (success) {
         AppLogger.info("[Login] تم تسجيل الدخول بنجاح");
+
+        ScaffoldMessenger.of(context).clearSnackBars();
         SnackBarHelper.showSuccess(context, '✅ تم تسجيل الدخول بنجاح!');
 
         // التنقل حسب دور المستخدم
         await authProvider.refreshProfile();
         final role = authProvider.currentProfile?.role;
+
+        AppLogger.info("✅ الدور: $role");
+
+        if (!mounted) return;
 
         if (role == UserRole.admin) {
           Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
@@ -93,10 +263,90 @@ class _LoginScreenState extends State<LoginScreen> {
       } else {
         AppLogger.warning("[Login] فشل تسجيل الدخول");
 
+        ScaffoldMessenger.of(context).clearSnackBars();
+
         // التحقق من نوع الخطأ وعرض رسالة مناسبة
         final error = authProvider.errorMessage;
         if (error != null) {
-          if (error.contains('timeout') ||
+          // فحص خطأ البريد غير المؤكد
+          if (error.toLowerCase().contains('email_not_confirmed') ||
+              error.toLowerCase().contains('email not confirmed')) {
+            // عرض Dialog مع خيار إعادة الإرسال
+            final shouldResend = await showDialog<bool>(
+              context: context,
+              barrierDismissible: false,
+              builder: (context) => AlertDialog(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                title: const Row(
+                  children: [
+                    Icon(Icons.email_outlined, color: Colors.orange, size: 28),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'البريد غير مؤكد',
+                        style: TextStyle(fontSize: 20),
+                      ),
+                    ),
+                  ],
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'يجب تأكيد بريدك الإلكتروني قبل تسجيل الدخول.',
+                      style: Theme.of(context).textTheme.bodyLarge,
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.blue.shade200),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, color: Colors.blue.shade700),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Text(
+                              'هل تريد إعادة إرسال رسالة التأكيد؟',
+                              style: TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton.icon(
+                    onPressed: () => Navigator.pop(context, false),
+                    icon: const Icon(Icons.close),
+                    label: const Text('إلغاء'),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () => Navigator.pop(context, true),
+                    icon: const Icon(Icons.send),
+                    label: const Text('إعادة الإرسال'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+
+            if (shouldResend == true && mounted) {
+              await _resendConfirmationEmail(email);
+            }
+          } else if (error.contains('timeout') ||
               error.contains('connection') ||
               error.contains('network')) {
             SnackBarHelper.showError(
@@ -270,7 +520,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _handleFacebookLogin() async {
     setState(() => _isLoading = true);
 
-    // TODO: تسجيل الدخول بواسطة Facebook يتطلب إعداد Facebook Sign In
+    // Note: تسجيل الدخول بواسطة Facebook يتطلب إعداد Facebook Sign In
     // سيتم تفعيله لاحقاً
     SnackBarHelper.showError(
       context,
@@ -353,82 +603,83 @@ class _LoginScreenState extends State<LoginScreen> {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text("استعادة كلمة المرور"),
         content: Text(
           "سيتم إرسال رابط استعادة كلمة المرور إلى:\n${_emailController.text.trim()}",
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text("إلغاء"),
           ),
           TextButton(
             onPressed: () async {
-              Navigator.pop(context);
+              Navigator.pop(dialogContext); // Close dialog
+
+              if (!mounted) return;
               SnackBarHelper.showLoading(
-                context,
+                context, // Use screen context
                 '🔄 جاري إرسال رابط الاستعادة...',
               );
 
               try {
                 final authProvider = Provider.of<SupabaseProvider>(
-                  context,
+                  context, // Use screen context
                   listen: false,
                 );
                 final success = await authProvider.resetPassword(
                   _emailController.text.trim(),
                 );
 
-                if (mounted) {
-                  if (success) {
-                    SnackBarHelper.showSuccess(
-                      context,
-                      '✅ تم إرسال رابط استعادة كلمة المرور بنجاح!',
-                    );
-                  } else {
-                    SnackBarHelper.showError(
-                      context,
-                      authProvider.error ??
-                          'فشل إرسال رابط استعادة كلمة المرور',
-                    );
-                  }
+                if (!mounted) return;
+
+                if (success) {
+                  SnackBarHelper.showSuccess(
+                    context, // Use screen context
+                    '✅ تم إرسال رابط استعادة كلمة المرور بنجاح!',
+                  );
+                } else {
+                  SnackBarHelper.showError(
+                    context, // Use screen context
+                    authProvider.error ?? 'فشل إرسال رابط استعادة كلمة المرور',
+                  );
                 }
               } catch (e) {
-                if (mounted) {
-                  // استخراج الرسالة من Exception إذا كانت موجودة
-                  String errorMessage = e.toString();
-                  if (errorMessage.startsWith('Exception: ')) {
-                    errorMessage = errorMessage.substring(
-                      11,
-                    ); // إزالة "Exception: "
-                  }
+                if (!mounted) return;
 
-                  // عرض رسالة مخصصة حسب نوع الخطأ
-                  if (errorMessage.contains('البريد الإلكتروني غير صالح') ||
-                      errorMessage.contains('invalid-email')) {
-                    SnackBarHelper.showError(
-                      context,
-                      '📧 البريد الإلكتروني غير صالح. تحقق من كتابته بشكل صحيح.',
-                    );
-                  } else if (errorMessage.contains('user-not-found') ||
-                      errorMessage.contains('لا يوجد حساب')) {
-                    SnackBarHelper.showError(
-                      context,
-                      '👤 لا يوجد حساب بهذا البريد الإلكتروني. تأكد من البريد أو قم بإنشاء حساب جديد.',
-                    );
-                  } else if (errorMessage.contains('network') ||
-                      errorMessage.contains('internet')) {
-                    SnackBarHelper.showError(
-                      context,
-                      '🌐 مشكلة في الاتصال بالإنترنت. تحقق من اتصالك وحاول مرة أخرى.',
-                    );
-                  } else {
-                    SnackBarHelper.showError(
-                      context,
-                      '❌ فشل في إرسال رابط الاستعادة. يرجى المحاولة مرة أخرى.',
-                    );
-                  }
+                // استخراج الرسالة من Exception إذا كانت موجودة
+                String errorMessage = e.toString();
+                if (errorMessage.startsWith('Exception: ')) {
+                  errorMessage = errorMessage.substring(
+                    11,
+                  ); // إزالة "Exception: "
+                }
+
+                // عرض رسالة مخصصة حسب نوع الخطأ
+                if (errorMessage.contains('البريد الإلكتروني غير صالح') ||
+                    errorMessage.contains('invalid-email')) {
+                  SnackBarHelper.showError(
+                    context, // Use screen context
+                    '📧 البريد الإلكتروني غير صالح. تحقق من كتابته بشكل صحيح.',
+                  );
+                } else if (errorMessage.contains('user-not-found') ||
+                    errorMessage.contains('لا يوجد حساب')) {
+                  SnackBarHelper.showError(
+                    context, // Use screen context
+                    '👤 لا يوجد حساب بهذا البريد الإلكتروني. تأكد من البريد أو قم بإنشاء حساب جديد.',
+                  );
+                } else if (errorMessage.contains('network') ||
+                    errorMessage.contains('internet')) {
+                  SnackBarHelper.showError(
+                    context,
+                    '🌐 مشكلة في الاتصال بالإنترنت. تحقق من اتصالك وحاول مرة أخرى.',
+                  );
+                } else {
+                  SnackBarHelper.showError(
+                    context,
+                    '❌ فشل في إرسال رابط الاستعادة. يرجى المحاولة مرة أخرى.',
+                  );
                 }
               }
             },
@@ -509,6 +760,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     padding: const EdgeInsets.all(28),
                     child: Form(
                       key: _formKey,
+                      autovalidateMode: _autovalidateMode,
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -573,6 +825,10 @@ class _LoginScreenState extends State<LoginScreen> {
                             hintText: "example@gmail.com",
                             icon: Icons.email_outlined,
                             keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.next,
+                            focusNode: _emailFocus,
+                            onFieldSubmitted: (_) =>
+                                _passwordFocus.requestFocus(),
                             validator: Validators.validateEmail,
                             enabled: !_isLoading,
                           ),
@@ -585,6 +841,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             hintText: "أدخل كلمة المرور",
                             icon: Icons.lock_outline_rounded,
                             isPassword: true,
+                            textInputAction: TextInputAction.done,
+                            focusNode: _passwordFocus,
+                            onFieldSubmitted: (_) => _handleLogin(authProvider),
                             validator: Validators.validatePassword,
                             enabled: !_isLoading,
                           ),
@@ -723,6 +982,9 @@ class _LoginScreenState extends State<LoginScreen> {
     required bool enabled,
     TextInputType? keyboardType,
     bool isPassword = false,
+    TextInputAction? textInputAction,
+    void Function(String)? onFieldSubmitted,
+    FocusNode? focusNode,
   }) {
     return Container(
       decoration: BoxDecoration(
@@ -743,6 +1005,9 @@ class _LoginScreenState extends State<LoginScreen> {
         keyboardType: keyboardType,
         enabled: enabled,
         obscureText: isPassword ? _obscurePassword : false,
+        textInputAction: textInputAction,
+        onFieldSubmitted: onFieldSubmitted,
+        focusNode: focusNode,
         style: const TextStyle(
           fontSize: 16,
           fontWeight: FontWeight.w500,

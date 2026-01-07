@@ -39,7 +39,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       'منذ دقيقتين',
       Colors.green,
     ),
-    Activity('دفع ناجح', 'تم دفع 250 ر.س', 'منذ 5 دقائق', Colors.blue),
+    Activity('دفع ناجح', 'تم دفع 250 ج.م', 'منذ 5 دقائق', Colors.blue),
     Activity('مستخدم جديد', 'تسجيل حساب جديد', 'منذ 10 دقائق', Colors.orange),
     Activity('تحديث منتج', 'هاتف Samsung محدث', 'منذ 15 دقيقة', Colors.purple),
     Activity('تقييم جديد', '⭐ 5 نجوم لمنتج Dell', 'منذ 20 دقيقة', Colors.amber),
@@ -79,7 +79,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       children: [
         _buildStatCard(
           'إجمالي المبيعات',
-          '125,000 ر.س',
+          '125,000 ج.م',
           Icons.attach_money,
           Colors.green,
         ),
@@ -92,7 +92,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         _buildStatCard('العملاء الجدد', '350', Icons.people, Colors.orange),
         _buildStatCard(
           'متوسط الطلب',
-          '100 ر.س',
+          '100 ج.م',
           Icons.trending_up,
           Colors.purple,
         ),

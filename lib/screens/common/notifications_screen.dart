@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
+import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/models/notification_model.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 
@@ -8,7 +9,7 @@ class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
 
   @override
-  _NotificationsScreenState createState() => _NotificationsScreenState();
+  State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
@@ -16,44 +17,111 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final userId = 'current_user_id'; // استبدال بـ ID المستخدم الحقيقي
-      Provider.of<NotificationProvider>(
+      final authProvider = Provider.of<SupabaseProvider>(
         context,
         listen: false,
-      ).loadUserNotifications(userId);
+      );
+      final userId = authProvider.currentUser?.id;
+
+      if (userId != null) {
+        Provider.of<NotificationProvider>(
+          context,
+          listen: false,
+        ).loadUserNotifications(userId);
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
     final notificationProvider = Provider.of<NotificationProvider>(context);
+    final authProvider = Provider.of<SupabaseProvider>(context);
+    final userId = authProvider.currentUser?.id;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('الإشعارات'),
+        title: const Text('الإشعارات'),
         centerTitle: true,
         actions: [
-          if (notificationProvider.unreadCount > 0)
+          if (notificationProvider.unreadCount > 0 && userId != null)
             IconButton(
-              icon: Icon(Icons.mark_email_read),
+              icon: const Icon(Icons.mark_email_read),
               onPressed: () {
-                notificationProvider.markAllAsRead('current_user_id');
+                notificationProvider.markAllAsRead(userId);
               },
               tooltip: 'تمييز الكل كمقروء',
             ),
         ],
       ),
-      body: _buildNotificationsList(notificationProvider),
+      body: userId == null
+          ? _buildLoginRequired()
+          : _buildNotificationsList(notificationProvider, userId),
     );
   }
 
-  Widget _buildNotificationsList(NotificationProvider provider) {
+  Widget _buildLoginRequired() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.login, size: 80, color: Colors.grey),
+          const SizedBox(height: 16),
+          const Text(
+            'يرجى تسجيل الدخول',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'قم بتسجيل الدخول لعرض الإشعارات',
+            style: TextStyle(color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotificationsList(NotificationProvider provider, String userId) {
     if (provider.isLoading) {
-      return Center(child: CircularProgressIndicator());
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (provider.error != null) {
-      return Center(child: Text(provider.error!));
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.wifi_off_rounded, size: 80, color: Colors.orange[300]),
+              const SizedBox(height: 16),
+              const Text(
+                'مشكلة في الاتصال',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                provider.error!,
+                style: const TextStyle(color: Colors.grey, fontSize: 15),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: () {
+                  provider.loadUserNotifications(userId);
+                },
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('إعادة المحاولة'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     if (provider.notifications.isEmpty) {
@@ -62,13 +130,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Icons.notifications_none, size: 80, color: Colors.grey),
-            SizedBox(height: 16),
-            Text(
+            const SizedBox(height: 16),
+            const Text(
               'لا توجد إشعارات',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            SizedBox(height: 8),
-            Text(
+            const SizedBox(height: 8),
+            const Text(
               'سيتم إعلامك عند وجود إشعارات جديدة',
               style: TextStyle(color: Colors.grey),
             ),
@@ -79,10 +147,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
     return RefreshIndicator(
       onRefresh: () async {
-        await provider.loadUserNotifications('current_user_id');
+        await provider.loadUserNotifications(userId);
       },
       child: ListView.builder(
-        padding: EdgeInsets.all(8),
+        padding: const EdgeInsets.all(8),
         itemCount: provider.notifications.length,
         itemBuilder: (context, index) {
           final notification = provider.notifications[index];
@@ -101,21 +169,21 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       direction: DismissDirection.endToStart,
       background: Container(
         color: Colors.red,
-        alignment: Alignment.centerRight,
-        padding: EdgeInsets.only(right: 20),
-        child: Icon(Icons.delete, color: Colors.white),
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.only(left: 20),
+        child: const Icon(Icons.delete, color: Colors.white),
       ),
       onDismissed: (direction) {
         provider.deleteNotification(notification.id);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
+          const SnackBar(
             content: Text('تم حذف الإشعار'),
             backgroundColor: Colors.red,
           ),
         );
       },
       child: Card(
-        margin: EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
         color: notification.isRead
             ? Colors.white
             : AppColors.primary.withAlpha(25),
@@ -135,16 +203,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(notification.body),
-              SizedBox(height: 4),
+              const SizedBox(height: 4),
               Text(
                 notification.createdAtRelative,
-                style: TextStyle(fontSize: 12, color: Colors.grey),
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ],
           ),
           trailing: notification.isRead
               ? null
-              : Icon(Icons.circle, size: 8, color: AppColors.primary),
+              : const Icon(Icons.circle, size: 8, color: AppColors.primary),
           onTap: () {
             if (!notification.isRead) {
               provider.markAsRead(notification.id);

@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
+import 'package:ell_tall_market/utils/helpers.dart';
 
 class AppLocalizations {
   final Locale locale;
@@ -43,13 +44,7 @@ class AppLocalizations {
 
   // دوال مساعدة
   String formatCurrency(double amount) {
-    final symbol = locale.languageCode == 'ar' ? 'ر.س' : '\$';
-    final format = NumberFormat.currency(
-      locale: locale.toString(),
-      symbol: symbol,
-      decimalDigits: 2,
-    );
-    return format.format(amount);
+    return Helpers.formatCurrency(amount, currencyCode: 'EGP');
   }
 
   String formatDate(DateTime date) {

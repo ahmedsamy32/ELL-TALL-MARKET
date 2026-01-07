@@ -6,6 +6,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/notification_model.dart';
+import '../core/logger.dart';
 
 /// Enhanced NotificationService with comprehensive smart features
 class NotificationServiceEnhanced {
@@ -37,9 +38,7 @@ class NotificationServiceEnhanced {
     try {
       if (_isInitialized) return true;
 
-      if (kDebugMode) {
-        print('$_logTag Initializing enhanced notification service...');
-      }
+      AppLogger.info('Initializing enhanced notification service...');
 
       // Initialize Firebase Messaging
       await _initializeFirebaseMessaging();
@@ -60,13 +59,11 @@ class NotificationServiceEnhanced {
       await _initializeAnalytics();
 
       _isInitialized = true;
-      if (kDebugMode) {
-        print('$_logTag ✅ Notification service initialized successfully');
-      }
+      AppLogger.info('Notification service initialized successfully');
 
       return true;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to initialize: $e');
+      AppLogger.error('❌ Failed to initialize', e);
       return false;
     }
   }
@@ -85,25 +82,19 @@ class NotificationServiceEnhanced {
     );
 
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      if (kDebugMode) {
-        print('$_logTag ✅ Firebase messaging permissions granted');
-      }
+      AppLogger.info('✅ Firebase messaging permissions granted');
 
       // Get FCM token
       _fcmToken = await _firebaseMessaging.getToken();
       if (_fcmToken != null) {
         await _saveDeviceToken(_fcmToken!);
-        if (kDebugMode) {
-          print('$_logTag FCM Token saved: ${_fcmToken!.substring(0, 20)}...');
-        }
+        AppLogger.info('FCM Token saved: ${_fcmToken!.substring(0, 20)}...');
       }
 
       // Setup token refresh listener
       _firebaseMessaging.onTokenRefresh.listen(_onTokenRefresh);
     } else {
-      if (kDebugMode) {
-        print('$_logTag ⚠️ Firebase messaging permissions denied');
-      }
+      AppLogger.warning('⚠️ Firebase messaging permissions denied');
     }
   }
 
@@ -162,9 +153,7 @@ class NotificationServiceEnhanced {
     String? campaignId,
   }) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Sending smart notification to client: $clientId');
-      }
+      AppLogger.info('Sending smart notification to client: $clientId');
 
       // Personalize notification content
       final personalizedContent = await _personalizeNotification(
@@ -177,9 +166,7 @@ class NotificationServiceEnhanced {
       // Check delivery preferences
       final canDeliver = await _checkDeliveryPreferences(clientId, type);
       if (!canDeliver) {
-        if (kDebugMode) {
-          print('$_logTag ⚠️ Notification blocked by user preferences');
-        }
+        AppLogger.warning('⚠️ Notification blocked by user preferences');
         return false;
       }
 
@@ -223,7 +210,7 @@ class NotificationServiceEnhanced {
 
       return true;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to send smart notification: $e');
+      AppLogger.error('❌ Failed to send smart notification', e);
       return false;
     }
   }
@@ -248,11 +235,9 @@ class NotificationServiceEnhanced {
     };
 
     try {
-      if (kDebugMode) {
-        print(
-          '$_logTag Sending bulk notifications to ${clientIds.length} clients',
-        );
-      }
+      AppLogger.info(
+        'Sending bulk notifications to ${clientIds.length} clients',
+      );
 
       // Process in batches
       for (int i = 0; i < clientIds.length; i += batchSize) {
@@ -289,13 +274,11 @@ class NotificationServiceEnhanced {
         }
       }
 
-      if (kDebugMode) {
-        print(
-          '$_logTag ✅ Bulk notifications completed: ${results['sent']} sent, ${results['failed']} failed',
-        );
-      }
+      AppLogger.info(
+        '✅ Bulk notifications completed: ${results['sent']} sent, ${results['failed']} failed',
+      );
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Bulk notification error: $e');
+      AppLogger.error('❌ Bulk notification error', e);
       results['errors'].add('Bulk operation failed: $e');
     }
 
@@ -319,9 +302,7 @@ class NotificationServiceEnhanced {
     try {
       final campaignId = _generateCampaignId();
 
-      if (kDebugMode) {
-        print('$_logTag Creating notification campaign: $name ($campaignId)');
-      }
+      AppLogger.info('Creating notification campaign: $name ($campaignId)');
 
       // Create campaign record
       await _supabase.from('notification_campaigns').insert({
@@ -359,7 +340,7 @@ class NotificationServiceEnhanced {
 
       return campaignId;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to create campaign: $e');
+      AppLogger.error('❌ Failed to create campaign', e);
       rethrow;
     }
   }
@@ -414,7 +395,7 @@ class NotificationServiceEnhanced {
 
       return {'title': personalizedTitle, 'message': personalizedMessage};
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Personalization failed: $e');
+      AppLogger.warning('⚠️ Personalization failed', e);
       return {'title': title, 'message': message};
     }
   }
@@ -424,9 +405,7 @@ class NotificationServiceEnhanced {
     String clientId,
   ) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Getting smart recommendations for client: $clientId');
-      }
+      AppLogger.info('Getting smart recommendations for client: $clientId');
 
       final recommendations = <Map<String, dynamic>>[];
 
@@ -485,7 +464,7 @@ class NotificationServiceEnhanced {
 
       return recommendations;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get recommendations: $e');
+      AppLogger.error('❌ Failed to get recommendations', e);
       return [];
     }
   }
@@ -498,7 +477,7 @@ class NotificationServiceEnhanced {
     NotificationType? type,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Analyzing notification performance...');
+      AppLogger.info('Analyzing notification performance...');
 
       final query = _supabase.from('notification_analytics').select('*');
 
@@ -565,7 +544,7 @@ class NotificationServiceEnhanced {
         'trends': await _calculateEngagementTrends(analytics),
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to analyze performance: $e');
+      AppLogger.error('❌ Failed to analyze performance', e);
       return {};
     }
   }
@@ -583,7 +562,7 @@ class NotificationServiceEnhanced {
     Map<String, dynamic>? data,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Sending location-based notification...');
+      AppLogger.info('Sending location-based notification...');
 
       // Get clients in the specified location
       final nearbyClients = await _getClientsInRadius(
@@ -593,9 +572,7 @@ class NotificationServiceEnhanced {
       );
 
       if (nearbyClients.isEmpty) {
-        if (kDebugMode) {
-          print('$_logTag No clients found in specified location');
-        }
+        AppLogger.info('No clients found in specified location');
         return false;
       }
 
@@ -609,17 +586,13 @@ class NotificationServiceEnhanced {
         campaignId: _generateCampaignId(),
       );
 
-      if (kDebugMode) {
-        print(
-          '$_logTag Location-based notification sent to ${results['sent']} clients',
-        );
-      }
+      AppLogger.info(
+        'Location-based notification sent to ${results['sent']} clients',
+      );
 
       return results['sent'] > 0;
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Failed to send location-based notification: $e');
-      }
+      AppLogger.error('❌ Failed to send location-based notification', e);
       return false;
     }
   }
@@ -635,7 +608,7 @@ class NotificationServiceEnhanced {
     String? imageUrl,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Sending interactive notification...');
+      AppLogger.info('Sending interactive notification...');
 
       // Create notification with actions
       final notification = NotificationModel(
@@ -672,9 +645,7 @@ class NotificationServiceEnhanced {
 
       return true;
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Failed to send interactive notification: $e');
-      }
+      AppLogger.error('❌ Failed to send interactive notification', e);
       return false;
     }
   }
@@ -692,7 +663,7 @@ class NotificationServiceEnhanced {
     String? actionUrl,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Sending rich media notification...');
+      AppLogger.info('Sending rich media notification...');
 
       // Create rich notification
       final notification = NotificationModel(
@@ -732,9 +703,7 @@ class NotificationServiceEnhanced {
 
       return true;
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Failed to send rich media notification: $e');
-      }
+      AppLogger.error('❌ Failed to send rich media notification', e);
       return false;
     }
   }
@@ -747,11 +716,7 @@ class NotificationServiceEnhanced {
     Map<String, dynamic> preferences,
   ) async {
     try {
-      if (kDebugMode) {
-        print(
-          '$_logTag Updating notification preferences for client: $clientId',
-        );
-      }
+      AppLogger.info('Updating notification preferences for client: $clientId');
 
       await _supabase.from('client_notification_preferences').upsert({
         'client_id': clientId,
@@ -767,7 +732,7 @@ class NotificationServiceEnhanced {
 
       return true;
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to update preferences: $e');
+      AppLogger.error('❌ Failed to update preferences', e);
       return false;
     }
   }
@@ -788,7 +753,7 @@ class NotificationServiceEnhanced {
       // Return default preferences
       return _getDefaultPreferences();
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Failed to get preferences: $e');
+      AppLogger.warning('⚠️ Failed to get preferences', e);
       return _getDefaultPreferences();
     }
   }
@@ -798,12 +763,10 @@ class NotificationServiceEnhanced {
     try {
       await _firebaseMessaging.subscribeToTopic(topic);
       _subscribedTopics.add(topic);
-      if (kDebugMode) print('$_logTag ✅ Subscribed to topic: $topic');
+      AppLogger.info('✅ Subscribed to topic: $topic');
       return true;
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Failed to subscribe to topic $topic: $e');
-      }
+      AppLogger.error('$_logTag ❌ Failed to subscribe to topic $topic', e);
       return false;
     }
   }
@@ -813,12 +776,10 @@ class NotificationServiceEnhanced {
     try {
       await _firebaseMessaging.unsubscribeFromTopic(topic);
       _subscribedTopics.remove(topic);
-      if (kDebugMode) print('$_logTag ✅ Unsubscribed from topic: $topic');
+      AppLogger.info('$_logTag ✅ Unsubscribed from topic: $topic');
       return true;
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Failed to unsubscribe from topic $topic: $e');
-      }
+      AppLogger.error('$_logTag ❌ Failed to unsubscribe from topic $topic', e);
       return false;
     }
   }
@@ -847,11 +808,9 @@ class NotificationServiceEnhanced {
           )
           .subscribe();
 
-      if (kDebugMode) print('$_logTag ✅ Real-time listeners setup completed');
+      AppLogger.info('✅ Real-time listeners setup completed');
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ⚠️ Failed to setup real-time listeners: $e');
-      }
+      AppLogger.warning('⚠️ Failed to setup real-time listeners', e);
     }
   }
 
@@ -875,15 +834,11 @@ class NotificationServiceEnhanced {
         }),
       );
 
-      if (kDebugMode) {
-        print(
-          '$_logTag 📱 Real-time notification received: ${notification.title}',
-        );
-      }
+      AppLogger.info(
+        '📱 Real-time notification received: ${notification.title}',
+      );
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Failed to handle real-time notification: $e');
-      }
+      AppLogger.error('❌ Failed to handle real-time notification', e);
     }
   }
 
@@ -905,11 +860,9 @@ class NotificationServiceEnhanced {
             : null,
       });
 
-      if (kDebugMode) {
-        print('$_logTag 📊 Tracked interaction: $action for $notificationId');
-      }
+      AppLogger.info('📊 Tracked interaction: $action for $notificationId');
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Failed to track interaction: $e');
+      AppLogger.warning('⚠️ Failed to track interaction', e);
     }
   }
 
@@ -923,7 +876,7 @@ class NotificationServiceEnhanced {
           startDate ?? DateTime.now().subtract(const Duration(days: 30));
       final end = endDate ?? DateTime.now();
 
-      if (kDebugMode) print('$_logTag Getting notification statistics...');
+      AppLogger.info('Getting notification statistics...');
 
       // Get basic stats
       final totalSentData = await _supabase
@@ -974,7 +927,7 @@ class NotificationServiceEnhanced {
         'daily_breakdown': await _getDailyNotificationBreakdown(start, end),
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Failed to get statistics: $e');
+      AppLogger.error('❌ Failed to get statistics', e);
       return {};
     }
   }
@@ -1017,11 +970,11 @@ class NotificationServiceEnhanced {
         'client_id': userId,
         'token': token,
         'platform': Platform.isIOS ? 'ios' : 'android',
-        'app_version': '1.0.0', // TODO: Get from package info
+        'app_version': '1.0.0', // Note: Get from package info
         'updated_at': DateTime.now().toIso8601String(),
       });
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Failed to save device token: $e');
+      AppLogger.warning('⚠️ Failed to save device token', e);
     }
   }
 
@@ -1029,13 +982,13 @@ class NotificationServiceEnhanced {
   void _onTokenRefresh(String token) {
     _fcmToken = token;
     _saveDeviceToken(token);
-    if (kDebugMode) print('$_logTag 🔄 FCM Token refreshed');
+    AppLogger.info('🔄 FCM Token refreshed');
   }
 
   /// Handle foreground messages
   void _handleForegroundMessage(RemoteMessage message) {
     if (kDebugMode) {
-      print('$_logTag 📱 Foreground message: ${message.notification?.title}');
+      AppLogger.info('📱 Foreground message: ${message.notification?.title}');
     }
 
     // Show local notification for foreground messages
@@ -1056,11 +1009,7 @@ class NotificationServiceEnhanced {
 
   /// Handle background message tap
   void _handleBackgroundMessageTap(RemoteMessage message) {
-    if (kDebugMode) {
-      print(
-        '$_logTag 🔄 Background message tap: ${message.notification?.title}',
-      );
-    }
+    AppLogger.info('🔄 Background message tap: ${message.notification?.title}');
 
     // Track analytics
     trackNotificationInteraction(
@@ -1075,11 +1024,9 @@ class NotificationServiceEnhanced {
 
   /// Handle app launched from notification
   Future<void> _handleAppLaunchedFromNotification(RemoteMessage message) async {
-    if (kDebugMode) {
-      print(
-        '$_logTag 🚀 App launched from notification: ${message.notification?.title}',
-      );
-    }
+    AppLogger.info(
+      '🚀 App launched from notification: ${message.notification?.title}',
+    );
 
     // Track analytics
     trackNotificationInteraction(
@@ -1094,9 +1041,7 @@ class NotificationServiceEnhanced {
 
   /// Handle local notification tap
   void _onLocalNotificationTapped(NotificationResponse response) {
-    if (kDebugMode) {
-      print('$_logTag 👆 Local notification tapped: ${response.id}');
-    }
+    AppLogger.info('👆 Local notification tapped: ${response.id}');
 
     if (response.payload != null) {
       final data = jsonDecode(response.payload!);
@@ -1120,27 +1065,23 @@ class NotificationServiceEnhanced {
 
       switch (actionType) {
         case 'navigate':
-          // TODO: Implement navigation logic
-          if (kDebugMode) {
-            print('$_logTag Navigate to: ${actionData?['route']}');
-          }
+          // Note: Implement navigation logic
+          AppLogger.info('Navigate to: ${actionData?['route']}');
           break;
         case 'open_url':
-          // TODO: Implement URL opening logic
-          if (kDebugMode) print('$_logTag Open URL: ${actionData?['url']}');
+          // Note: Implement URL opening logic
+          AppLogger.info('Open URL: ${actionData?['url']}');
           break;
         case 'show_dialog':
-          // TODO: Implement dialog showing logic
-          if (kDebugMode) {
-            print('$_logTag Show dialog: ${actionData?['message']}');
-          }
+          // Note: Implement dialog showing logic
+          AppLogger.info('Show dialog: ${actionData?['message']}');
           break;
         default:
-          if (kDebugMode) print('$_logTag Unknown action type: $actionType');
+          AppLogger.warning('Unknown action type: $actionType');
       }
     } catch (e) {
       if (kDebugMode) {
-        print('$_logTag ⚠️ Failed to handle notification action: $e');
+        AppLogger.warning('⚠️ Failed to handle notification action', e);
       }
     }
   }
@@ -1185,7 +1126,7 @@ class NotificationServiceEnhanced {
       );
     } catch (e) {
       if (kDebugMode) {
-        print('$_logTag ⚠️ Failed to show local notification: $e');
+        AppLogger.warning('⚠️ Failed to show local notification', e);
       }
     }
   }
@@ -1198,7 +1139,7 @@ class NotificationServiceEnhanced {
         _userPreferences = await getUserPreferences(userId);
       }
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Failed to load user preferences: $e');
+      AppLogger.warning('⚠️ Failed to load user preferences', e);
     }
   }
 
@@ -1207,9 +1148,9 @@ class NotificationServiceEnhanced {
     try {
       // Setup analytics tables if needed
       // This would be handled by database migrations
-      if (kDebugMode) print('$_logTag ✅ Analytics system initialized');
+      AppLogger.info('✅ Analytics system initialized');
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Failed to initialize analytics: $e');
+      AppLogger.warning('⚠️ Failed to initialize analytics', e);
     }
   }
 
@@ -1300,7 +1241,7 @@ class NotificationServiceEnhanced {
       return true;
     } catch (e) {
       if (kDebugMode) {
-        print('$_logTag ⚠️ Failed to check delivery preferences: $e');
+        AppLogger.warning('⚠️ Failed to check delivery preferences', e);
       }
       return true; // Default to allowing delivery
     }
@@ -1419,9 +1360,9 @@ class NotificationServiceEnhanced {
     try {
       // Cancel subscriptions and cleanup resources
       await _supabase.removeAllChannels();
-      if (kDebugMode) print('$_logTag ♻️ Notification service disposed');
+      AppLogger.info('♻️ Notification service disposed');
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Error during disposal: $e');
+      AppLogger.warning('⚠️ Error during disposal', e);
     }
   }
 }

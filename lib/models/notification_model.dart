@@ -4,6 +4,7 @@ library;
 
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../core/logger.dart';
 
 /// Base mixin for common model functionality
 mixin BaseModelMixin {
@@ -188,7 +189,7 @@ class NotificationService {
           )
           .toList();
     } catch (e) {
-      print('Error getting user notifications: $e');
+      AppLogger.error('Error getting user notifications', e);
       return [];
     }
   }
@@ -203,7 +204,7 @@ class NotificationService {
 
       return true;
     } catch (e) {
-      print('Error marking notification as read: $e');
+      AppLogger.error('Error marking notification as read', e);
       return false;
     }
   }

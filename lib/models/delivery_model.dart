@@ -328,7 +328,7 @@ class DeliveryModel with BaseModelMixin {
   String get distanceKmFormatted =>
       distanceKm?.toStringAsFixed(1) ?? 'غير محدد';
   String get estimatedDurationFormatted => estimatedDurationMinutes != null
-      ? '${estimatedDurationMinutes} دقيقة'
+      ? '$estimatedDurationMinutes دقيقة'
       : 'غير محدد';
 
   bool get isCompleted => status == DeliveryStatus.delivered;
