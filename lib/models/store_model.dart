@@ -37,17 +37,21 @@ class StoreModel with BaseModelMixin {
   final String? description; // TEXT
   final String? phone; // TEXT
   final String address; // TEXT NOT NULL
+  final String? city; // TEXT - المدينة
+  final String? governorate; // TEXT - المحافظة
   final double? latitude; // DECIMAL(10, 8)
   final double? longitude; // DECIMAL(11, 8)
   final int deliveryTime; // INT DEFAULT 30
   final bool isOpen; // BOOLEAN DEFAULT TRUE
   final double deliveryFee; // DECIMAL(10,2) DEFAULT 0
   final double minOrder; // DECIMAL(10,2) DEFAULT 0
+  final String deliveryMode; // TEXT CHECK store/app
   final double rating; // DECIMAL(2,1) DEFAULT 0.0
   final int reviewCount; // INT DEFAULT 0
   final String? category; // TEXT
   final Map<String, dynamic>? openingHours; // JSONB DEFAULT '{}'
   final String? imageUrl; // TEXT
+  final String? coverUrl; // TEXT - رابط صورة الغلاف
   final bool isActive; // BOOLEAN DEFAULT TRUE
   @override
   final DateTime createdAt;
@@ -61,17 +65,21 @@ class StoreModel with BaseModelMixin {
     this.description,
     this.phone,
     required this.address,
+    this.city,
+    this.governorate,
     this.latitude,
     this.longitude,
     this.deliveryTime = 30,
     this.isOpen = true,
     this.deliveryFee = 0.0,
     this.minOrder = 0.0,
+    this.deliveryMode = 'store',
     this.rating = 0.0,
     this.reviewCount = 0,
     this.category,
     this.openingHours,
     this.imageUrl,
+    this.coverUrl,
     this.isActive = true,
     required this.createdAt,
     this.updatedAt,
@@ -85,6 +93,8 @@ class StoreModel with BaseModelMixin {
       description: map['description'] as String?,
       phone: map['phone'] as String?,
       address: map['address'] as String,
+      city: map['city'] as String?,
+      governorate: map['governorate'] as String?,
       latitude: map['latitude'] != null
           ? double.parse(map['latitude'].toString())
           : null,
@@ -104,6 +114,7 @@ class StoreModel with BaseModelMixin {
       minOrder: map['min_order'] != null
           ? double.parse(map['min_order'].toString())
           : 0.0,
+      deliveryMode: map['delivery_mode'] as String? ?? 'store',
       rating: map['rating'] != null
           ? double.parse(map['rating'].toString())
           : 0.0,
@@ -111,6 +122,7 @@ class StoreModel with BaseModelMixin {
       category: map['category'] as String?,
       openingHours: map['opening_hours'] as Map<String, dynamic>?,
       imageUrl: map['image_url'] as String?,
+      coverUrl: map['cover_url'] as String?,
     );
   }
 
@@ -142,6 +154,8 @@ class StoreModel with BaseModelMixin {
       'description': description,
       'phone': phone,
       'address': address,
+      'city': city,
+      'governorate': governorate,
       'latitude': latitude,
       'longitude': longitude,
       'is_active': isActive,
@@ -150,11 +164,13 @@ class StoreModel with BaseModelMixin {
       'is_open': isOpen,
       'delivery_fee': deliveryFee,
       'min_order': minOrder,
+      'delivery_mode': deliveryMode,
       'rating': rating,
       'review_count': reviewCount,
       'category': category,
       'opening_hours': openingHours,
       'image_url': imageUrl,
+      'cover_url': coverUrl,
       'updated_at': updatedAt?.toIso8601String(),
     };
   }
@@ -167,17 +183,21 @@ class StoreModel with BaseModelMixin {
       'description': description,
       'phone': phone,
       'address': address,
+      'city': city,
+      'governorate': governorate,
       'latitude': latitude,
       'longitude': longitude,
       'delivery_time': deliveryTime,
       'is_open': isOpen,
       'delivery_fee': deliveryFee,
       'min_order': minOrder,
+      'delivery_mode': deliveryMode,
       'rating': rating,
       'review_count': reviewCount,
       'category': category,
       'opening_hours': openingHours,
       'image_url': imageUrl,
+      'cover_url': coverUrl,
       'is_active': isActive,
     };
   }
@@ -189,6 +209,8 @@ class StoreModel with BaseModelMixin {
     String? description,
     String? phone,
     String? address,
+    String? city,
+    String? governorate,
     double? latitude,
     double? longitude,
     int? deliveryTime,
@@ -196,10 +218,12 @@ class StoreModel with BaseModelMixin {
     double? deliveryFee,
     double? minOrder,
     double? rating,
+    String? deliveryMode,
     int? reviewCount,
     String? category,
     Map<String, dynamic>? openingHours,
     String? imageUrl,
+    String? coverUrl,
     bool? isActive,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -211,17 +235,21 @@ class StoreModel with BaseModelMixin {
       description: description ?? this.description,
       phone: phone ?? this.phone,
       address: address ?? this.address,
+      city: city ?? this.city,
+      governorate: governorate ?? this.governorate,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       deliveryTime: deliveryTime ?? this.deliveryTime,
       isOpen: isOpen ?? this.isOpen,
       deliveryFee: deliveryFee ?? this.deliveryFee,
       minOrder: minOrder ?? this.minOrder,
+      deliveryMode: deliveryMode ?? this.deliveryMode,
       rating: rating ?? this.rating,
       reviewCount: reviewCount ?? this.reviewCount,
       category: category ?? this.category,
       openingHours: openingHours ?? this.openingHours,
       imageUrl: imageUrl ?? this.imageUrl,
+      coverUrl: coverUrl ?? this.coverUrl,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -236,10 +264,14 @@ class StoreModel with BaseModelMixin {
   bool get hasCategory => category != null && category!.isNotEmpty;
   bool get hasCoordinates => latitude != null && longitude != null;
   bool get hasOpeningHours => openingHours != null && openingHours!.isNotEmpty;
+  bool get hasCover => coverUrl != null && coverUrl!.isNotEmpty;
+  bool get deliversOwnOrders => deliveryMode == 'store';
+  bool get usesPlatformDelivery => deliveryMode == 'app';
 
   // Helper getters for UI
   String get displayAddress => hasAddress ? address : 'عنوان غير محدد';
   String get displayImageUrl => hasImage ? imageUrl! : '';
+  String get displayCoverUrl => hasCover ? coverUrl! : '';
   String get ratingDisplay =>
       rating > 0 ? '${rating.toStringAsFixed(1)} ⭐' : 'غير مقيم';
 
@@ -266,6 +298,6 @@ class StoreModel with BaseModelMixin {
 
   @override
   String toString() {
-    return 'StoreModel(id: $id, merchantId: $merchantId, name: $name, isActive: $isActive)';
+    return 'StoreModel(id: $id, merchantId: $merchantId, name: $name, deliveryMode: $deliveryMode, isActive: $isActive)';
   }
 }

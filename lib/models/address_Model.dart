@@ -33,6 +33,7 @@ class AddressModel with BaseModelMixin {
   final String id; // UUID PRIMARY KEY DEFAULT gen_random_uuid()
   final String clientId; // UUID REFERENCES clients(id) ON DELETE CASCADE
   final String label; // e.g., "المنزل", "العمل", "أخرى"
+  final String governorate; // المحافظة
   final String street;
   final String city;
   final String? area;
@@ -53,6 +54,7 @@ class AddressModel with BaseModelMixin {
     required this.id,
     required this.clientId,
     required this.label,
+    required this.governorate,
     required this.street,
     required this.city,
     this.area,
@@ -73,6 +75,7 @@ class AddressModel with BaseModelMixin {
       id: map['id'] as String,
       clientId: map['client_id'] as String,
       label: map['label'] as String,
+      governorate: map['governorate'] as String? ?? '',
       street: map['street'] as String,
       city: map['city'] as String,
       area: map['area'] as String?,
@@ -105,6 +108,7 @@ class AddressModel with BaseModelMixin {
       id: '',
       clientId: '',
       label: '',
+      governorate: '',
       street: '',
       city: '',
       createdAt: DateTime.now(),
@@ -116,6 +120,7 @@ class AddressModel with BaseModelMixin {
       'id': id,
       'client_id': clientId,
       'label': label,
+      'governorate': governorate,
       'street': street,
       'city': city,
       'area': area,
@@ -155,6 +160,7 @@ class AddressModel with BaseModelMixin {
     String? id,
     String? clientId,
     String? label,
+    String? governorate,
     String? street,
     String? city,
     String? area,
@@ -173,6 +179,7 @@ class AddressModel with BaseModelMixin {
       id: id ?? this.id,
       clientId: clientId ?? this.clientId,
       label: label ?? this.label,
+      governorate: governorate ?? this.governorate,
       street: street ?? this.street,
       city: city ?? this.city,
       area: area ?? this.area,

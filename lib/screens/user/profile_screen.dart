@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
-import 'package:ell_tall_market/models/Profile_model.dart';
+import 'package:ell_tall_market/providers/merchant_provider.dart';
+import 'package:ell_tall_market/providers/product_provider.dart';
+import 'package:ell_tall_market/providers/order_provider.dart';
+import 'package:ell_tall_market/providers/banner_provider.dart';
+import 'package:ell_tall_market/models/profile_model.dart';
+import 'package:ell_tall_market/models/banner_model.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
-import 'package:ell_tall_market/providers/locale_provider.dart';
-import 'package:ell_tall_market/providers/settings_provider.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -24,12 +27,6 @@ class ProfileScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      appBar: AppBar(
-        title: const Text('حسابي'),
-        centerTitle: true,
-        elevation: 0,
-        backgroundColor: colorScheme.surfaceContainer,
-      ),
       body: Column(
         children: [
           Expanded(
@@ -97,18 +94,6 @@ class ProfileScreen extends StatelessWidget {
             _DashboardGrid(
               colorScheme: colorScheme,
               items: [
-                _DashboardItemData(
-                  icon: Icons.notifications_outlined,
-                  label: 'الإشعارات',
-                  color: primary,
-                  onTap: () => _showGuestNotificationDialog(context),
-                ),
-                _DashboardItemData(
-                  icon: Icons.language,
-                  label: 'اللغة',
-                  color: Colors.teal,
-                  onTap: () => _showLanguageBottomSheet(context),
-                ),
                 _DashboardItemData(
                   icon: Icons.store,
                   label: 'بع معنا',
@@ -186,99 +171,539 @@ class ProfileScreen extends StatelessWidget {
   ) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-
-    final items = [
-      _DashboardItemData(
-        icon: Icons.receipt_long,
-        label: 'الطلبات',
-        color: primary,
-        onTap: () => Navigator.pushNamed(context, AppRoutes.orderHistory),
-      ),
-      _DashboardItemData(
-        icon: Icons.assignment_return,
-        label: 'المرتجعات',
-        color: Colors.deepOrange,
-        onTap: () => Navigator.pushNamed(context, AppRoutes.returns),
-      ),
-      _DashboardItemData(
-        icon: Icons.edit,
-        label: 'تعديل',
-        color: Colors.teal,
-        onTap: () => Navigator.pushNamed(context, AppRoutes.editProfile),
-      ),
-      _DashboardItemData(
-        icon: Icons.location_on,
-        label: 'العناوين',
-        color: Colors.pinkAccent,
-        onTap: () => Navigator.pushNamed(context, AppRoutes.addresses),
-      ),
-      _DashboardItemData(
-        icon: Icons.credit_card,
-        label: 'الدفع',
-        color: Colors.indigo,
-        onTap: () => Navigator.pushNamed(context, AppRoutes.paymentMethods),
-      ),
-      _DashboardItemData(
-        icon: Icons.notifications_active_outlined,
-        label: 'الإشعارات',
-        color: Colors.orange,
-        onTap: () => _showNotificationBottomSheet(context),
-      ),
-      _DashboardItemData(
-        icon: Icons.language,
-        label: 'اللغة',
-        color: Colors.green,
-        onTap: () => _showLanguageBottomSheet(context),
-      ),
-      _DashboardItemData(
-        icon: Icons.lock_outline,
-        label: 'كلمة المرور',
-        color: Colors.brown,
-        onTap: () => Navigator.pushNamed(context, AppRoutes.changePassword),
-      ),
-      _DashboardItemData(
-        icon: Icons.store_mall_directory,
-        label: 'بع معنا',
-        color: Colors.lightBlue,
-        onTap: () => Navigator.pushNamed(context, AppRoutes.registerMerchant),
-      ),
-      _DashboardItemData(
-        icon: Icons.logout,
-        label: 'خروج',
-        color: Colors.redAccent,
-        onTap: () => _showLogoutDialog(context, authProvider),
-      ),
-    ];
+    final isRTL = Directionality.of(context) == TextDirection.rtl;
 
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            _ProfileHeader(
-              user: user,
-              colorScheme: colorScheme,
-              onEdit: () => _showEditProfileDialog(context, user),
+      child: Column(
+        children: [
+          // Header Section
+          Container(
+            color: colorScheme.surface,
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: isRTL
+                  ? [
+                      // RTL: Avatar, Name, Spacer, Settings
+                      CircleAvatar(
+                        radius: 28,
+                        backgroundColor: colorScheme.primary,
+                        foregroundColor: colorScheme.onPrimary,
+                        backgroundImage: user.avatarUrl != null
+                            ? NetworkImage(user.avatarUrl!)
+                            : null,
+                        child: user.avatarUrl == null
+                            ? Text(
+                                (user.fullName ?? 'م')
+                                    .substring(0, 1)
+                                    .toUpperCase(),
+                                style: const TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              )
+                            : null,
+                      ),
+                      const SizedBox(width: 12),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            user.fullName ?? 'مستخدم',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.onSurface,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'مصر',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Spacer(),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.settings_outlined,
+                            color: colorScheme.onSurface,
+                          ),
+                          onPressed: () =>
+                              Navigator.pushNamed(context, AppRoutes.settings),
+                        ),
+                      ),
+                    ]
+                  : [
+                      // LTR: settings icon left, then user info + avatar
+                      Container(
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: IconButton(
+                          icon: Icon(
+                            Icons.settings_outlined,
+                            color: colorScheme.onSurface,
+                          ),
+                          onPressed: () =>
+                              Navigator.pushNamed(context, AppRoutes.settings),
+                        ),
+                      ),
+                      const Spacer(),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            user.fullName ?? 'مستخدم',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.onSurface,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'مصر',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 12),
+                      CircleAvatar(
+                        radius: 28,
+                        backgroundColor: colorScheme.primary,
+                        foregroundColor: colorScheme.onPrimary,
+                        backgroundImage: user.avatarUrl != null
+                            ? NetworkImage(user.avatarUrl!)
+                            : null,
+                        child: user.avatarUrl == null
+                            ? Text(
+                                (user.fullName ?? 'م')
+                                    .substring(0, 1)
+                                    .toUpperCase(),
+                                style: const TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              )
+                            : null,
+                      ),
+                    ],
             ),
-            const SizedBox(height: 24),
-            _StatsBar(colorScheme: colorScheme),
-            const SizedBox(height: 24),
-            _DashboardGrid(items: items, colorScheme: colorScheme),
-          ],
+          ),
+
+          // Promotional Banner (Dynamic)
+          Consumer<BannerProvider>(
+            builder: (context, bannerProvider, child) {
+              // Find family/promotion banner
+              BannerModel? familyBanner;
+              try {
+                familyBanner = bannerProvider.activeBanners.firstWhere(
+                  (b) =>
+                      b.targetType == BannerType.promotion &&
+                      (b.description?.contains('عائلة') ?? false),
+                );
+              } catch (e) {
+                // If no family banner found, try to get first promotion banner
+                try {
+                  familyBanner = bannerProvider.activeBanners.firstWhere(
+                    (b) => b.targetType == BannerType.promotion,
+                  );
+                } catch (e) {
+                  familyBanner = null;
+                }
+              }
+
+              // If no banner found, hide the section
+              if (familyBanner == null) {
+                return const SizedBox.shrink();
+              }
+
+              return Container(
+                margin: const EdgeInsets.all(16),
+                height: 180,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF7B3FF2), Color(0xFF6B2FE8)],
+                    begin: Alignment.topRight,
+                    end: Alignment.bottomLeft,
+                  ),
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: Stack(
+                  children: [
+                    // Decorative Circle
+                    Positioned(
+                      left: -50,
+                      top: -30,
+                      child: Container(
+                        width: 200,
+                        height: 200,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withValues(alpha: 0.1),
+                        ),
+                      ),
+                    ),
+                    // Image on the left
+                    Positioned(
+                      left: 16,
+                      bottom: 0,
+                      child: Container(
+                        width: 140,
+                        height: 140,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          color: Colors.white.withValues(alpha: 0.2),
+                        ),
+                        child: Stack(
+                          children: [
+                            // Display banner image if available
+                            if (familyBanner.imageUrl.isNotEmpty)
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(20),
+                                child: Image.network(
+                                  familyBanner.imageUrl,
+                                  width: 140,
+                                  height: 140,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Center(
+                                      child: Icon(
+                                        Icons.family_restroom_rounded,
+                                        size: 60,
+                                        color: Colors.white.withValues(
+                                          alpha: 0.8,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              )
+                            else
+                              Center(
+                                child: Icon(
+                                  Icons.family_restroom_rounded,
+                                  size: 60,
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                ),
+                              ),
+                            // PRO Badge
+                            Positioned(
+                              bottom: 8,
+                              left: 8,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF7B3FF2),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.workspace_premium,
+                                      color: Colors.white,
+                                      size: 16,
+                                    ),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'PRO',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // Text on the right
+                    Positioned(
+                      right: 20,
+                      top: 0,
+                      bottom: 0,
+                      child: SizedBox(
+                        width: 160,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              familyBanner.title,
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                height: 1.3,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              familyBanner.description ??
+                                  'توصيل مجاني وعروض حصرية للجميع',
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                height: 1.4,
+                              ),
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: () {
+                                // Navigate to action URL if available
+                                if (familyBanner!.actionUrl != null &&
+                                    familyBanner.actionUrl!.isNotEmpty) {
+                                  Navigator.pushNamed(
+                                    context,
+                                    familyBanner.actionUrl!,
+                                  );
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: const Color(0xFF7B3FF2),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 8,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                elevation: 0,
+                              ),
+                              child: const Text(
+                                'جرب مجاناً',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+
+          // Menu Items
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: [
+                _buildMenuItem(
+                  context,
+                  icon: Icons.card_giftcard_rounded,
+                  title: 'مكافآت',
+                  trailing: '0 نقاط',
+                  onTap: () {},
+                ),
+                _buildMenuItem(
+                  context,
+                  icon: Icons.receipt_long_rounded,
+                  title: 'طلباتي السابقة',
+                  onTap: () =>
+                      Navigator.pushNamed(context, AppRoutes.orderHistory),
+                ),
+                _buildMenuItem(
+                  context,
+                  icon: Icons.bookmark_border_rounded,
+                  title: 'القسائم',
+                  trailing: '1',
+                  onTap: () {},
+                ),
+                _buildMenuItem(
+                  context,
+                  icon: Icons.help_outline_rounded,
+                  title: 'احصل على المساعدة',
+                  onTap: () {},
+                ),
+                _buildMenuItem(
+                  context,
+                  icon: Icons.info_outline_rounded,
+                  title: 'حول التطبيق',
+                  onTap: () {},
+                ),
+                const SizedBox(height: 8),
+                _buildMenuItem(
+                  context,
+                  icon: Icons.store_outlined,
+                  title: 'بع معنا',
+                  onTap: () =>
+                      Navigator.pushNamed(context, AppRoutes.registerMerchant),
+                ),
+                _buildMenuItem(
+                  context,
+                  icon: Icons.logout_rounded,
+                  title: 'تسجيل الخروج',
+                  titleColor: Colors.red,
+                  onTap: () => _showLogoutDialog(context, authProvider),
+                ),
+                const SizedBox(height: 32),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMenuItem(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    String? trailing,
+    Color? trailingColor,
+    Color? titleColor,
+    required VoidCallback onTap,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isRTL = Directionality.of(context) == TextDirection.rtl;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+            child: Row(
+              children: isRTL
+                  ? [
+                      // RTL: icon+text right, trailing, chevron left
+                      Icon(
+                        icon,
+                        size: 24,
+                        color: titleColor ?? colorScheme.onSurface,
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Text(
+                          title,
+                          textAlign: TextAlign.start,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            color: titleColor ?? colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      if (trailing != null) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color:
+                                trailingColor?.withValues(alpha: 0.1) ??
+                                colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            trailing,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: trailingColor ?? colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Icon(
+                        Icons.chevron_left_rounded,
+                        size: 24,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ]
+                  : [
+                      // LTR: icon, spacing, text, trailing badge, chevron right
+                      Icon(
+                        icon,
+                        size: 24,
+                        color: titleColor ?? colorScheme.onSurface,
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            color: titleColor ?? colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      if (trailing != null) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color:
+                                trailingColor?.withValues(alpha: 0.1) ??
+                                colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            trailing,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: trailingColor ?? colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        size: 24,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ],
+            ),
+          ),
         ),
       ),
     );
   }
 
   // ---------------- Helper UI ---------------- //
-  void _showEditProfileDialog(BuildContext context, ProfileModel user) {
-    Navigator.pushNamed(context, AppRoutes.editProfile);
-  }
-
-  // (info item helper removed - no longer used after redesign)
-
-  // (Helper classes moved below outside the ProfileScreen class)
 
   void _showLogoutDialog(BuildContext context, SupabaseProvider authProvider) {
     bool isLoading = false;
@@ -347,7 +772,26 @@ class ProfileScreen extends StatelessWidget {
                     ? null
                     : () async {
                         setState(() => isLoading = true);
-                        await authProvider.signOut();
+
+                        // Get all providers to clear their data on sign out
+                        final merchantProvider = Provider.of<MerchantProvider>(
+                          context,
+                          listen: false,
+                        );
+                        final productProvider = Provider.of<ProductProvider>(
+                          context,
+                          listen: false,
+                        );
+                        final orderProvider = Provider.of<OrderProvider>(
+                          context,
+                          listen: false,
+                        );
+
+                        await authProvider.signOut(
+                          merchantProvider: merchantProvider,
+                          productProvider: productProvider,
+                          orderProvider: orderProvider,
+                        );
                         if (!context.mounted) return;
                         if (Navigator.canPop(context)) Navigator.pop(context);
                         Navigator.pushReplacementNamed(
@@ -375,298 +819,6 @@ class ProfileScreen extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-
-  // إظهار رسالة للزائر عند محاولة الوصول للإشعارات
-  void _showGuestNotificationDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.notifications_outlined, color: primary),
-            SizedBox(width: 8),
-            Text('الإشعارات'),
-          ],
-        ),
-        content: const Text(
-          'للوصول إلى الإشعارات والاستفادة من جميع المزايا، يرجى تسجيل الدخول أولاً! 🔔',
-          style: TextStyle(fontSize: 15, height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
-            ),
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pushNamed(context, AppRoutes.login);
-            },
-            child: const Text('تسجيل الدخول'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// BottomSheet للإشعارات
-  void _showNotificationBottomSheet(BuildContext context) {
-    final settingsProvider = Provider.of<SettingsProvider>(
-      context,
-      listen: false,
-    );
-    final appSettings = settingsProvider.appSettings;
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) {
-        bool notifEnabled = appSettings.notificationsEnabled;
-        bool emailNotif = appSettings.emailNotifications;
-        bool smsNotif = appSettings.smsNotifications;
-        return StatefulBuilder(
-          builder: (context, setState) => Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'إعدادات الإشعارات',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                _buildNotificationTile(
-                  icon: Icons.notifications_rounded,
-                  title: 'تفعيل الإشعارات',
-                  subtitle: 'استقبال جميع الإشعارات',
-                  value: notifEnabled,
-                  onChanged: (value) async {
-                    setState(() => notifEnabled = value);
-                    final newSettings = appSettings.copyWith(
-                      notificationsEnabled: value,
-                    );
-                    await settingsProvider.updateAppSettings(newSettings);
-                  },
-                ),
-                _buildNotificationTile(
-                  icon: Icons.email_rounded,
-                  title: 'الإشعارات البريدية',
-                  subtitle: 'إشعارات عبر البريد الإلكتروني',
-                  value: emailNotif,
-                  onChanged: (value) async {
-                    setState(() => emailNotif = value);
-                    final newSettings = appSettings.copyWith(
-                      emailNotifications: value,
-                    );
-                    await settingsProvider.updateAppSettings(newSettings);
-                  },
-                ),
-                _buildNotificationTile(
-                  icon: Icons.sms_rounded,
-                  title: 'الإشعارات النصية',
-                  subtitle: 'إشعارات عبر الرسائل القصيرة',
-                  value: smsNotif,
-                  onChanged: (value) async {
-                    setState(() => smsNotif = value);
-                    final newSettings = appSettings.copyWith(
-                      smsNotifications: value,
-                    );
-                    await settingsProvider.updateAppSettings(newSettings);
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  /// BottomSheet لتغيير اللغة
-  void _showLanguageBottomSheet(BuildContext context) {
-    final localeProvider = Provider.of<LocaleProvider>(context, listen: false);
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      backgroundColor: Colors.transparent,
-      builder: (_) {
-        return Container(
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Handle bar
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                // Header
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.teal.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.language_rounded,
-                        color: Colors.teal,
-                        size: 24,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const Text(
-                      'اختر اللغة',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF2D3142),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                // Language options
-                _buildLanguageTile(
-                  flag: '🇸🇦',
-                  title: 'العربية',
-                  subtitle: 'اللغة العربية',
-                  onTap: () {
-                    Navigator.pop(context);
-                    localeProvider.setLocale('ar');
-                  },
-                ),
-                const SizedBox(height: 12),
-                _buildLanguageTile(
-                  flag: '🇺🇸',
-                  title: 'English',
-                  subtitle: 'English Language',
-                  onTap: () {
-                    Navigator.pop(context);
-                    localeProvider.setLocale('en');
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildLanguageTile({
-    required String flag,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: Colors.grey.shade50,
-        border: Border.all(color: Colors.grey.shade200, width: 1.5),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        leading: Container(
-          width: 48,
-          height: 48,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            color: Colors.white,
-          ),
-          child: Center(
-            child: Text(flag, style: const TextStyle(fontSize: 24)),
-          ),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-        ),
-        trailing: const Icon(
-          Icons.arrow_forward_ios_rounded,
-          size: 16,
-          color: Colors.grey,
-        ),
-        onTap: onTap,
-      ),
-    );
-  }
-
-  Widget _buildNotificationTile({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: Colors.grey.shade50,
-        border: Border.all(
-          color: value ? primary.withValues(alpha: 0.2) : Colors.grey.shade200,
-          width: 1.5,
-        ),
-      ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        leading: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: value
-                ? primary.withValues(alpha: 0.1)
-                : Colors.grey.shade100,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            icon,
-            color: value ? primary : Colors.grey.shade600,
-            size: 20,
-          ),
-        ),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-        ),
-        trailing: Switch(
-          value: value,
-          onChanged: onChanged,
-          activeThumbColor: primary,
-        ),
-      ),
     );
   }
 }
@@ -762,169 +914,6 @@ class _DashboardTile extends StatelessWidget {
       ),
     );
   }
-}
-
-// ---------------- Profile Header ---------------- //
-class _ProfileHeader extends StatelessWidget {
-  final ProfileModel user;
-  final ColorScheme colorScheme;
-  final VoidCallback onEdit;
-  const _ProfileHeader({
-    required this.user,
-    required this.colorScheme,
-    required this.onEdit,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      color: colorScheme.primaryContainer,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            // Avatar
-            Stack(
-              children: [
-                CircleAvatar(
-                  radius: 48,
-                  backgroundColor: colorScheme.primary,
-                  foregroundColor: colorScheme.onPrimary,
-                  backgroundImage: user.avatarUrl != null
-                      ? NetworkImage(user.avatarUrl!)
-                      : null,
-                  child: user.avatarUrl == null
-                      ? const Icon(Icons.person, size: 48)
-                      : null,
-                ),
-                // زر التعديل
-                Positioned(
-                  bottom: 0,
-                  right: 0,
-                  child: IconButton.filled(
-                    onPressed: onEdit,
-                    icon: const Icon(Icons.edit, size: 18),
-                    iconSize: 18,
-                    padding: const EdgeInsets.all(8),
-                    style: IconButton.styleFrom(
-                      backgroundColor: colorScheme.primary,
-                      foregroundColor: colorScheme.onPrimary,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            // اسم المستخدم
-            Text(
-              user.fullName ?? 'مستخدم',
-              style: TextStyle(
-                color: colorScheme.onPrimaryContainer,
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            // معلومات الاتصال
-            if (user.email != null)
-              Chip(
-                avatar: Icon(
-                  Icons.email_outlined,
-                  size: 18,
-                  color: colorScheme.onSecondaryContainer,
-                ),
-                label: Text(user.email!),
-                backgroundColor: colorScheme.secondaryContainer,
-                labelStyle: TextStyle(
-                  color: colorScheme.onSecondaryContainer,
-                  fontSize: 13,
-                ),
-              ),
-            if (user.email != null && user.phone != null)
-              const SizedBox(height: 8),
-            if (user.phone != null)
-              Chip(
-                avatar: Icon(
-                  Icons.phone_outlined,
-                  size: 18,
-                  color: colorScheme.onSecondaryContainer,
-                ),
-                label: Text(user.phone!),
-                backgroundColor: colorScheme.secondaryContainer,
-                labelStyle: TextStyle(
-                  color: colorScheme.onSecondaryContainer,
-                  fontSize: 13,
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------- Stats Bar ---------------- //
-class _StatsBar extends StatelessWidget {
-  final ColorScheme colorScheme;
-  const _StatsBar({required this.colorScheme});
-
-  @override
-  Widget build(BuildContext context) {
-    final stats = [
-      _StatsData(Icons.shopping_bag_outlined, 'الطلبات', '15', Colors.blue),
-      _StatsData(Icons.star_rate_rounded, 'التقييم', '4.8', Colors.amber),
-      _StatsData(Icons.loyalty_rounded, 'النقاط', '250', Colors.green),
-    ];
-
-    return Row(
-      children: stats.map((stat) {
-        return Expanded(
-          child: Card(
-            elevation: 0,
-            color: colorScheme.surfaceContainerHighest,
-            margin: const EdgeInsets.symmetric(horizontal: 4),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  Icon(stat.icon, size: 28, color: stat.color),
-                  const SizedBox(height: 8),
-                  Text(
-                    stat.value,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                      color: colorScheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    stat.label,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-class _StatsData {
-  final IconData icon;
-  final String label;
-  final String value;
-  final Color color;
-
-  const _StatsData(this.icon, this.label, this.value, this.color);
 }
 
 // ---------------- Guest Header ---------------- //

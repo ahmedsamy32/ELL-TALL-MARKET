@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:ell_tall_market/models/merchant_model.dart';
 import 'package:ell_tall_market/services/merchant_service.dart';
+import 'package:ell_tall_market/services/store_service.dart';
 import 'package:ell_tall_market/core/logger.dart';
 
 /// MerchantProvider - إدارة حالة التجار
@@ -172,6 +173,9 @@ class MerchantProvider with ChangeNotifier {
       } else {
         _setError('لم يتم العثور على التاجر');
       }
+    } on NetworkException {
+      _setError('تعذر الاتصال بالخادم. تحقق من الإنترنت وحاول مجددًا.');
+      _selectedMerchant = null;
     } catch (e) {
       _setError('فشل جلب التاجر: ${e.toString()}');
       _selectedMerchant = null;
@@ -194,6 +198,9 @@ class MerchantProvider with ChangeNotifier {
       } else {
         _setError('لم يتم العثور على تاجر لهذا البروفايل');
       }
+    } on NetworkException {
+      _setError('تعذر الاتصال بالخادم. تحقق من الإنترنت وحاول مجددًا.');
+      _selectedMerchant = null;
     } catch (e) {
       _setError('فشل جلب التاجر: ${e.toString()}');
       _selectedMerchant = null;
@@ -251,41 +258,26 @@ class MerchantProvider with ChangeNotifier {
   }
 
   /// تحديث معلومات التاجر
+  /// محدّث ليتوافق مع schema جدول merchants الحقيقي
   Future<bool> updateMerchant({
     required String merchantId,
-    String? businessName,
-    String? businessType,
-    String? businessAddress,
-    String? contactPhone,
-    String? logoUrl,
-    bool? isActive,
-    Map<String, dynamic>? businessHours,
-    List<String>? businessCategories,
-    String? taxId,
-    String? licenseNumber,
-    Map<String, dynamic>? bankDetails,
-    Map<String, dynamic>? socialMedia,
-    String? verificationStatus,
-    Map<String, dynamic>? metadata,
+    String? storeName,
+    String? storeDescription,
+    String? address,
+    double? latitude,
+    double? longitude,
+    bool? isVerified,
   }) async {
     _setLoading(true);
     try {
       final updatedMerchant = await MerchantService.updateMerchant(
         merchantId: merchantId,
-        businessName: businessName,
-        businessType: businessType,
-        businessAddress: businessAddress,
-        contactPhone: contactPhone,
-        logoUrl: logoUrl,
-        isActive: isActive,
-        businessHours: businessHours,
-        businessCategories: businessCategories,
-        taxId: taxId,
-        licenseNumber: licenseNumber,
-        bankDetails: bankDetails,
-        socialMedia: socialMedia,
-        verificationStatus: verificationStatus,
-        metadata: metadata,
+        storeName: storeName,
+        storeDescription: storeDescription,
+        address: address,
+        latitude: latitude,
+        longitude: longitude,
+        isVerified: isVerified,
       );
 
       if (updatedMerchant != null) {
@@ -349,25 +341,32 @@ class MerchantProvider with ChangeNotifier {
   Future<bool> toggleMerchantStatus(String merchantId) async {
     _setLoading(true);
     try {
-      final success = await MerchantService.toggleMerchantStatus(merchantId);
+      // Use StoreService to manage store active status as MerchantService method is deprecated
+      final store = await StoreService.getStoreByMerchantIdV2(merchantId);
+      if (store != null) {
+        final success = await StoreService.toggleStoreStatus(
+          store.id,
+          !store.isActive,
+        );
 
-      if (success) {
-        // تحديث الحالة محلياً
-        final index = _merchants.indexWhere((m) => m.id == merchantId);
-        if (index != -1) {
-          final merchant = _merchants[index];
-          _merchants[index] = merchant.copyWith(isActive: !merchant.isActive);
+        if (success) {
+          // تحديث الحالة محلياً
+          final index = _merchants.indexWhere((m) => m.id == merchantId);
+          if (index != -1) {
+            final merchant = _merchants[index];
+            _merchants[index] = merchant.copyWith(isActive: !merchant.isActive);
+          }
+
+          if (_selectedMerchant?.id == merchantId) {
+            _selectedMerchant = _selectedMerchant!.copyWith(
+              isActive: !_selectedMerchant!.isActive,
+            );
+          }
+
+          _applyFilters();
+          _setError(null);
+          return true;
         }
-
-        if (_selectedMerchant?.id == merchantId) {
-          _selectedMerchant = _selectedMerchant!.copyWith(
-            isActive: !_selectedMerchant!.isActive,
-          );
-        }
-
-        _applyFilters();
-        _setError(null);
-        return true;
       }
       return false;
     } catch (e) {
@@ -673,7 +672,7 @@ class MerchantProvider with ChangeNotifier {
     }
 
     // تطبيق فلتر حالة التحقق - skip since not available in model
-    // TODO: Implement when verificationStatus is added to MerchantModel
+    // Note: Implement when verificationStatus is added to MerchantModel
 
     // تطبيق البحث
     if (_searchQuery.isNotEmpty) {

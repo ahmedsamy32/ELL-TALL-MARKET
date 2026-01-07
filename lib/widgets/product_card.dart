@@ -53,29 +53,18 @@ class ProductCard extends StatelessWidget {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-                  child: product.imageUrl != null
+                  child:
+                      product.imageUrl != null && product.imageUrl!.isNotEmpty
                       ? Image.network(
                           product.imageUrl!,
                           height: 120,
                           width: double.infinity,
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) {
-                            return Container(
-                              height: 120,
-                              color: Colors.grey[200],
-                              child: Icon(Icons.image, color: Colors.grey[400]),
-                            );
+                            return _buildPlaceholderImage(120);
                           },
                         )
-                      : Container(
-                          height: 120,
-                          color: Colors.grey[200],
-                          child: Icon(
-                            Icons.image,
-                            color: Colors.grey[400],
-                            size: 48,
-                          ),
-                        ),
+                      : _buildPlaceholderImage(120),
                 ),
                 // أيقونة المفضلة
                 Positioned(
@@ -122,7 +111,7 @@ class ProductCard extends StatelessWidget {
                   Row(
                     children: [
                       Text(
-                        '${product.price.toStringAsFixed(2)} ر.س',
+                        product.priceFormatted,
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: AppColors.primary,
@@ -193,31 +182,18 @@ class ProductCard extends StatelessWidget {
                     borderRadius: BorderRadius.vertical(
                       top: Radius.circular(12),
                     ),
-                    child: product.imageUrl != null
+                    child:
+                        product.imageUrl != null && product.imageUrl!.isNotEmpty
                         ? Image.network(
                             product.imageUrl!,
                             width: double.infinity,
                             height: double.infinity,
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) {
-                              return Container(
-                                color: colorScheme.surfaceContainerHighest,
-                                child: Icon(
-                                  Icons.image_outlined,
-                                  color: colorScheme.onSurfaceVariant,
-                                  size: 40,
-                                ),
-                              );
+                              return _buildPlaceholderImage(null, colorScheme);
                             },
                           )
-                        : Container(
-                            color: colorScheme.surfaceContainerHighest,
-                            child: Icon(
-                              Icons.image_outlined,
-                              color: colorScheme.onSurfaceVariant,
-                              size: 40,
-                            ),
-                          ),
+                        : _buildPlaceholderImage(null, colorScheme),
                   ),
                   // أيقونة المفضلة
                   Positioned(
@@ -254,63 +230,99 @@ class ProductCard extends StatelessWidget {
               ),
             ),
 
-            // معلومات المنتج
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    product.name,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: colorScheme.onSurface,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '${product.price.toStringAsFixed(0)} ر.س',
+            // معلومات المنتج - ارتفاع محدد لمنع overflow
+            SizedBox(
+              height: 68, // ارتفاع ثابت لمنع overflow
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        product.name,
                         style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: colorScheme.primary,
-                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                          color: colorScheme.onSurface,
                         ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      if (onBuyPressed != null)
-                        Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: () {
-                              HapticFeedback.lightImpact();
-                              onBuyPressed?.call();
-                            },
-                            borderRadius: BorderRadius.circular(20),
-                            child: Container(
-                              padding: EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: colorScheme.primaryContainer,
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(
-                                Icons.add_shopping_cart_rounded,
-                                size: 16,
-                                color: colorScheme.onPrimaryContainer,
+                    ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '${product.price.toStringAsFixed(0)} ج.م',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.primary,
+                              fontSize: 14,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (onBuyPressed != null)
+                          Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () {
+                                HapticFeedback.lightImpact();
+                                onBuyPressed?.call();
+                              },
+                              borderRadius: BorderRadius.circular(20),
+                              child: Container(
+                                padding: EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primaryContainer,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.add_rounded,
+                                  size: 18,
+                                  color: colorScheme.onPrimaryContainer,
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// صورة مؤقتة بسيطة عند عدم وجود صورة للمنتج
+  Widget _buildPlaceholderImage(double? height, [ColorScheme? colorScheme]) {
+    return Container(
+      height: height,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            colorScheme?.surfaceContainerHighest ?? Colors.grey[200]!,
+            colorScheme?.surfaceContainer ?? Colors.grey[100]!,
+          ],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.shopping_bag_outlined,
+          size: height != null ? height * 0.35 : 56,
+          color: (colorScheme?.onSurfaceVariant ?? Colors.grey[400])
+              ?.withValues(alpha: 0.5),
         ),
       ),
     );

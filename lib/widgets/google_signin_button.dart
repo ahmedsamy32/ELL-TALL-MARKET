@@ -1,17 +1,14 @@
-/// مثال على استخدام Google Sign-In مع Supabase
-/// يمكن استخدام هذا الكود في شاشة تسجيل الدخول
 library;
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/google_signin_service.dart';
+import '../core/logger.dart';
 
 class GoogleSignInButton extends StatefulWidget {
   final VoidCallback? onSuccess;
   final Function(String)? onError;
 
-  const GoogleSignInButton({Key? key, this.onSuccess, this.onError})
-    : super(key: key);
+  const GoogleSignInButton({super.key, this.onSuccess, this.onError});
 
   @override
   State<GoogleSignInButton> createState() => _GoogleSignInButtonState();
@@ -36,9 +33,10 @@ class _GoogleSignInButtonState extends State<GoogleSignInButton> {
 
         // عرض رسالة نجاح
         if (mounted) {
+          final userEmail = response.user!.email ?? 'المستخدم';
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('أهلاً بك ${response.user!.email}!'),
+              content: Text('أهلاً بك $userEmail!'),
               backgroundColor: Colors.green,
             ),
           );
@@ -107,7 +105,7 @@ class _GoogleSignInButtonState extends State<GoogleSignInButton> {
 
 /// مثال على كيفية استخدام الزر في صفحة تسجيل الدخول
 class LoginPage extends StatelessWidget {
-  const LoginPage({Key? key}) : super(key: key);
+  const LoginPage({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -133,7 +131,7 @@ class LoginPage extends StatelessWidget {
               },
               onError: (error) {
                 // عرض خطأ إضافي إذا لزم الأمر
-                print('خطأ في تسجيل الدخول: $error');
+                AppLogger.error('خطأ في تسجيل الدخول', error);
               },
             ),
 
@@ -154,7 +152,7 @@ class LoginPage extends StatelessWidget {
 
 /// مثال على كيفية التحقق من حالة المصادقة
 class AuthChecker extends StatelessWidget {
-  const AuthChecker({Key? key}) : super(key: key);
+  const AuthChecker({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -177,7 +175,7 @@ class AuthChecker extends StatelessWidget {
 
 // صفحة وهمية للمثال
 class HomePage extends StatelessWidget {
-  const HomePage({Key? key}) : super(key: key);
+  const HomePage({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -191,7 +189,9 @@ class HomePage extends StatelessWidget {
             icon: const Icon(Icons.logout),
             onPressed: () async {
               await GoogleSignInService.instance.signOut();
-              Navigator.pushReplacementNamed(context, '/login');
+              if (context.mounted) {
+                Navigator.pushReplacementNamed(context, '/login');
+              }
             },
           ),
         ],

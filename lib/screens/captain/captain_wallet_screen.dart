@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
+import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
+import 'package:ell_tall_market/providers/settings_provider.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:intl/intl.dart' as intl;
 
@@ -19,10 +20,12 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
   bool _isLoading = true;
   double _currentBalance = 0;
   List<OrderModel> _completedOrders = [];
+  late SettingsProvider _settingsProvider;
 
   @override
   void initState() {
     super.initState();
+    _settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
     _loadData();
   }
 
@@ -42,7 +45,7 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
 
       // فلترة الطلبات المكتملة
       final completedOrders = orderProvider.pastOrders
-          .where((order) => order.status == 'delivered')
+          .where((order) => order.status == OrderStatus.delivered)
           .toList();
 
       // حساب الرصيد (10% عمولة من كل طلب مكتمل)
@@ -57,9 +60,7 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      if (kDebugMode) {
-        print('حدث خطأ في تحميل البيانات: $e');
-      }
+      AppLogger.error('حدث خطأ في تحميل البيانات', e);
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -105,7 +106,7 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
             ),
             SizedBox(height: 8),
             Text(
-              '${_currentBalance.toStringAsFixed(2)} ريال',
+              _settingsProvider.formatCurrency(_currentBalance),
               style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.bold,

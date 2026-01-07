@@ -1,7 +1,8 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../core/logger.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/models/captain_model.dart';
-import '../core/logger.dart';
 
 /// 📋 خدمة إدارة الطلبات المتقدمة (Order Management Service)
 ///
@@ -61,7 +62,7 @@ import '../core/logger.dart';
 ///
 /// // تتبع فوري للطلب
 /// OrderService.trackOrderRealTime(order.id).listen((status) {
-///   print('حالة الطلب: ${status.statusArabic}');
+///   AppLogger.info('حالة الطلب: ${status.statusArabic}');
 /// });
 ///
 /// // إحصائيات مبيعات متقدمة
@@ -321,6 +322,141 @@ class OrderService {
         .subscribe();
   }
 
+  // ===========================================================================
+  // Map tracking (Supabase-only backend)
+  // ===========================================================================
+
+  /// Fetch active delivery zones for a store.
+  ///
+  /// Expected DB:
+  /// - `store_delivery_zones.zone` is a PostGIS geography polygon.
+  /// - PostgREST usually returns it as GeoJSON-like: {"coordinates": [[[lng,lat],...]]}
+  static Future<List<List<LatLng>>> fetchStoreDeliveryZones(
+    String storeId,
+  ) async {
+    final List rows = await _supabase
+        .from('store_delivery_zones')
+        .select('id, zone')
+        .eq('store_id', storeId)
+        .eq('is_active', true);
+
+    final zones = <List<LatLng>>[];
+    for (final row in rows) {
+      try {
+        final polygon = _parseGeoJsonPolygon(row['zone']);
+        if (polygon.isNotEmpty) zones.add(polygon);
+      } catch (e) {
+        AppLogger.warning('Failed to parse store zone: $e');
+      }
+    }
+    return zones;
+  }
+
+  /// Check if [point] is within an active store polygon via RPC `is_point_in_store_zone`.
+  static Future<bool> isPointInStoreZone({
+    required String storeId,
+    required LatLng point,
+  }) async {
+    final res = await _supabase.rpc(
+      'is_point_in_store_zone',
+      params: {
+        'p_store_id': storeId,
+        'p_lat': point.latitude,
+        'p_lng': point.longitude,
+      },
+    );
+    return res == true;
+  }
+
+  /// Upsert driver location into `driver_locations`.
+  ///
+  /// Requires RLS policy that allows: auth.uid() == driver_id.
+  static Future<void> upsertDriverLocation({
+    required String driverId,
+    required LatLng position,
+    bool isAvailable = false,
+    double? heading,
+    double? speedMps,
+    double? accuracyM,
+    String? currentOrderId,
+  }) async {
+    await _supabase.from('driver_locations').upsert({
+      'driver_id': driverId,
+      'position': {
+        'type': 'Point',
+        'coordinates': [position.longitude, position.latitude],
+      },
+      'is_available': isAvailable,
+      'heading': heading,
+      'speed_mps': speedMps,
+      'accuracy_m': accuracyM,
+      'current_order_id': currentOrderId,
+      'updated_at': DateTime.now().toIso8601String(),
+    });
+  }
+
+  /// Stream a driver's location row.
+  static Stream<Map<String, dynamic>?> streamDriverLocation(String driverId) {
+    return _supabase
+        .from('driver_locations')
+        .stream(primaryKey: ['driver_id'])
+        .eq('driver_id', driverId)
+        .map((rows) => rows.isNotEmpty ? rows.first : null);
+  }
+
+  /// Stream an order row.
+  static Stream<Map<String, dynamic>?> streamOrder(String orderId) {
+    return _supabase
+        .from('orders')
+        .stream(primaryKey: ['id'])
+        .eq('id', orderId)
+        .map((rows) => rows.isNotEmpty ? rows.first : null);
+  }
+
+  /// Stream driver location for the order's assigned driver.
+  static Stream<Map<String, dynamic>?> streamOrderDriverLocation(
+    String orderId,
+  ) {
+    return streamOrder(orderId).asyncExpand((order) {
+      final driverId = order?['assigned_driver_id']?.toString();
+      if (driverId == null || driverId.isEmpty) {
+        return Stream<Map<String, dynamic>?>.value(null);
+      }
+      return streamDriverLocation(driverId);
+    });
+  }
+
+  static List<LatLng> _parseGeoJsonPolygon(dynamic zone) {
+    if (zone == null) return const [];
+
+    if (zone is Map<String, dynamic>) {
+      final coords = zone['coordinates'];
+      return _coordsToPolygon(coords);
+    }
+
+    // If your API returns zone as a String, consider formatting the PostgREST output
+    // as GeoJSON. For now we ignore it safely.
+    if (zone is String) return const [];
+
+    return const [];
+  }
+
+  static List<LatLng> _coordsToPolygon(dynamic coords) {
+    if (coords is! List || coords.isEmpty) return const [];
+    final ring = coords.first;
+    if (ring is! List) return const [];
+
+    final points = <LatLng>[];
+    for (final p in ring) {
+      if (p is List && p.length >= 2) {
+        final lng = (p[0] as num).toDouble();
+        final lat = (p[1] as num).toDouble();
+        points.add(LatLng(lat, lng));
+      }
+    }
+    return points;
+  }
+
   // ===== الحصول على طلبات المستخدم =====
   static Future<List<OrderModel>> getUserOrders(
     String userId, {
@@ -528,7 +664,9 @@ class OrderService {
               products(*, stores(*))
             )
           ''')
-          .or('status.eq.pending,status.eq.confirmed')
+          .or(
+            'status.eq.${OrderStatus.pending.value},status.eq.${OrderStatus.confirmed.value}',
+          )
           .isFilter('captain_id', null);
 
       final response = await query.order('created_at', ascending: true);
@@ -586,13 +724,13 @@ class OrderService {
       // حساب الإحصائيات
       final totalOrders = orders.length;
       final completedOrders = orders
-          .where((o) => o['status'] == 'delivered')
+          .where((o) => o['status'] == OrderStatus.delivered.value)
           .length;
       final cancelledOrders = orders
-          .where((o) => o['status'] == 'cancelled')
+          .where((o) => o['status'] == OrderStatus.cancelled.value)
           .length;
       final totalRevenue = orders
-          .where((o) => o['status'] == 'delivered')
+          .where((o) => o['status'] == OrderStatus.delivered.value)
           .fold<double>(
             0.0,
             (sum, o) => sum + (o['total_amount'] as num).toDouble(),
@@ -608,7 +746,9 @@ class OrderService {
         'cancelled_orders': cancelledOrders,
         'pending_orders': orders
             .where(
-              (o) => o['status'] != 'delivered' && o['status'] != 'cancelled',
+              (o) =>
+                  o['status'] != OrderStatus.delivered.value &&
+                  o['status'] != OrderStatus.cancelled.value,
             )
             .length,
         'total_revenue': totalRevenue,
@@ -643,7 +783,8 @@ class OrderService {
       'assigned',
     ];
 
-    return cancellableStatuses.contains(order.status);
+    // `order.status` is an enum; compare via its String value.
+    return cancellableStatuses.contains(order.status.value);
   }
 
   /// حساب الوقت المتوقع للتوصيل
@@ -703,14 +844,14 @@ class OrderService {
       // حسابات الإحصائيات المتقدمة
       final totalOrders = orders.length;
       final completedOrders = orders
-          .where((o) => o.status == 'delivered')
+          .where((o) => o.status.value == 'delivered')
           .length;
       final cancelledOrders = orders
-          .where((o) => o.status == 'cancelled')
+          .where((o) => o.status.value == 'cancelled')
           .length;
 
       final totalRevenue = orders
-          .where((o) => o.status == 'delivered')
+          .where((o) => o.status.value == 'delivered')
           .fold<double>(0.0, (sum, order) => sum + order.totalAmount);
 
       final averageOrderValue = completedOrders > 0

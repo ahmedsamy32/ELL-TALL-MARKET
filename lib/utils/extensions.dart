@@ -23,7 +23,7 @@ import '../screens/merchant/merchant_orders_screen.dart';
 import '../screens/merchant/add_edit_product_screen.dart';
 import '../screens/merchant/merchant_wallet_screen.dart';
 // Captain
-import '../screens/captain/captain_dashboard.Screen.dart';
+import '../screens/captain/captain_dashboard_screen.dart';
 import '../screens/captain/captain_orders_screen.dart';
 import '../screens/captain/order_delivery_screen.dart';
 // Admin
@@ -146,29 +146,11 @@ class AppRoutes {
           builder: (_) => const MerchantDashboardScreen(),
         );
       case merchantProducts:
-        if (args is Map<String, dynamic>) {
-          final String merchantId = args['merchantId'] ?? '';
-          final String merchantName = args['merchantName'] ?? '';
-          return MaterialPageRoute(
-            builder: (_) => MerchantProductsScreen(
-              merchantId: merchantId,
-              merchantName: merchantName,
-            ),
-          );
-        }
-        return _errorRoute('Merchant data not provided');
+        return MaterialPageRoute(
+          builder: (_) => const MerchantProductsScreen(),
+        );
       case merchantOrders:
-        if (args is Map<String, dynamic>) {
-          final String merchantId = args['merchantId'] ?? '';
-          final String merchantName = args['merchantName'] ?? '';
-          return MaterialPageRoute(
-            builder: (_) => MerchantOrdersScreen(
-              merchantId: merchantId,
-              merchantName: merchantName,
-            ),
-          );
-        }
-        return _errorRoute('Merchant data not provided');
+        return MaterialPageRoute(builder: (_) => const MerchantOrdersScreen());
       case addEditProduct:
         if (args is ProductModel?) {
           return MaterialPageRoute(

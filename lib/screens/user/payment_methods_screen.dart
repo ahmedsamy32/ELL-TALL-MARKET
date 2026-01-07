@@ -4,6 +4,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/utils/navigation_service.dart';
 
 class PaymentMethodsScreen extends StatefulWidget {
   const PaymentMethodsScreen({super.key});
@@ -14,10 +15,16 @@ class PaymentMethodsScreen extends StatefulWidget {
 
 class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
   late String selectedMethod;
-  bool _isProcessing = false;
+  final ValueNotifier<bool> _isProcessingVN = ValueNotifier<bool>(false);
   String? savedCardLast4;
   bool showCardForm = false;
   CardFieldInputDetails? cardDetails;
+
+  @override
+  void dispose() {
+    _isProcessingVN.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -27,7 +34,7 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
   }
 
   Future<void> _fetchSavedCard() async {
-    setState(() => _isProcessing = true);
+    _isProcessingVN.value = true;
     try {
       final authProvider = Provider.of<SupabaseProvider>(
         context,
@@ -41,18 +48,17 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['last4'] != null) {
-          setState(() {
-            savedCardLast4 = data['last4'];
-          });
+          if (!mounted) return;
+          setState(() => savedCardLast4 = data['last4']);
         }
       }
     } catch (_) {}
-    setState(() => _isProcessing = false);
+    _isProcessingVN.value = false;
   }
 
   @override
   Widget build(BuildContext context) {
-    // final authProvider = Provider.of<SupabaseProvider>(context); // TODO: Use for payment method updates
+    // final authProvider = Provider.of<SupabaseProvider>(context); // Note: Use for payment method updates
     final paymentMethods = [
       {'id': 'cod', 'label': 'الدفع عند الاستلام', 'icon': Icons.money},
       {
@@ -100,85 +106,91 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
         title: const Text('طرق الدفع'),
         backgroundColor: Colors.green,
       ),
-      body: _isProcessing
-          ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                children: [
-                  Expanded(
-                    child: ListView.separated(
-                      itemCount: paymentMethods.length,
-                      separatorBuilder: (_, __) => const Divider(),
-                      itemBuilder: (context, index) {
-                        final method = paymentMethods[index];
-                        return Column(
-                          children: [
-                            ListTile(
-                              leading: Icon(
-                                method['icon'] as IconData,
-                                color: Colors.green,
-                              ),
-                              title: Text(method['label'] as String),
-                              trailing: selectedMethod == method['id']
-                                  ? const Icon(
-                                      Icons.check_circle,
-                                      color: Colors.green,
-                                    )
-                                  : null,
-                              onTap: () async {
-                                if (method['id'] == 'credit_card' ||
-                                    method['id'] == 'debit_card') {
-                                  setState(() {
-                                    showCardForm = true;
-                                  });
-                                } else if (method['id'] == 'paypal') {
-                                  _handlePayPal();
-                                } else if (method['id'] == 'google_pay') {
-                                  _handleGooglePay();
-                                } else if (method['id'] == 'apple_pay') {
-                                  _handleApplePay();
-                                } else {
-                                  // Note: updatePreferredPayment method not yet implemented
-                                  // This would update user's preferred payment method in profile
-                                  setState(() {
-                                    selectedMethod = method['id'] as String;
-                                    showCardForm = false;
-                                  });
-
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        'تم اختيار ${method['name']}',
-                                      ),
-                                      backgroundColor: Colors.green,
-                                    ),
-                                  );
-                                }
-                              },
+      body: ValueListenableBuilder<bool>(
+        valueListenable: _isProcessingVN,
+        builder: (context, isProcessing, _) {
+          if (isProcessing) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          return Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              children: [
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: paymentMethods.length,
+                    separatorBuilder: (_, index) => const Divider(),
+                    itemBuilder: (context, index) {
+                      final method = paymentMethods[index];
+                      return Column(
+                        children: [
+                          ListTile(
+                            leading: Icon(
+                              method['icon'] as IconData,
+                              color: Colors.green,
                             ),
-                            // عرض تفاصيل إضافية لكل وسيلة دفع
-                            if ((method['id'] == 'credit_card' ||
-                                    method['id'] == 'debit_card') &&
-                                savedCardLast4 != null)
-                              _buildSavedCardWidget(savedCardLast4!),
-                            if ((method['id'] == 'credit_card' ||
-                                    method['id'] == 'debit_card') &&
-                                showCardForm)
-                              _buildCardForm(),
-                            if (method['id'] == 'bank_transfer')
-                              _buildBankDetails(),
-                            if (method['id'] == 'fawry' &&
-                                selectedMethod == 'fawry')
-                              _buildFawryDetails(),
-                          ],
-                        );
-                      },
-                    ),
+                            title: Text(method['label'] as String),
+                            trailing: selectedMethod == method['id']
+                                ? const Icon(
+                                    Icons.check_circle,
+                                    color: Colors.green,
+                                  )
+                                : null,
+                            onTap: () async {
+                              if (method['id'] == 'credit_card' ||
+                                  method['id'] == 'debit_card') {
+                                setState(() {
+                                  showCardForm = true;
+                                });
+                              } else if (method['id'] == 'paypal') {
+                                _handlePayPal();
+                              } else if (method['id'] == 'google_pay') {
+                                _handleGooglePay();
+                              } else if (method['id'] == 'apple_pay') {
+                                _handleApplePay();
+                              } else {
+                                // Note: updatePreferredPayment method not yet implemented
+                                // This would update user's preferred payment method in profile
+                                setState(() {
+                                  selectedMethod = method['id'] as String;
+                                  showCardForm = false;
+                                });
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      'تم اختيار ${method['name']}',
+                                    ),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                          // عرض تفاصيل إضافية لكل وسيلة دفع
+                          if ((method['id'] == 'credit_card' ||
+                                  method['id'] == 'debit_card') &&
+                              savedCardLast4 != null)
+                            _buildSavedCardWidget(savedCardLast4!),
+                          if ((method['id'] == 'credit_card' ||
+                                  method['id'] == 'debit_card') &&
+                              showCardForm)
+                            _buildCardForm(),
+                          if (method['id'] == 'bank_transfer')
+                            _buildBankDetails(),
+                          if (method['id'] == 'fawry' &&
+                              selectedMethod == 'fawry')
+                            _buildFawryDetails(),
+                        ],
+                      );
+                    },
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
+          );
+        },
+      ),
     );
   }
 
@@ -254,7 +266,7 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
 
   Future<void> _handlePayPal() async {
     // تنفيذ عملية الدفع عبر PayPal
-    setState(() => _isProcessing = true);
+    _isProcessingVN.value = true;
     try {
       // قم بإضافة منطق PayPal هنا
       ScaffoldMessenger.of(context).showSnackBar(
@@ -265,12 +277,12 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
     } finally {
-      setState(() => _isProcessing = false);
+      _isProcessingVN.value = false;
     }
   }
 
   Future<void> _handleGooglePay() async {
-    setState(() => _isProcessing = true);
+    _isProcessingVN.value = true;
     try {
       // قم بإضافة منطق Google Pay هنا
       ScaffoldMessenger.of(
@@ -281,12 +293,12 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
     } finally {
-      setState(() => _isProcessing = false);
+      _isProcessingVN.value = false;
     }
   }
 
   Future<void> _handleApplePay() async {
-    setState(() => _isProcessing = true);
+    _isProcessingVN.value = true;
     try {
       // قم بإضافة منطق Apple Pay هنا
       ScaffoldMessenger.of(
@@ -297,22 +309,35 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
     } finally {
-      setState(() => _isProcessing = false);
+      _isProcessingVN.value = false;
     }
   }
 
   Future<void> saveCardForLater() async {
-    setState(() => _isProcessing = true);
+    _isProcessingVN.value = true;
+
+    // التقاط messenger قبل أي async operation
+    final navContext = NavigationService.navigatorKey.currentContext;
+    final messenger = navContext != null
+        ? ScaffoldMessenger.of(navContext)
+        : null;
+
     try {
+      final navContextForProvider =
+          NavigationService.navigatorKey.currentContext;
+      if (navContextForProvider == null) {
+        throw Exception('لا يمكن الوصول إلى سياق التطبيق حالياً');
+      }
+
+      final authProvider = Provider.of<SupabaseProvider>(
+        navContextForProvider,
+        listen: false,
+      );
+
       final paymentMethod = await Stripe.instance.createPaymentMethod(
         params: PaymentMethodParams.card(
           paymentMethodData: PaymentMethodData(),
         ),
-      );
-
-      final authProvider = Provider.of<SupabaseProvider>(
-        context,
-        listen: false,
       );
       final response = await http.post(
         Uri.parse('https://your-server.com/save-payment-method'),
@@ -325,29 +350,46 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        setState(() {
-          savedCardLast4 = data['last4'];
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
+        if (!mounted) return;
+        setState(() => savedCardLast4 = data['last4']);
+        messenger?.showSnackBar(
           const SnackBar(content: Text('تم حفظ معلومات البطاقة للدفع لاحقاً')),
         );
       } else {
         throw Exception('فشل حفظ البطاقة');
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('حدث خطأ أثناء حفظ البطاقة: $e')));
+      messenger?.showSnackBar(
+        SnackBar(content: Text('حدث خطأ أثناء حفظ البطاقة: $e')),
+      );
     } finally {
-      setState(() => _isProcessing = false);
+      _isProcessingVN.value = false;
     }
   }
 
   Future<void> saveCardForLaterWithDetails(
     CardFieldInputDetails details,
   ) async {
-    setState(() => _isProcessing = true);
+    _isProcessingVN.value = true;
+
+    // التقاط messenger قبل أي async operation
+    final navContext = NavigationService.navigatorKey.currentContext;
+    final messenger = navContext != null
+        ? ScaffoldMessenger.of(navContext)
+        : null;
+
     try {
+      final navContextForProvider =
+          NavigationService.navigatorKey.currentContext;
+      if (navContextForProvider == null) {
+        throw Exception('لا يمكن الوصول إلى سياق التطبيق حالياً');
+      }
+
+      final authProvider = Provider.of<SupabaseProvider>(
+        navContextForProvider,
+        listen: false,
+      );
+
       final paymentMethod = await Stripe.instance.createPaymentMethod(
         params: PaymentMethodParams.card(
           paymentMethodData: PaymentMethodData(
@@ -355,10 +397,6 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
           ),
         ),
       );
-      final authProvider = Provider.of<SupabaseProvider>(
-        context,
-        listen: false,
-      );
       final response = await http.post(
         Uri.parse('https://your-server.com/save-payment-method'),
         headers: {'Content-Type': 'application/json'},
@@ -367,29 +405,31 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
           'paymentMethodId': paymentMethod.id,
         }),
       );
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        if (!mounted) return;
         setState(() {
           savedCardLast4 = data['last4'];
           showCardForm = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger?.showSnackBar(
           const SnackBar(content: Text('تم حفظ معلومات البطاقة بنجاح')),
         );
       } else {
         throw Exception('فشل حفظ البطاقة');
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('حدث خطأ أثناء حفظ البطاقة: $e')));
+      messenger?.showSnackBar(
+        SnackBar(content: Text('حدث خطأ أثناء حفظ البطاقة: $e')),
+      );
     } finally {
-      setState(() => _isProcessing = false);
+      _isProcessingVN.value = false;
     }
   }
 
   Future<void> deleteSavedCard() async {
-    setState(() => _isProcessing = true);
+    _isProcessingVN.value = true;
     try {
       final authProvider = Provider.of<SupabaseProvider>(
         context,
@@ -400,6 +440,8 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'userId': authProvider.currentUserProfile!.id}),
       );
+
+      if (!mounted) return;
 
       if (response.statusCode == 200) {
         setState(() {
@@ -416,7 +458,7 @@ class _PaymentMethodsScreenState extends State<PaymentMethodsScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text('حدث خطأ أثناء حذف البطاقة: $e')));
     } finally {
-      setState(() => _isProcessing = false);
+      _isProcessingVN.value = false;
     }
   }
 }

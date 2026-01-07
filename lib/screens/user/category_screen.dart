@@ -71,7 +71,7 @@ class _CategoryScreenState extends State<CategoryScreen> {
     });
   }
 
-  void _refreshData() async {
+  Future<void> _refreshData() async {
     final productProvider = Provider.of<ProductProvider>(
       context,
       listen: false,
@@ -220,9 +220,9 @@ class _CategoryScreenState extends State<CategoryScreen> {
           child: SafeArea(
             top: false,
             child: RefreshIndicator(
-              onRefresh: () async => _refreshData(),
-              color: colorScheme.primary,
-              backgroundColor: colorScheme.surfaceContainerHighest,
+              onRefresh: () async {
+                await _refreshData();
+              },
               child: _selectedCategory == null
                   ? _buildCategoriesList(categoryProvider)
                   : _buildProductsSection(productProvider),
@@ -475,7 +475,7 @@ class _CategoryScreenState extends State<CategoryScreen> {
             },
             child: Card(
               elevation: 2,
-              shadowColor: colorScheme.shadow.withOpacity(0.2),
+              shadowColor: colorScheme.shadow.withValues(alpha: 0.2),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
               ),

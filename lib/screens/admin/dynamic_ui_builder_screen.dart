@@ -6,7 +6,7 @@ class DynamicUIBuilderScreen extends StatefulWidget {
   const DynamicUIBuilderScreen({super.key});
 
   @override
-  _DynamicUIBuilderScreenState createState() => _DynamicUIBuilderScreenState();
+  State<DynamicUIBuilderScreen> createState() => _DynamicUIBuilderScreenState();
 }
 
 class _DynamicUIBuilderScreenState extends State<DynamicUIBuilderScreen> {
@@ -310,14 +310,18 @@ class _DynamicUIBuilderScreenState extends State<DynamicUIBuilderScreen> {
 
   Color _parseColor(String colorHex) {
     try {
-      return Color(int.parse(colorHex.replaceFirst('#', ''), radix: 16));
+      // Remove # if present
+      final hex = colorHex.replaceFirst('#', '');
+      // If length is 6, add FF for alpha
+      final fullHex = hex.length == 6 ? 'FF$hex' : hex;
+      return Color(int.parse(fullHex, radix: 16));
     } catch (e) {
       return Colors.blue;
     }
   }
 
   String colorToHex(Color color) {
-    return '#${color.value.toRadixString(16).padLeft(8, '0')}';
+    return '#${color.toARGB32().toRadixString(16).padLeft(8, '0')}';
   }
 
   void _saveUIConfig() async {
@@ -395,7 +399,7 @@ class ColorPicker extends StatefulWidget {
   });
 
   @override
-  _ColorPickerState createState() => _ColorPickerState();
+  State<ColorPicker> createState() => _ColorPickerState();
 }
 
 class _ColorPickerState extends State<ColorPicker> {
@@ -422,7 +426,7 @@ class _ColorPickerState extends State<ColorPicker> {
         ),
         SizedBox(height: 16),
         Text(
-          'RGB: ${_currentColor.red}, ${_currentColor.green}, ${_currentColor.blue}',
+          'RGB: ${(_currentColor.r * 255).round()}, ${(_currentColor.g * 255).round()}, ${(_currentColor.b * 255).round()}',
         ),
         SizedBox(height: 16),
         // يمكن إضافة منتقي ألوان حقيقي هنا

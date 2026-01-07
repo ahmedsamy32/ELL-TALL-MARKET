@@ -3,13 +3,13 @@ import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
-import 'package:ell_tall_market/widgets/custom_search_bar.dart';
+import 'package:ell_tall_market/widgets/app_search_bar.dart';
 
 class ManageProductsScreen extends StatefulWidget {
   const ManageProductsScreen({super.key});
 
   @override
-  _ManageProductsScreenState createState() => _ManageProductsScreenState();
+  State<ManageProductsScreen> createState() => _ManageProductsScreenState();
 }
 
 class _ManageProductsScreenState extends State<ManageProductsScreen> {
@@ -193,7 +193,7 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("السعر: ${product.price} ر.س"),
+            Text("السعر: ${product.priceFormatted}"),
             Text(
               product.stock > 0 ? "متوفر (${product.stock})" : "غير متوفر",
               style: TextStyle(
@@ -236,7 +236,7 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              // TODO: حفظ المنتج الجديد
+              // Note: حفظ المنتج الجديد
             },
             child: const Text('حفظ'),
           ),
@@ -275,7 +275,7 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              // TODO: حفظ التعديلات
+              // Note: حفظ التعديلات
             },
             child: const Text('حفظ'),
           ),
@@ -301,7 +301,7 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () {
               Navigator.pop(context);
-              // TODO: حذف المنتج
+              // Note: حذف المنتج
             },
             child: const Text('حذف'),
           ),

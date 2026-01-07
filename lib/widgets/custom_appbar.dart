@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:ell_tall_market/widgets/custom_search_bar.dart';
+import 'package:ell_tall_market/widgets/app_search_bar.dart';
 
 class CustomAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;

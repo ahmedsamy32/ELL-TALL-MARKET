@@ -13,6 +13,9 @@ class CartProvider with ChangeNotifier {
   CartModel? _cart;
   List<Map<String, dynamic>> _cartItems = [];
   Map<String, dynamic>? _cartTotal;
+  final Map<String, double> _storeMinimums = {};
+  final Map<String, double> _storeSubtotals = {};
+  final Map<String, String> _storeNames = {};
 
   // حالة الكوبون
   CouponModel? _appliedCoupon;
@@ -46,6 +49,23 @@ class CartProvider with ChangeNotifier {
   double get tax => (_cartTotal?['tax'] ?? 0.0).toDouble();
   double get discount => _couponDiscount;
   double get total => subtotal + deliveryFee + tax - discount;
+  Map<String, double> get storeMinimums => Map.unmodifiable(_storeMinimums);
+  Map<String, double> get storeSubtotals => Map.unmodifiable(_storeSubtotals);
+  Map<String, String> get storeNames => Map.unmodifiable(_storeNames);
+  List<StoreMinimumStatus> get storeMinimumStatuses => _storeMinimums.entries
+      .map(
+        (entry) => StoreMinimumStatus(
+          storeId: entry.key,
+          storeName: _storeNames[entry.key] ?? 'المتجر',
+          minimum: entry.value,
+          subtotal: _storeSubtotals[entry.key] ?? 0.0,
+        ),
+      )
+      .toList();
+  List<StoreMinimumStatus> get unmetMinimumStores =>
+      storeMinimumStatuses.where((status) => !status.isMet).toList();
+  bool get meetsMinimumOrder => unmetMinimumStores.isEmpty;
+  bool get canCheckout => hasItems && meetsMinimumOrder;
 
   // معلومات الكوبون
   bool get hasCoupon => _appliedCoupon != null;
@@ -72,7 +92,19 @@ class CartProvider with ChangeNotifier {
 
       if (_cart != null) {
         // تحميل العناصر مع تفاصيل المنتجات
-        _cartItems = await CartService.getCartItemsWithDetails(_cart!.id);
+        final rawItems = await CartService.getCartItemsWithDetails(_cart!.id);
+
+        // إعادة تنسيق البيانات: نقل products إلى product
+        _cartItems = rawItems.map((item) {
+          // إذا كان products موجود كـ nested object، انقله إلى product
+          if (item['products'] != null && item['product'] == null) {
+            item['product'] = item['products'];
+            item.remove('products');
+          }
+          return item;
+        }).toList();
+
+        _rebuildStoreMinimums();
 
         // حساب الإجماليات
         await _updateCartTotal();
@@ -81,6 +113,7 @@ class CartProvider with ChangeNotifier {
       } else {
         _cartItems = [];
         _cartTotal = null;
+        _resetStoreMinimums();
         AppLogger.warning('لم يتم العثور على سلة للمستخدم');
       }
     } catch (e) {
@@ -94,6 +127,65 @@ class CartProvider with ChangeNotifier {
   // ================================
   // إدارة عناصر السلة
   // ================================
+
+  /// التحقق من توافق نظام التوصيل قبل إضافة منتج (نسخة سريعة محسّنة)
+  /// يمنع إضافة منتجات من متاجر مختلفة في حالات معينة
+  Future<DeliveryModeConflict?> checkDeliveryModeConflict(
+    String productId,
+  ) async {
+    try {
+      // إذا كانت السلة فارغة، لا يوجد تعارض (فحص سريع)
+      if (_cartItems.isEmpty) return null;
+
+      // الحصول على معلومات المتجر الحالي من السلة (بدون استدعاء قاعدة بيانات)
+      final firstItem = _cartItems.first;
+      final currentProduct = firstItem['product'] as Map<String, dynamic>?;
+      if (currentProduct == null) return null;
+
+      final currentStore = currentProduct['stores'] as Map<String, dynamic>?;
+      if (currentStore == null) return null;
+
+      final currentStoreDeliveryMode = currentStore['delivery_mode'] as String?;
+      final currentStoreName = currentStore['name'] as String?;
+      final currentStoreId = currentStore['id'] as String?;
+
+      // جلب معلومات المنتج والمتجر الجديد
+      final productInfo = await CartService.getProductWithStore(productId);
+      if (productInfo == null) return null;
+
+      final newStoreId = productInfo['store_id'] as String?;
+
+      // إذا كان نفس المتجر، لا يوجد تعارض (فحص سريع)
+      if (currentStoreId == newStoreId) return null;
+
+      final newStoreDeliveryMode = productInfo['delivery_mode'] as String?;
+      final newStoreName = productInfo['store_name'] as String?;
+
+      // ✅ التحقق من التعارض:
+      // 1. إذا كان المتجر الحالي "store" → لا يمكن إضافة من متجر آخر (حتى لو store)
+      // 2. إذا كان المتجر الحالي "app" والجديد "store" → تعارض
+      // 3. إذا كان كلاهما "app" → مسموح (نفس نظام التوصيل الموحد)
+
+      final hasConflict =
+          currentStoreDeliveryMode == 'store' ||
+          (currentStoreDeliveryMode == 'app' &&
+              newStoreDeliveryMode == 'store');
+
+      if (hasConflict) {
+        return DeliveryModeConflict(
+          currentStoreName: currentStoreName ?? 'المتجر الحالي',
+          currentDeliveryMode: currentStoreDeliveryMode ?? 'store',
+          newStoreName: newStoreName ?? 'المتجر الجديد',
+          newDeliveryMode: newStoreDeliveryMode ?? 'store',
+        );
+      }
+
+      return null;
+    } catch (e) {
+      AppLogger.error('خطأ في فحص تعارض نظام التوصيل', e);
+      return null;
+    }
+  }
 
   /// إضافة منتج للسلة
   Future<bool> addToCart({required String productId, int quantity = 1}) async {
@@ -128,26 +220,88 @@ class CartProvider with ChangeNotifier {
   }) async {
     _clearError();
 
-    try {
-      final updatedItem = await CartService.updateItemQuantity(
-        userId: _clientId,
-        cartItemId: cartItemId,
-        newQuantity: newQuantity,
-      );
+    // 🚀 تحديث فوري للواجهة قبل الاتصال بقاعدة البيانات
+    final itemIndex = _cartItems.indexWhere((item) => item['id'] == cartItemId);
+    if (itemIndex != -1) {
+      final oldQuantity = _cartItems[itemIndex]['quantity'] as int;
 
-      if (updatedItem != null) {
-        await loadCart(); // إعادة تحميل السلة
-        AppLogger.info('تم تحديث كمية المنتج');
-        return true;
+      // تحديث الكمية مؤقتاً في الواجهة
+      _cartItems[itemIndex]['quantity'] = newQuantity;
+
+      // إعادة حساب total_price للعنصر
+      final product = _cartItems[itemIndex]['product'] as Map<String, dynamic>?;
+      if (product != null) {
+        final price = (product['price'] as num?)?.toDouble() ?? 0.0;
+        _cartItems[itemIndex]['total_price'] = price * newQuantity;
       }
 
-      _setError('فشل تحديث كمية المنتج');
-      return false;
-    } catch (e) {
-      _setError('خطأ في تحديث الكمية: ${e.toString()}');
-      AppLogger.error('خطأ في تحديث كمية المنتج', e);
-      return false;
+      notifyListeners(); // تحديث الواجهة فوراً
+
+      try {
+        // تحديث في قاعدة البيانات في الخلفية
+        final updatedItem = await CartService.updateItemQuantity(
+          userId: _clientId,
+          cartItemId: cartItemId,
+          newQuantity: newQuantity,
+        );
+
+        if (updatedItem != null) {
+          // إعادة تحميل السلة للتأكد من التزامن
+          await loadCart();
+          AppLogger.info('تم تحديث كمية المنتج');
+          return true;
+        } else {
+          // إذا فشل، استرجع الكمية القديمة
+          _cartItems[itemIndex]['quantity'] = oldQuantity;
+          if (product != null) {
+            final price = (product['price'] as num?)?.toDouble() ?? 0.0;
+            _cartItems[itemIndex]['total_price'] = price * oldQuantity;
+          }
+          notifyListeners();
+          _setError('فشل تحديث كمية المنتج');
+          return false;
+        }
+      } catch (e) {
+        // إذا حدث خطأ، استرجع الكمية القديمة
+        _cartItems[itemIndex]['quantity'] = oldQuantity;
+        if (product != null) {
+          final price = (product['price'] as num?)?.toDouble() ?? 0.0;
+          _cartItems[itemIndex]['total_price'] = price * oldQuantity;
+        }
+        notifyListeners();
+
+        // استخراج رسالة الخطأ الواضحة
+        String errorMessage = 'خطأ في تحديث الكمية';
+        final errorString = e.toString();
+
+        // التحقق من خطأ تجاوز المخزون
+        if (errorString.contains('الكمية المطلوبة تتجاوز المخزون المتاح')) {
+          final match = RegExp(
+            r'المخزون المتاح \((\d+)\)',
+          ).firstMatch(errorString);
+          if (match != null) {
+            final stock = match.group(1);
+            errorMessage = 'المخزون المتاح فقط $stock';
+          } else {
+            errorMessage = 'الكمية المطلوبة تتجاوز المخزون المتاح';
+          }
+        } else if (errorString.contains('Exception:')) {
+          // استخراج رسالة الاستثناء فقط
+          errorMessage = errorString.replaceAll('Exception:', '').trim();
+          if (errorMessage.startsWith('فشل تحديث كمية المنتج:')) {
+            errorMessage = errorMessage
+                .replaceFirst('فشل تحديث كمية المنتج:', '')
+                .trim();
+          }
+        }
+
+        _setError(errorMessage);
+        return false;
+      }
     }
+
+    _setError('العنصر غير موجود في السلة');
+    return false;
   }
 
   /// زيادة كمية منتج
@@ -225,6 +379,7 @@ class CartProvider with ChangeNotifier {
         _cartTotal = null;
         _appliedCoupon = null;
         _couponDiscount = 0.0;
+        _resetStoreMinimums();
         notifyListeners();
 
         AppLogger.info('تم تفريغ السلة بنجاح');
@@ -379,6 +534,40 @@ class CartProvider with ChangeNotifier {
   // إدارة الحالة
   // ================================
 
+  void _rebuildStoreMinimums() {
+    _storeMinimums.clear();
+    _storeSubtotals.clear();
+    _storeNames.clear();
+
+    for (final item in _cartItems) {
+      final product = item['products'] as Map<String, dynamic>?;
+      if (product == null) continue;
+
+      final store = product['stores'] as Map<String, dynamic>?;
+      final storeId = store?['id'] as String?;
+      if (storeId == null) continue;
+
+      final storeName = store?['name'] as String? ?? 'المتجر';
+      _storeNames[storeId] = storeName;
+
+      final minOrder = (store?['min_order'] as num?)?.toDouble() ?? 0.0;
+      if (!_storeMinimums.containsKey(storeId) || minOrder > 0) {
+        _storeMinimums[storeId] = minOrder;
+      }
+
+      final price = (product['price'] as num?)?.toDouble() ?? 0.0;
+      final quantity = (item['quantity'] as num?)?.toDouble() ?? 0.0;
+      final lineTotal = price * quantity;
+      _storeSubtotals[storeId] = (_storeSubtotals[storeId] ?? 0.0) + lineTotal;
+    }
+  }
+
+  void _resetStoreMinimums() {
+    _storeMinimums.clear();
+    _storeSubtotals.clear();
+    _storeNames.clear();
+  }
+
   void _setLoading(bool value) {
     _isLoading = value;
     notifyListeners();
@@ -403,6 +592,7 @@ class CartProvider with ChangeNotifier {
     _cartTotal = null;
     _appliedCoupon = null;
     _couponDiscount = 0.0;
+    _resetStoreMinimums();
     _isLoading = false;
     _error = null;
     notifyListeners();
@@ -413,5 +603,49 @@ class CartProvider with ChangeNotifier {
   void dispose() {
     // تنظيف الموارد
     super.dispose();
+  }
+}
+
+class StoreMinimumStatus {
+  final String storeId;
+  final String storeName;
+  final double minimum;
+  final double subtotal;
+
+  const StoreMinimumStatus({
+    required this.storeId,
+    required this.storeName,
+    required this.minimum,
+    required this.subtotal,
+  });
+
+  bool get isMet => minimum <= 0 || subtotal >= minimum;
+  double get remaining => isMet ? 0 : (minimum - subtotal);
+}
+
+/// معلومات تعارض نظام التوصيل
+class DeliveryModeConflict {
+  final String currentStoreName;
+  final String currentDeliveryMode;
+  final String newStoreName;
+  final String newDeliveryMode;
+
+  const DeliveryModeConflict({
+    required this.currentStoreName,
+    required this.currentDeliveryMode,
+    required this.newStoreName,
+    required this.newDeliveryMode,
+  });
+
+  String get currentDeliveryModeLabel =>
+      currentDeliveryMode == 'store' ? 'توصيل المتجر' : 'توصيل التطبيق';
+
+  String get newDeliveryModeLabel =>
+      newDeliveryMode == 'store' ? 'توصيل المتجر' : 'توصيل التطبيق';
+
+  String get message {
+    // رسالة مختصرة وواضحة
+    return 'بدء سلة جديدة؟\n\n'
+        'عند بدء طلب جديد ستتم إزالة سلة مشترياتك من "$currentStoreName"';
   }
 }

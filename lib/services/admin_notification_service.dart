@@ -1,5 +1,5 @@
 import 'package:ell_tall_market/config/supabase_config.dart';
-import 'package:flutter/foundation.dart';
+import '../core/logger.dart';
 
 /// Admin Notification Service
 /// Handles notifications specifically for admin-related activities
@@ -28,7 +28,7 @@ class AdminNotificationService {
         'type': 'financial_transaction',
         'title': 'معاملة مالية جديدة',
         'message':
-            'تم تسجيل $transactionType بقيمة $amount ريال للمتجر $storeName',
+            'تم تسجيل $transactionType بقيمة $amount وحدة نقدية للمتجر $storeName',
         'data': {
           'store_id': storeId,
           'transaction_id': transactionId,
@@ -41,9 +41,9 @@ class AdminNotificationService {
         'created_at': DateTime.now().toIso8601String(),
       });
 
-      debugPrint('تم إرسال إشعار للمدير بشأن المعاملة المالية');
+      AppLogger.info('تم إرسال إشعار للمدير بشأن المعاملة المالية');
     } catch (e) {
-      debugPrint('خطأ في إرسال إشعار المعاملة المالية للمدير: $e');
+      AppLogger.error('خطأ في إرسال إشعار المعاملة المالية للمدير', e);
     }
   }
 
@@ -68,7 +68,7 @@ class AdminNotificationService {
         'type': 'new_order',
         'title': 'طلب جديد',
         'message':
-            'تم استلام طلب جديد بقيمة $totalAmount ريال من المتجر $storeName',
+            'تم استلام طلب جديد بقيمة $totalAmount وحدة نقدية من المتجر $storeName',
         'data': {
           'order_id': orderId,
           'store_id': storeId,
@@ -80,9 +80,9 @@ class AdminNotificationService {
         'created_at': DateTime.now().toIso8601String(),
       });
 
-      debugPrint('تم إرسال إشعار للمدير بشأن الطلب الجديد');
+      AppLogger.info('تم إرسال إشعار للمدير بشأن الطلب الجديد');
     } catch (e) {
-      debugPrint('خطأ في إرسال إشعار الطلب الجديد للمدير: $e');
+      AppLogger.error('خطأ في إرسال إشعار الطلب الجديد للمدير', e);
     }
   }
 
@@ -108,9 +108,9 @@ class AdminNotificationService {
         'created_at': DateTime.now().toIso8601String(),
       });
 
-      debugPrint('تم إرسال إشعار للمدير بشأن تسجيل المتجر الجديد');
+      AppLogger.info('تم إرسال إشعار للمدير بشأن تسجيل المتجر الجديد');
     } catch (e) {
-      debugPrint('خطأ في إرسال إشعار تسجيل المتجر للمدير: $e');
+      AppLogger.error('خطأ في إرسال إشعار تسجيل المتجر للمدير', e);
     }
   }
 
@@ -136,9 +136,9 @@ class AdminNotificationService {
         'created_at': DateTime.now().toIso8601String(),
       });
 
-      debugPrint('تم إرسال إشعار للمدير بشأن مشكلة النظام');
+      AppLogger.info('تم إرسال إشعار للمدير بشأن مشكلة النظام');
     } catch (e) {
-      debugPrint('خطأ في إرسال إشعار مشكلة النظام للمدير: $e');
+      AppLogger.error('خطأ في إرسال إشعار مشكلة النظام للمدير', e);
     }
   }
 
@@ -161,7 +161,7 @@ class AdminNotificationService {
       final response = await query;
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
-      debugPrint('خطأ في جلب إشعارات المدير: $e');
+      AppLogger.error('خطأ في جلب إشعارات المدير', e);
       return [];
     }
   }
@@ -179,7 +179,7 @@ class AdminNotificationService {
 
       return true;
     } catch (e) {
-      debugPrint('خطأ في تحديث حالة الإشعار: $e');
+      AppLogger.error('خطأ في تحديث حالة الإشعار', e);
       return false;
     }
   }
@@ -197,7 +197,7 @@ class AdminNotificationService {
 
       return true;
     } catch (e) {
-      debugPrint('خطأ في تحديث جميع الإشعارات: $e');
+      AppLogger.error('خطأ في تحديث جميع الإشعارات', e);
       return false;
     }
   }
@@ -212,7 +212,7 @@ class AdminNotificationService {
 
       return (response as List).length;
     } catch (e) {
-      debugPrint('خطأ في جلب عدد الإشعارات غير المقروءة: $e');
+      AppLogger.error('خطأ في جلب عدد الإشعارات غير المقروءة', e);
       return 0;
     }
   }
@@ -229,10 +229,10 @@ class AdminNotificationService {
           .delete()
           .lt('created_at', thirtyDaysAgo);
 
-      debugPrint('تم حذف الإشعارات القديمة بنجاح');
+      AppLogger.info('تم حذف الإشعارات القديمة بنجاح');
       return true;
     } catch (e) {
-      debugPrint('خطأ في حذف الإشعارات القديمة: $e');
+      AppLogger.error('خطأ في حذف الإشعارات القديمة', e);
       return false;
     }
   }

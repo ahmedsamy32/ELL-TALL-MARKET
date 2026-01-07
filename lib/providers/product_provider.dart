@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../core/logger.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 
@@ -14,6 +15,8 @@ class ProductProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _error;
   final bool _hasMore = true;
+  int _storeProductCount = 0; // عداد خفيف للوحة التحكم
+  RealtimeChannel? _productsChannel; // قناة التحديث اللحظي
 
   // Getters
   List<ProductModel> get products =>
@@ -22,10 +25,164 @@ class ProductProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
   bool get hasMore => _hasMore;
+  int get storeProductCount => _storeProductCount;
+
+  /// ضبط قيمة العداد يدوياً (مثلاً من إحصائيات مخزنة مسبقاً)
+  void preloadStoreProductCount(int count, {bool silent = false}) {
+    final normalized = count < 0 ? 0 : count;
+    if (_storeProductCount == normalized) return;
+    _storeProductCount = normalized;
+    if (!silent) notifyListeners();
+  }
 
   void _setLoading(bool value) {
     _isLoading = value;
     notifyListeners();
+  }
+
+  /// جلب عدد منتجات المتجر فقط (سريع للوحة التحكم)
+  Future<void> fetchStoreProductCount(
+    String storeId, {
+    bool activeOnly = true,
+  }) async {
+    try {
+      var query = _supabase
+          .from('products')
+          .select('id')
+          .eq('store_id', storeId);
+
+      if (activeOnly) {
+        query = query.eq('is_active', true);
+      }
+
+      final response = await query.count(CountOption.exact);
+      final totalCount = response.count;
+      preloadStoreProductCount(totalCount);
+      AppLogger.info('📊 عدد منتجات المتجر "$storeId": $_storeProductCount');
+    } catch (e) {
+      AppLogger.error('❌ خطأ في جلب عدد منتجات المتجر', e);
+    }
+  }
+
+  /// الاشتراك في تحديثات المنتجات للمتجر (Realtime)
+  Future<void> subscribeToStoreProducts(
+    String storeId, {
+    bool activeOnly = true,
+  }) async {
+    try {
+      // إلغاء أي اشتراك سابق
+      await _productsChannel?.unsubscribe();
+
+      final channelName = 'products_store_$storeId';
+      _productsChannel = _supabase.channel(channelName);
+
+      // INSERT
+      _productsChannel!.onPostgresChanges(
+        event: PostgresChangeEvent.insert,
+        schema: 'public',
+        table: 'products',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'store_id',
+          value: storeId,
+        ),
+        callback: (payload) {
+          final newRow = payload.newRecord;
+          final isActive = (newRow['is_active'] == true);
+          if (!activeOnly || isActive) {
+            _storeProductCount += 1;
+          }
+          // تحديث القائمة إن كانت محمّلة
+          try {
+            final product = ProductModel.fromMap(newRow);
+            // أضف فقط إذا كانت نفس المتجر
+            if (product.storeId == storeId) {
+              _products.insert(0, product);
+            }
+          } catch (_) {}
+          notifyListeners();
+        },
+      );
+
+      // DELETE
+      _productsChannel!.onPostgresChanges(
+        event: PostgresChangeEvent.delete,
+        schema: 'public',
+        table: 'products',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'store_id',
+          value: storeId,
+        ),
+        callback: (payload) {
+          final oldRow = payload.oldRecord;
+          final id = oldRow['id'] as String?;
+          if (id != null) {
+            // نقلل العداد دومًا لأن السجل اختفى
+            if (_storeProductCount > 0) _storeProductCount -= 1;
+            _products.removeWhere((p) => p.id == id);
+            _filteredProducts.removeWhere((p) => p.id == id);
+          }
+          notifyListeners();
+        },
+      );
+
+      // UPDATE
+      _productsChannel!.onPostgresChanges(
+        event: PostgresChangeEvent.update,
+        schema: 'public',
+        table: 'products',
+        filter: PostgresChangeFilter(
+          type: PostgresChangeFilterType.eq,
+          column: 'store_id',
+          value: storeId,
+        ),
+        callback: (payload) {
+          final newRow = payload.newRecord;
+          final oldRow = payload.oldRecord;
+          final id = newRow['id'] as String?;
+          if (id != null) {
+            // عدّل العداد إذا تغيرت حالة is_active
+            final wasActive = oldRow['is_active'] == true;
+            final nowActive = newRow['is_active'] == true;
+            if (activeOnly && wasActive != nowActive) {
+              if (nowActive && !wasActive) {
+                _storeProductCount += 1;
+              } else if (!nowActive && wasActive) {
+                if (_storeProductCount > 0) _storeProductCount -= 1;
+              }
+            }
+
+            // حدّث العنصر في الذاكرة إن وُجد
+            try {
+              final updated = ProductModel.fromMap(newRow);
+              final idx = _products.indexWhere((p) => p.id == id);
+              if (idx != -1) {
+                _products[idx] = updated;
+              }
+              final fIdx = _filteredProducts.indexWhere((p) => p.id == id);
+              if (fIdx != -1) {
+                _filteredProducts[fIdx] = updated;
+              }
+            } catch (_) {}
+          }
+          notifyListeners();
+        },
+      );
+
+      _productsChannel!.subscribe();
+      AppLogger.info('🔌 تم الاشتراك في Realtime لمنتجات المتجر: $storeId');
+    } catch (e) {
+      AppLogger.error('❌ خطأ في الاشتراك بالتحديث اللحظي', e);
+    }
+  }
+
+  /// إلغاء الاشتراك في التحديثات
+  Future<void> unsubscribeFromStoreProducts() async {
+    try {
+      await _productsChannel?.unsubscribe();
+      _productsChannel = null;
+    } catch (_) {}
   }
 
   void _setError(String? value) {
@@ -50,13 +207,9 @@ class ProductProvider with ChangeNotifier {
           .map((data) => ProductModel.fromMap(data))
           .toList();
 
-      if (kDebugMode) {
-        print('✅ تم جلب ${_products.length} منتج بنجاح');
-      }
+      AppLogger.info('✅ تم جلب ${_products.length} منتج بنجاح');
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في جلب المنتجات: $e');
-      }
+      AppLogger.error('❌ خطأ في جلب المنتجات', e);
       _setError(e.toString());
     } finally {
       _setLoading(false);
@@ -81,15 +234,11 @@ class ProductProvider with ChangeNotifier {
           .toList();
       _filteredProducts = [];
 
-      if (kDebugMode) {
-        print('🏪 منتجات المتجر "$storeId": ${_products.length} منتج');
-      }
+      AppLogger.info('🏪 منتجات المتجر "$storeId": ${_products.length} منتج');
 
       notifyListeners();
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في جلب منتجات المتجر: $e');
-      }
+      AppLogger.error('❌ خطأ في جلب منتجات المتجر', e);
       _setError(e.toString());
     } finally {
       _setLoading(false);
@@ -104,30 +253,11 @@ class ProductProvider with ChangeNotifier {
     _setError(null);
 
     try {
-      // جلب متاجر التاجر
-      final storesResponse = await _supabase
-          .from('stores')
-          .select('id')
-          .eq('merchant_id', merchantId);
-
-      final storeIds = (storesResponse as List)
-          .map((store) => store['id'] as String)
-          .toList();
-
-      if (storeIds.isEmpty) {
-        _products = [];
-        _filteredProducts = [];
-        if (kDebugMode) {
-          print('⚠️ لا توجد متاجر للتاجر "$merchantId"');
-        }
-        return;
-      }
-
-      // جلب منتجات جميع متاجر التاجر
+      // جلب المنتجات مع معلومات المتجر باستخدام join
       final response = await _supabase
           .from('products')
-          .select()
-          .inFilter('store_id', storeIds)
+          .select('*, store:stores!inner(merchant_id)')
+          .eq('store.merchant_id', merchantId)
           .eq('is_active', true)
           .order('created_at', ascending: false);
 
@@ -136,15 +266,13 @@ class ProductProvider with ChangeNotifier {
           .toList();
       _filteredProducts = [];
 
-      if (kDebugMode) {
-        print('🏪 منتجات التاجر "$merchantId": ${_products.length} منتج');
-      }
+      AppLogger.info(
+        '🏪 منتجات التاجر "$merchantId": ${_products.length} منتج',
+      );
 
       notifyListeners();
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في جلب منتجات التاجر: $e');
-      }
+      AppLogger.error('❌ خطأ في جلب منتجات التاجر', e);
       _setError(e.toString());
     } finally {
       _setLoading(false);
@@ -168,46 +296,43 @@ class ProductProvider with ChangeNotifier {
 
       notifyListeners();
 
-      if (kDebugMode) {
-        print('✅ تم جلب ${_featuredProducts.length} منتج مميز');
-      }
+      AppLogger.info('✅ تم جلب ${_featuredProducts.length} منتج مميز');
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في جلب المنتجات المميزة: $e');
-      }
+      AppLogger.error('❌ خطأ في جلب المنتجات المميزة', e);
     }
   }
 
   /// البحث في المنتجات
   Future<void> searchProducts(String query) async {
-    if (query.isEmpty) {
+    if (query.trim().isEmpty) {
       _filteredProducts = [];
       notifyListeners();
       return;
     }
 
     _setLoading(true);
+    _error = null;
 
     try {
+      // البحث في اسم المنتج أو الوصف
       final response = await _supabase
           .from('products')
           .select()
           .eq('is_active', true)
-          .ilike('name', '%$query%')
+          .or('name.ilike.%$query%,description.ilike.%$query%')
           .order('name');
 
       _filteredProducts = (response as List)
           .map((data) => ProductModel.fromMap(data))
           .toList();
 
-      if (kDebugMode) {
-        print('🔍 نتائج البحث لـ "$query": ${_filteredProducts.length} منتج');
-      }
+      AppLogger.info(
+        '🔍 نتائج البحث لـ "$query": ${_filteredProducts.length} منتج',
+      );
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في البحث: $e');
-      }
-      _setError(e.toString());
+      AppLogger.error('❌ خطأ في البحث', e);
+      _error = 'فشل البحث: ${e.toString()}';
+      _filteredProducts = [];
     } finally {
       _setLoading(false);
     }
@@ -229,15 +354,11 @@ class ProductProvider with ChangeNotifier {
           .map((data) => ProductModel.fromMap(data))
           .toList();
 
-      if (kDebugMode) {
-        print(
-          '📂 منتجات الفئة "$categoryId": ${_filteredProducts.length} منتج',
-        );
-      }
+      AppLogger.info(
+        '📂 منتجات الفئة "$categoryId": ${_filteredProducts.length} منتج',
+      );
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في فلترة الفئة: $e');
-      }
+      AppLogger.error('❌ خطأ في فلترة الفئة', e);
       _setError(e.toString());
     } finally {
       _setLoading(false);
@@ -260,13 +381,11 @@ class ProductProvider with ChangeNotifier {
           .map((data) => ProductModel.fromMap(data))
           .toList();
 
-      if (kDebugMode) {
-        print('🏪 منتجات المتجر "$storeId": ${_filteredProducts.length} منتج');
-      }
+      AppLogger.info(
+        '🏪 منتجات المتجر "$storeId": ${_filteredProducts.length} منتج',
+      );
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في فلترة المتجر: $e');
-      }
+      AppLogger.error('❌ خطأ في فلترة المتجر', e);
       _setError(e.toString());
     } finally {
       _setLoading(false);
@@ -290,15 +409,11 @@ class ProductProvider with ChangeNotifier {
           .map((data) => ProductModel.fromMap(data))
           .toList();
 
-      if (kDebugMode) {
-        print(
-          '💰 منتجات النطاق السعري $minPrice-$maxPrice: ${_filteredProducts.length} منتج',
-        );
-      }
+      AppLogger.info(
+        '💰 منتجات النطاق السعري $minPrice-$maxPrice: ${_filteredProducts.length} منتج',
+      );
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في فلترة السعر: $e');
-      }
+      AppLogger.error('❌ خطأ في فلترة السعر', e);
       _setError(e.toString());
     } finally {
       _setLoading(false);
@@ -335,9 +450,7 @@ class ProductProvider with ChangeNotifier {
 
     notifyListeners();
 
-    if (kDebugMode) {
-      print('🔄 تم ترتيب المنتجات حسب: $sortBy');
-    }
+    AppLogger.info('🔄 تم ترتيب المنتجات حسب: $sortBy');
   }
 
   /// إضافة منتج جديد
@@ -346,15 +459,11 @@ class ProductProvider with ChangeNotifier {
       await _supabase.from('products').insert(product.toJson());
       await fetchProducts(); // إعادة تحميل المنتجات
 
-      if (kDebugMode) {
-        print('✅ تم إضافة المنتج: ${product.name}');
-      }
+      AppLogger.info('✅ تم إضافة المنتج: ${product.name}');
 
       return true;
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في إضافة المنتج: $e');
-      }
+      AppLogger.error('❌ خطأ في إضافة المنتج', e);
       _setError(e.toString());
       return false;
     }
@@ -375,15 +484,11 @@ class ProductProvider with ChangeNotifier {
         notifyListeners();
       }
 
-      if (kDebugMode) {
-        print('✅ تم تحديث المنتج: ${product.name}');
-      }
+      AppLogger.info('✅ تم تحديث المنتج: ${product.name}');
 
       return true;
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في تحديث المنتج: $e');
-      }
+      AppLogger.error('❌ خطأ في تحديث المنتج', e);
       _setError(e.toString());
       return false;
     }
@@ -400,15 +505,11 @@ class ProductProvider with ChangeNotifier {
 
       notifyListeners();
 
-      if (kDebugMode) {
-        print('✅ تم حذف المنتج: $productId');
-      }
+      AppLogger.info('✅ تم حذف المنتج: $productId');
 
       return true;
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في حذف المنتج: $e');
-      }
+      AppLogger.error('❌ خطأ في حذف المنتج', e);
       _setError(e.toString());
       return false;
     }
@@ -425,9 +526,7 @@ class ProductProvider with ChangeNotifier {
 
       return ProductModel.fromMap(response);
     } catch (e) {
-      if (kDebugMode) {
-        print('❌ خطأ في جلب المنتج: $e');
-      }
+      AppLogger.error('❌ خطأ في جلب المنتج', e);
       return null;
     }
   }
@@ -438,9 +537,23 @@ class ProductProvider with ChangeNotifier {
     _setError(null);
     notifyListeners();
 
-    if (kDebugMode) {
-      print('🧹 تم مسح الفلاتر');
+    AppLogger.info('🧹 تم مسح الفلاتر');
+  }
+
+  /// مسح كل المنتجات (للاستخدام عند تغيير المستخدم)
+  void clearProducts({bool resetCount = true}) {
+    _products = [];
+    _filteredProducts = [];
+    _featuredProducts = [];
+    _setError(null);
+    if (resetCount) {
+      preloadStoreProductCount(0, silent: true);
     }
+    // أوقف الاشتراك في التحديثات
+    unsubscribeFromStoreProducts();
+    notifyListeners();
+
+    AppLogger.info('🧹 تم مسح جميع المنتجات');
   }
 
   /// إعادة تحميل البيانات

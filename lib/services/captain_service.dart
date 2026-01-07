@@ -1,87 +1,14 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../models/captain_model.dart';
 import '../core/logger.dart';
+import '../models/order_model.dart';
+import '../models/order_enums.dart';
+import '../models/captain_model.dart';
 
-/// 🚚 خدمة إدارة الكابتنز المتقدمة (Captain Management Service)
-/// 
-/// نظام شامل لإدارة سائقين التوصيل مع جميع العمليات المتقدمة
-/// متوافقة مع الوثائق الرسمية لـ Supabase v2.10.2
-/// 
-/// @author Ell Tall Market Development Team
-/// @version 2.0.0 - Enhanced Phase 4
-/// @created 2024-01-01
-/// @updated 2024-12-28
-/// 
-/// 🎯 الميزات الأساسية:
-/// ✅ إدارة CRUD كاملة للكابتنز (1,248 lines)
-/// ✅ نظام التحقق والاعتماد المتقدم
-/// ✅ إدارة الحالات والمواقع الفورية
-/// ✅ نظام التقييمات والإحصائيات
-/// ✅ البحث المتقدم والفلترة (15+ criteria)
-/// ✅ إدارة الطلبات والتوزيع التلقائي
-/// ✅ عمليات فورية (Real-time) وإشعارات
-/// 
-/// 🔧 العمليات المتقدمة (30+ methods):
-/// • CRUD: createCaptain, updateCaptain, deleteCaptain
-/// • Status: updateAvailability, setOnlineStatus
-/// • Verification: requestVerification, verifyDocuments
-/// • Location: updateLocation, trackCaptain
-/// • Orders: assignOrderToCaptain, getCaptainOrderHistory
-/// • Ratings: addRating, getCaptainStats
-/// • Analytics: getGeneralStats, searchCaptains
-/// 
-/// 📊 الإحصائيات والتحليلات:
-/// - إجمالي الطلبات: totalOrders, completedOrders, cancelledOrders
-/// - معدلات النجاح: successRate, completionRate
-/// - التقييمات: averageRating, totalRatings
-/// - الأرباح: totalEarnings, averageEarningsPerOrder
-/// 
-/// 🛡️ الأمان والموثوقية:
-/// - PostgrestException handling شامل
-/// - Input validation متقدم
-/// - Transaction safety
-/// - Comprehensive logging مع AppLogger
-/// - Error recovery mechanisms
-/// 
-/// استخدام النمط المتقدم:
-/// ```dart
-/// // إنشاء كابتن مع التحقق
-/// final captain = await CaptainService.createCaptain(
-///   profileId: user.id,
-///   vehicleType: 'motorcycle',
-///   vehicleNumber: 'ABC-123',
-///   driverLicense: 'DL123456',
-/// );
-/// 
-/// // البحث الذكي مع فلاتر متعددة
-/// final availableCaptains = await CaptainService.searchCaptains(
-///   query: 'محمد',
-///   isActive: true,
-///   onlineStatus: true,
-///   minRating: 4.0,
-///   verificationStatus: 'verified',
-///   limit: 20,
-/// );
-/// 
-/// // تعيين طلب تلقائي
-/// final assigned = await CaptainService.assignOrderToCaptain(
-///   captainId: captain.id,
-///   orderId: order.id,
-/// );
-/// 
-/// // إحصائيات شاملة
-/// final stats = await CaptainService.getCaptainStats(captain.id);
-/// print('معدل النجاح: ${stats['successRate']}%');
-/// ```
 class CaptainService {
   static final SupabaseClient _supabase = Supabase.instance.client;
   static const int _pageSize = 20;
-
-  // ================================
-  // 👨‍✈️ Captain CRUD Operations
-  // ================================
 
   /// تسجيل كابتن جديد
   static Future<CaptainModel?> createCaptain({
@@ -365,7 +292,10 @@ class CaptainService {
           .from('orders')
           .select('id')
           .eq('captain_id', captainId)
-          .not('status', 'in', ['delivered', 'cancelled']);
+          .not('status', 'in', [
+            OrderStatus.delivered.value,
+            OrderStatus.cancelled.value,
+          ]);
 
       if (activeOrders.isNotEmpty) {
         AppLogger.error('لا يمكن حذف الكابتن لأنه يحتوي على طلبات نشطة', null);
@@ -530,10 +460,10 @@ class CaptainService {
       // حساب الإحصائيات
       final totalDeliveries = orders.length;
       final completedDeliveries = orders
-          .where((o) => o['status'] == 'delivered')
+          .where((o) => o['status'] == OrderStatus.delivered.value)
           .length;
       final totalEarnings = orders
-          .where((o) => o['status'] == 'delivered')
+          .where((o) => o['status'] == OrderStatus.delivered.value)
           .fold<double>(
             0.0,
             (sum, o) => sum + (o['delivery_fee'] as num).toDouble(),
@@ -541,7 +471,7 @@ class CaptainService {
 
       // حساب متوسط وقت التوصيل
       final deliveredOrders = orders
-          .where((o) => o['status'] == 'delivered')
+          .where((o) => o['status'] == OrderStatus.delivered.value)
           .toList();
       double averageDeliveryTime = 0.0;
 

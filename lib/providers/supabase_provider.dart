@@ -1,14 +1,16 @@
-/// Supabase Provider - Authentication State Management
-/// Works with Profile_model.dart and supabase_service.dart
-/// Manages authentication state and user sessions
 library;
 
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../models/Profile_model.dart';
+import '../models/profile_model.dart';
 import '../services/supabase_service.dart';
 import '../core/logger.dart';
+import 'merchant_provider.dart';
+import 'product_provider.dart';
+import 'order_provider.dart';
 
 /// SupabaseProvider - manages authentication state
 class SupabaseProvider with ChangeNotifier {
@@ -65,15 +67,18 @@ class SupabaseProvider with ChangeNotifier {
       // تحميل البيانات في الخلفية بعد فتح التطبيق
       if (_currentUser != null) {
         // Load profile in background without blocking
+        // زودنا الـ timeout لـ 10 ثواني لأن الاتصال قد يكون بطيء
         _loadProfile()
             .timeout(
-              Duration(seconds: 3),
+              Duration(seconds: 10),
               onTimeout: () {
-                AppLogger.warning('Profile load timeout');
+                AppLogger.warning('Profile load timeout after 10 seconds');
+                return Future.value(); // نرجع Future فاضية بدل من null
               },
             )
             .catchError((e) {
               AppLogger.warning('Profile load error: $e');
+              return Future.value(); // نرجع Future فاضية عشان ميعملش crash
             });
       }
     } catch (e) {
@@ -94,28 +99,59 @@ class SupabaseProvider with ChangeNotifier {
   Future<void> _loadProfile() async {
     try {
       AppLogger.debug('🔄 Attempting to load profile...');
+
+      // تحقق من وجود user قبل المحاولة
+      if (_currentUser == null) {
+        AppLogger.warning('⚠️ No user to load profile for');
+        return;
+      }
+
       _currentProfile = await SupabaseService.getCurrentProfile().timeout(
-        Duration(seconds: 5),
+        Duration(seconds: 8), // زودنا الـ timeout
+        onTimeout: () {
+          AppLogger.warning('⚠️ Profile load timed out after 8 seconds');
+          return null;
+        },
       );
-      AppLogger.info('✅ Profile loaded: ${_currentProfile?.fullName}');
+      if (_currentProfile != null) {
+        AppLogger.info('✅ Profile loaded: ${_currentProfile?.fullName}');
+      } else {
+        AppLogger.warning('⚠️ Profile data unavailable after load attempt');
+      }
       notifyListeners(); // Update UI after profile loads
     } catch (e) {
       AppLogger.error('❌ Load profile error', e);
 
-      // إذا فشل التحميل، نحاول مرة أخرى بعد ثانيتين
-      AppLogger.info('🔄 Retrying profile load in 2 seconds...');
-      await Future.delayed(Duration(seconds: 2));
+      // إذا فشل التحميل، نحاول مرة أخرى بعد ثانيتين (فقط لو المستخدم موجود)
+      if (_currentUser != null) {
+        AppLogger.info('🔄 Retrying profile load in 2 seconds...');
+        await Future.delayed(Duration(seconds: 2));
 
-      try {
-        _currentProfile = await SupabaseService.getCurrentProfile().timeout(
-          Duration(seconds: 5),
-        );
-        AppLogger.info(
-          '✅ Profile loaded on retry: ${_currentProfile?.fullName}',
-        );
-        notifyListeners();
-      } catch (retryError) {
-        AppLogger.warning('⚠️ Profile load failed after retry: $retryError');
+        try {
+          _currentProfile = await SupabaseService.getCurrentProfile().timeout(
+            Duration(seconds: 8),
+            onTimeout: () {
+              AppLogger.warning(
+                '⚠️ Profile load retry timed out after 8 seconds',
+              );
+              return null;
+            },
+          );
+          if (_currentProfile != null) {
+            AppLogger.info(
+              '✅ Profile loaded on retry: ${_currentProfile?.fullName}',
+            );
+          } else {
+            AppLogger.warning('⚠️ Profile data still unavailable after retry');
+          }
+          notifyListeners();
+        } catch (retryError) {
+          AppLogger.warning('⚠️ Profile load failed after retry: $retryError');
+          _currentProfile = null;
+          notifyListeners();
+        }
+      } else {
+        AppLogger.warning('⚠️ User logged out during profile load');
         _currentProfile = null;
         notifyListeners();
       }
@@ -179,6 +215,10 @@ class SupabaseProvider with ChangeNotifier {
 
       _error = 'Sign in failed';
       return false;
+    } on AuthException catch (e) {
+      // Store the specific error message so login_screen can check it
+      _error = e.message;
+      return false;
     } catch (e) {
       _error = 'Error: $e';
       return false;
@@ -189,53 +229,98 @@ class SupabaseProvider with ChangeNotifier {
   }
 
   /// Sign up
-  Future<bool> signUp({
+  Future<AuthResponse?> signUp({
     required String email,
     required String password,
     required String name,
     required String phone,
     String userType = 'client',
+    String? storeName,
+    String? storeAddress,
+    String? storeDescription,
+    String? category,
+    String? storeLogoUrl,
   }) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
+      // إعداد البيانات الإضافية للتاجر
+      Map<String, dynamic>? additionalData;
+      if (userType == 'merchant' && storeName != null) {
+        additionalData = {
+          'store_name': storeName,
+          'store_address': storeAddress,
+          'store_description': storeDescription,
+        };
+
+        // إضافة الفئة إذا تم تحديدها
+        if (category != null && category.isNotEmpty) {
+          additionalData['category'] = category;
+        }
+
+        // إضافة رابط شعار المتجر إن وُجد
+        if (storeLogoUrl != null && storeLogoUrl.isNotEmpty) {
+          additionalData['store_logo_url'] = storeLogoUrl;
+        }
+      }
+
       final response = await SupabaseService.signUpWithEmail(
         email: email,
         password: password,
         name: name,
         phone: phone,
         userType: userType,
+        additionalData: additionalData,
       );
 
       if (response?.user != null) {
         _currentUser = response!.user;
-        return true;
+        return response;
       }
 
       _error = 'Sign up failed';
-      return false;
+      return null;
+    } on AuthException catch (e) {
+      // معالجة أخطاء Supabase Auth
+      _error = e.message;
+      rethrow; // إعادة رمي الخطأ للمعالجة في الشاشة
     } catch (e) {
       _error = 'Error: $e';
-      return false;
+      rethrow;
     } finally {
       _isLoading = false;
       notifyListeners();
     }
   }
 
-  /// Sign out
-  Future<void> signOut() async {
+  /// Sign out - clears all provider data to prevent data leakage
+  Future<void> signOut({
+    MerchantProvider? merchantProvider,
+    ProductProvider? productProvider,
+    OrderProvider? orderProvider,
+  }) async {
     _isLoading = true;
     notifyListeners();
 
     try {
+      // Sign out from Supabase
       await SupabaseService.signOut();
+
+      // Clear authentication data
       _currentUser = null;
       _currentProfile = null;
+
+      // Clear all business data providers to prevent data leakage
+      merchantProvider?.clearData();
+      productProvider?.clearProducts();
+      orderProvider?.clearOrders();
+
+      AppLogger.info('✅ Signed out and cleared all provider data');
     } catch (e) {
       _error = 'Sign out error: $e';
+      AppLogger.error('❌ Sign out error', e);
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -250,6 +335,19 @@ class SupabaseProvider with ChangeNotifier {
     } catch (e) {
       _error = 'Reset password error: $e';
       return false;
+    }
+  }
+
+  /// Upload avatar image
+  Future<String?> uploadAvatar(File imageFile) async {
+    try {
+      if (_currentUser == null) {
+        throw Exception('المستخدم غير مسجل الدخول');
+      }
+      return await SupabaseService.uploadAvatar(imageFile, _currentUser!.id);
+    } catch (e) {
+      _error = 'Upload avatar error: $e';
+      return null;
     }
   }
 
@@ -283,7 +381,11 @@ class SupabaseProvider with ChangeNotifier {
 
   /// Fetch all users (for admin)
   Future<void> fetchAllUsers() async {
+    // Prevent multiple simultaneous calls
+    if (_isLoading) return;
+
     _isLoading = true;
+    _error = null; // Clear previous errors
     notifyListeners();
 
     try {
@@ -308,13 +410,13 @@ class SupabaseProvider with ChangeNotifier {
   /// Note: This launches the OAuth flow in external browser.
   /// The actual sign-in happens when the deep link callback is processed.
   /// Listen to auth state changes to detect when sign-in completes.
-  Future<bool> signInWithGoogle() async {
+  Future<bool> signInWithGoogle({String userType = 'client'}) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      AppLogger.info('🔄 Starting Google Sign In...');
+      AppLogger.info('🔄 Starting Google Sign In for userType: $userType');
 
       // استخدام Supabase Native Google Sign In
       // signInWithOAuth يفتح المتصفح ويرجع true/false فوراً (ليس await للمصادقة)
@@ -322,6 +424,9 @@ class SupabaseProvider with ChangeNotifier {
         OAuthProvider.google,
         redirectTo: 'elltallmarket://auth/callback',
         authScreenLaunchMode: LaunchMode.externalApplication,
+        queryParams: {'access_type': 'offline', 'prompt': 'consent'},
+        // ⚠️ ملاحظة: لا يمكن إرسال metadata مع OAuth!
+        // الحل: سنستخدم pending merchants table أو update بعد تسجيل الدخول
       );
 
       if (!launched) {
@@ -361,7 +466,7 @@ class SupabaseProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      // TODO: Implement Facebook Sign In with Supabase
+      // Note: Implement Facebook Sign In with Supabase
       // await SupabaseService.signInWithFacebook();
       _error = 'Facebook Sign In قيد التطوير';
       return false;
@@ -409,7 +514,7 @@ class SupabaseProvider with ChangeNotifier {
     } catch (e) {
       _error = 'Resend confirmation error: $e';
       AppLogger.error('Resend confirmation error', e);
-      throw e;
+      rethrow;
     }
   }
 
@@ -493,6 +598,243 @@ class SupabaseProvider with ChangeNotifier {
   void clearError() {
     _error = null;
     notifyListeners();
+  }
+
+  /// Delete user account
+  Future<({bool success, String? message})> deleteUser(String userId) async {
+    try {
+      AppLogger.info('🔄 Attempting to delete user: $userId');
+
+      // Delete from profiles table (RLS policy will check if current user is admin)
+      await Supabase.instance.client.from('profiles').delete().eq('id', userId);
+
+      AppLogger.info('✅ User deleted successfully');
+      return (success: true, message: null);
+    } catch (e) {
+      AppLogger.error('❌ Delete user error', e);
+
+      // Check if error is due to RLS policy
+      if (e.toString().contains('row-level security') ||
+          e.toString().contains('policy')) {
+        return (
+          success: false,
+          message:
+              'فشل الحذف - لا تمتلك صلاحيات الحذف. تأكد من أنك مسجل كمدير في النظام.',
+        );
+      }
+
+      return (success: false, message: 'خطأ في الحذف: ${e.toString()}');
+    }
+  }
+
+  /// Update preferred payment method
+  Future<void> updatePreferredPayment(String paymentMethod) async {
+    try {
+      await Supabase.instance.client
+          .from('profiles')
+          .update({'preferred_payment': paymentMethod})
+          .eq('id', _currentUser!.id);
+      notifyListeners();
+    } catch (e) {
+      _error = 'Update payment error: $e';
+      AppLogger.error('Update payment error', e);
+    }
+  }
+
+  /// Add new user (for admin)
+  /// Note: This uses a workaround since Admin API requires Service Role Key
+  Future<String?> addUser({
+    required String fullName,
+    required String email,
+    required String phone,
+    required String password,
+    required UserRole role,
+  }) async {
+    _isLoading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      AppLogger.info('🔄 Starting user creation: $email');
+
+      // Check if admin is authenticated
+      final adminUser = Supabase.instance.client.auth.currentUser;
+      if (adminUser == null) {
+        _error = 'Admin user not authenticated';
+        AppLogger.error('Add user error', Exception(_error));
+        return null;
+      }
+
+      AppLogger.info('✅ Admin authenticated: ${adminUser.email}');
+
+      // WORKAROUND: Use regular signup with metadata
+      // The is_admin() function will allow the profile insertion
+      AppLogger.info('🔄 Creating user account...');
+
+      final authResponse = await Supabase.instance.client.auth.signUp(
+        email: email,
+        password: password,
+        data: {'full_name': fullName, 'phone': phone, 'role': role.name},
+      );
+
+      if (authResponse.user == null) {
+        _error = 'Failed to create user account - no user returned';
+        AppLogger.error('Add user error', Exception(_error));
+        return null;
+      }
+
+      final newUserId = authResponse.user!.id;
+      AppLogger.info('✅ Auth user created: $newUserId');
+
+      // Wait a bit for the trigger to create the profile
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Verify/update the profile with admin-specified role
+      final profileData = {
+        'id': newUserId,
+        'full_name': fullName,
+        'email': email,
+        'phone': phone,
+        'role': role.name,
+        'is_active': true,
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+
+      AppLogger.info('🔄 Upserting profile data with role: ${role.name}');
+
+      // Use upsert to update if trigger already created it
+      await Supabase.instance.client
+          .from('profiles')
+          .upsert(profileData, onConflict: 'id');
+
+      AppLogger.info('✅ Profile created/updated successfully');
+      AppLogger.info('✅ New user added: $email with ID: $newUserId');
+
+      // Refresh users list
+      await fetchAllUsers();
+
+      return newUserId;
+    } on AuthException catch (e) {
+      _error = 'Authentication error: ${e.message}';
+      AppLogger.error('Auth error adding user', e);
+      return null;
+    } on PostgrestException catch (e) {
+      _error = 'Database error: ${e.message} (${e.code})';
+      AppLogger.error('Database error adding user', e);
+      return null;
+    } catch (e) {
+      _error = 'Error adding user: $e';
+      AppLogger.error('Add user error', e);
+      return null;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Update user by admin
+  Future<bool> updateUserByAdmin({
+    required String userId,
+    required String fullName,
+    required String email,
+    required String phone,
+    required UserRole role,
+    String? password,
+  }) async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      // 1. Update profile data
+      final profileData = {
+        'full_name': fullName,
+        'email': email,
+        'phone': phone,
+        'role': role.name,
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+
+      await Supabase.instance.client
+          .from('profiles')
+          .update(profileData)
+          .eq('id', userId);
+
+      // 2. If password provided, update it using admin API
+      if (password != null && password.isNotEmpty) {
+        await Supabase.instance.client.auth.admin.updateUserById(
+          userId,
+          attributes: AdminUserAttributes(password: password),
+        );
+      }
+
+      AppLogger.info('User updated: $email');
+
+      // 3. Refresh users list
+      await fetchAllUsers();
+
+      return true;
+    } catch (e) {
+      _error = 'Error updating user: $e';
+      AppLogger.error('Update user error', e);
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Toggle user active status
+  Future<bool> toggleUserStatus({
+    required String userId,
+    required bool isActive,
+  }) async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      await Supabase.instance.client
+          .from('profiles')
+          .update({
+            'is_active': isActive,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', userId);
+
+      AppLogger.info('User status toggled: $userId -> $isActive');
+
+      // Refresh users list
+      await fetchAllUsers();
+
+      return true;
+    } catch (e) {
+      _error = 'Error toggling user status: $e';
+      AppLogger.error('Toggle user status error', e);
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  @override
+  // Defers notifications during build phases to avoid triggering build errors.
+  void notifyListeners() {
+    if (!hasListeners) {
+      return;
+    }
+
+    final scheduler = SchedulerBinding.instance;
+    final phase = scheduler.schedulerPhase;
+    if (phase == SchedulerPhase.idle ||
+        phase == SchedulerPhase.postFrameCallbacks) {
+      super.notifyListeners();
+    } else {
+      scheduler.addPostFrameCallback((_) {
+        if (hasListeners) {
+          super.notifyListeners();
+        }
+      });
+    }
   }
 
   @override

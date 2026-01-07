@@ -1,3 +1,5 @@
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 class Validators {
   // التحقق من البريد الإلكتروني مع معايير أكثر دقة
   static String? validateEmail(String? value) {
@@ -33,39 +35,6 @@ class Validators {
   static String? validatePassword(String? value) {
     if (value == null || value.isEmpty) {
       return 'كلمة المرور مطلوبة';
-    }
-
-    if (value.length < 8) {
-      return 'كلمة المرور يجب أن تكون 8 أحرف على الأقل';
-    }
-
-    if (value.length > 50) {
-      return 'كلمة المرور يجب ألا تزيد عن 50 حرف';
-    }
-
-    // التحقق من وجود حرف كبير
-    if (!RegExp(r'[A-Z]').hasMatch(value)) {
-      return 'كلمة المرور يجب أن تحتوي على حرف كبير واحد على الأقل';
-    }
-
-    // التحقق من وجود حرف صغير
-    if (!RegExp(r'[a-z]').hasMatch(value)) {
-      return 'كلمة المرور يجب أن تحتوي على حرف صغير واحد على الأقل';
-    }
-
-    // التحقق من وجود رقم
-    if (!RegExp(r'[0-9]').hasMatch(value)) {
-      return 'كلمة المرور يجب أن تحتوي على رقم واحد على الأقل';
-    }
-
-    // التحقق من وجود رمز خاص
-    if (!RegExp(r'[!@#$%^&*(),.?":{}|<>]').hasMatch(value)) {
-      return 'كلمة المرور يجب أن تحتوي على رمز خاص واحد على الأقل (!@#\$%^&*)';
-    }
-
-    // التحقق من عدم وجود مسافات
-    if (value.contains(' ')) {
-      return 'كلمة المرور يجب ألا تحتوي على مسافات';
     }
 
     return null;
@@ -202,7 +171,7 @@ class Validators {
     return null;
   }
 
-  // التحقق من رقم الهاتف السعودي المحسن
+  // التحقق من رقم الهاتف المصري
   static String? validatePhone(String? value) {
     if (value == null || value.isEmpty) {
       return 'رقم الهاتف مطلوب';
@@ -211,30 +180,22 @@ class Validators {
     // إزالة المسافات والرموز
     value = value.replaceAll(RegExp(r'[\s\-\(\)]'), '');
 
-    // التحقق من الأرقام السعودية المحلية والدولية
-    final saudiPhoneRegex = RegExp(
-      r'^(009665|9665|\+9665|05|5)(5|0|3|6|4|9|1|8|7)([0-9]{7})$',
-    );
-
-    if (saudiPhoneRegex.hasMatch(value)) {
-      return null; // رقم سعودي صالح
+    // التحقق من أن الرقم 11 رقم بالضبط ويبدأ بـ 01
+    if (value.length != 11) {
+      return 'رقم الهاتف يجب أن يكون 11 رقم بالضبط';
     }
 
-    // التحقق من الأرقام المصرية (إضافة للمرونة)
-    final egyptianPhoneRegex = RegExp(r'^(0020|20|\+20|01|1)([0-9]{9})$');
-    if (egyptianPhoneRegex.hasMatch(value)) {
-      return null; // رقم مصري صالح
+    if (!value.startsWith('01')) {
+      return 'رقم الهاتف يجب أن يبدأ بـ 01';
     }
 
-    // للأرقام المحلية البسيطة
-    if (value.length == 11 && value.startsWith('01')) {
-      final localPhoneRegex = RegExp(r'^01[0-9]{9}$');
-      if (localPhoneRegex.hasMatch(value)) {
-        return null;
-      }
+    // التحقق من أن جميع الأحرف أرقام
+    final localPhoneRegex = RegExp(r'^01[0-9]{9}$');
+    if (!localPhoneRegex.hasMatch(value)) {
+      return 'رقم الهاتف يحتوي على أحرف غير صالحة';
     }
 
-    return 'رقم الهاتف غير صالح (يرجى إدخال رقم سعودي أو مصري صالح)';
+    return null; // رقم صالح
   }
 
   static String? validateRequired(String? value, String fieldName) {
@@ -568,7 +529,7 @@ class Validators {
     }
 
     if (price > 1000000) {
-      return 'السعر يجب ألا يزيد عن مليون ريال';
+      return 'السعر يجب ألا يزيد عن مليون وحدة نقدية';
     }
 
     // التحقق من عدد الأرقام العشرية
@@ -628,6 +589,45 @@ class Validators {
       return 'اسم المتجر يحتوي على أحرف غير مسموحة';
     }
 
+    return null;
+  }
+
+  // ================= تحقق غير متزامن (Uniqueness) =================
+
+  // تهريب محارف النمط في LIKE/ILIKE
+  static String _escapeLikePattern(String input) {
+    return input
+        .replaceAll('\\', r'\\')
+        .replaceAll('%', r'\%')
+        .replaceAll('_', r'\_');
+  }
+
+  // يتحقق من عدم تكرار اسم المتجر (مطابقة غير حساسة لحالة الأحرف)
+  static Future<bool> isStoreNameUnique(String rawName) async {
+    final name = cleanText(rawName);
+    if (name.isEmpty) return false;
+    try {
+      final pattern = _escapeLikePattern(name);
+      final response = await Supabase.instance.client
+          .from('stores')
+          .select('id')
+          .ilike('name', pattern)
+          .limit(1);
+
+      final List data = List.from(response as List);
+      return data.isEmpty;
+    } catch (_) {
+      // عند الفشل نرجّح عدم التفرد لتمنع التقدم وتُظهر رسالة مناسبة في واجهة المستخدم
+      return false;
+    }
+  }
+
+  // تُرجع رسالة خطأ مناسبة إن كان الاسم مكرّرًا، وإلا null
+  static Future<String?> uniqueStoreNameError(String rawName) async {
+    final ok = await isStoreNameUnique(rawName);
+    if (!ok) {
+      return 'اسم المتجر مستخدم بالفعل، يرجى اختيار اسم آخر';
+    }
     return null;
   }
 
@@ -810,53 +810,48 @@ class Validators {
   static Map<String, dynamic> getPhoneDetails(String phone) {
     phone = phone.replaceAll(RegExp(r'[\s\-\(\)]'), '');
 
-    bool isSaudi = RegExp(
-      r'^(009665|9665|\+9665|05|5)(5|0|3|6|4|9|1|8|7)([0-9]{7})$',
-    ).hasMatch(phone);
     bool isEgyptian = RegExp(
       r'^(0020|20|\+20|01|1)([0-9]{9})$',
     ).hasMatch(phone);
     bool isLocal = phone.length == 11 && phone.startsWith('01');
 
     String country = '';
-    if (isSaudi) {
-      country = 'السعودية';
-    } else if (isEgyptian)
+    if (isEgyptian || isLocal) {
       country = 'مصر';
-    else if (isLocal)
-      country = 'محلي';
+    }
 
     return {
-      'isValid': isSaudi || isEgyptian || isLocal,
+      'isValid': isEgyptian || isLocal,
       'country': country,
       'formatted': _formatPhone(phone),
       'type': _getPhoneType(phone),
     };
   }
 
-  // تنسيق رقم الهاتف
+  // تنسيق رقم الهاتف المصري
   static String _formatPhone(String phone) {
     if (phone.length == 11 && phone.startsWith('01')) {
       return '${phone.substring(0, 3)} ${phone.substring(3, 6)} ${phone.substring(6, 8)} ${phone.substring(8)}';
     }
-    if (phone.startsWith('05') && phone.length == 10) {
-      return '${phone.substring(0, 3)} ${phone.substring(3, 6)} ${phone.substring(6)}';
-    }
     return phone;
   }
 
-  // تحديد نوع الهاتف
+  // تحديد نوع الهاتف (شركة الاتصالات المصرية)
   static String _getPhoneType(String phone) {
-    if (phone.startsWith('010') ||
-        phone.startsWith('011') ||
-        phone.startsWith('012')) {
-      return 'فودافون';
+    // إزالة أي رموز دولية
+    phone = phone.replaceAll(RegExp(r'^(\+20|0020|20)'), '0');
+
+    if (phone.startsWith('010')) {
+      return 'Vodafone';
+    }
+    if (phone.startsWith('011')) {
+      return 'Etisalat';
+    }
+    if (phone.startsWith('012')) {
+      return 'Orange';
     }
     if (phone.startsWith('015')) {
-      return 'اتصالات';
-    }
-    if (phone.startsWith('05')) {
-      return 'جوال سعودي';
+      return 'We';
     }
     return 'غير محدد';
   }

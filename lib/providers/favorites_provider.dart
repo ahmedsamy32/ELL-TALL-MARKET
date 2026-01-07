@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import '../core/logger.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/store_model.dart';
 import 'package:ell_tall_market/models/product_model.dart';
@@ -69,7 +70,7 @@ class FavoritesProvider with ChangeNotifier {
             _favoriteProducts.add(product);
             _favoriteProductIds.add(product.id);
           } catch (e) {
-            debugPrint('خطأ في تحليل منتج مفضل: $e');
+            AppLogger.error('خطأ في تحليل منتج مفضل', e);
           }
         }
 
@@ -80,7 +81,7 @@ class FavoritesProvider with ChangeNotifier {
             _favoriteStores.add(store);
             _favoriteStoreIds.add(store.id);
           } catch (e) {
-            debugPrint('خطأ في تحليل متجر مفضل: $e');
+            AppLogger.error('خطأ في تحليل متجر مفضل', e);
           }
         }
       }
@@ -88,7 +89,7 @@ class FavoritesProvider with ChangeNotifier {
       _error = null;
     } catch (e) {
       _error = 'خطأ في تحميل المفضلة: $e';
-      debugPrint('خطأ في loadUserFavorites: $e');
+      AppLogger.error('خطأ في loadUserFavorites', e);
     }
 
     _isLoading = false;
@@ -131,7 +132,7 @@ class FavoritesProvider with ChangeNotifier {
       return true;
     } catch (e) {
       _error = 'خطأ في تحديث المفضلة: $e';
-      debugPrint('خطأ في toggleFavoriteProduct: $e');
+      AppLogger.error('خطأ في toggleFavoriteProduct', e);
       notifyListeners();
       return false;
     }
@@ -173,7 +174,7 @@ class FavoritesProvider with ChangeNotifier {
       return true;
     } catch (e) {
       _error = 'خطأ في تحديث المفضلة: $e';
-      debugPrint('خطأ في toggleFavoriteStore: $e');
+      AppLogger.error('خطأ في toggleFavoriteStore', e);
       notifyListeners();
       return false;
     }
@@ -203,7 +204,7 @@ class FavoritesProvider with ChangeNotifier {
       return true;
     } catch (e) {
       _error = 'خطأ في إزالة المنتج من المفضلة: $e';
-      debugPrint('خطأ في removeFromFavorites: $e');
+      AppLogger.error('خطأ في removeFromFavorites', e);
       notifyListeners();
       return false;
     }

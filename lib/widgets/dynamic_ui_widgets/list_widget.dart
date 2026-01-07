@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/models/product_model.dart';
+import 'package:ell_tall_market/utils/helpers.dart';
 
 class ListWidget extends StatelessWidget {
   final List<ProductModel> products;
@@ -101,7 +102,7 @@ class ProductListTile extends StatelessWidget {
                     Row(
                       children: [
                         Text(
-                          '${product.price.toStringAsFixed(2)} ر.س',
+                          '${product.price.toStringAsFixed(2)} ج.م',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: Theme.of(context).primaryColor,
@@ -113,10 +114,7 @@ class ProductListTile extends StatelessWidget {
                 ),
               ),
 
-              IconButton(
-                icon: Icon(Icons.add_shopping_cart),
-                onPressed: onAddToCart,
-              ),
+              IconButton(icon: Icon(Icons.add_rounded), onPressed: onAddToCart),
             ],
           ),
         ),
@@ -171,7 +169,9 @@ class OrderList extends StatelessWidget {
             leading: Icon(Icons.receipt, color: Theme.of(context).primaryColor),
             title: Text('طلب #${order['id']}'),
             subtitle: Text('${order['date']} - ${order['status']}'),
-            trailing: Text('${order['total']} ر.س'),
+            trailing: Text(
+              Helpers.formatCurrency((order['total'] as num).toDouble()),
+            ),
             onTap: () => onOrderTap?.call(order),
           ),
         );

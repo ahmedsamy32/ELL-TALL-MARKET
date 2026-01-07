@@ -2,14 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 import 'package:ell_tall_market/models/order_model.dart';
+
 import 'package:ell_tall_market/utils/app_colors.dart';
-import 'package:ell_tall_market/widgets/custom_search_bar.dart';
+import 'package:ell_tall_market/widgets/app_search_bar.dart';
 
 class ManageOrdersScreen extends StatefulWidget {
   const ManageOrdersScreen({super.key});
 
   @override
-  _ManageOrdersScreenState createState() => _ManageOrdersScreenState();
+  State<ManageOrdersScreen> createState() => _ManageOrdersScreenState();
 }
 
 class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
@@ -54,17 +55,23 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
           _buildStatCard("الكل", provider.orders.length, Colors.blue),
           _buildStatCard(
             "قيد التنفيذ",
-            provider.orders.where((o) => o.status == "pending").length,
+            provider.orders
+                .where((o) => o.status == OrderStatus.pending)
+                .length,
             Colors.orange,
           ),
           _buildStatCard(
             "مكتمل",
-            provider.orders.where((o) => o.status == "completed").length,
+            provider.orders
+                .where((o) => o.status == OrderStatus.delivered)
+                .length,
             Colors.green,
           ),
           _buildStatCard(
             "ملغي",
-            provider.orders.where((o) => o.status == "canceled").length,
+            provider.orders
+                .where((o) => o.status == OrderStatus.cancelled)
+                .length,
             Colors.red,
           ),
         ],
@@ -105,9 +112,9 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
       onChanged: (_) => setState(() {}),
       filterChips: [
         _buildFilterChip('الكل', 'all'),
-        _buildFilterChip('قيد التنفيذ', 'pending'),
-        _buildFilterChip('مكتمل', 'completed'),
-        _buildFilterChip('ملغي', 'canceled'),
+        _buildFilterChip('قيد التنفيذ', OrderStatus.pending.value),
+        _buildFilterChip('مكتمل', OrderStatus.delivered.value),
+        _buildFilterChip('ملغي', OrderStatus.cancelled.value),
       ],
     );
   }
@@ -160,11 +167,11 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
   List<OrderModel> _filterOrders(List<OrderModel> orders) {
     switch (_selectedFilter) {
       case 'pending':
-        return orders.where((o) => o.status == "pending").toList();
-      case 'completed':
-        return orders.where((o) => o.status == "completed").toList();
-      case 'canceled':
-        return orders.where((o) => o.status == "canceled").toList();
+        return orders.where((o) => o.status == OrderStatus.pending).toList();
+      case 'delivered':
+        return orders.where((o) => o.status == OrderStatus.delivered).toList();
+      case 'cancelled':
+        return orders.where((o) => o.status == OrderStatus.cancelled).toList();
       default:
         return orders;
     }
@@ -248,20 +255,42 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
         title: const Text('تغيير حالة الطلب'),
         content: DropdownButtonFormField<String>(
           initialValue: order.status.value,
-          items: const [
-            DropdownMenuItem(value: "pending", child: Text("قيد التنفيذ")),
-            DropdownMenuItem(value: "confirmed", child: Text("مؤكد")),
+          items: [
             DropdownMenuItem(
-              value: "in_preparation",
-              child: Text("قيد التحضير"),
+              value: OrderStatus.pending.value,
+              child: const Text("في الانتظار"),
             ),
-            DropdownMenuItem(value: "ready", child: Text("جاهز")),
-            DropdownMenuItem(value: "on_the_way", child: Text("في الطريق")),
-            DropdownMenuItem(value: "delivered", child: Text("تم التوصيل")),
-            DropdownMenuItem(value: "cancelled", child: Text("ملغي")),
+            DropdownMenuItem(
+              value: OrderStatus.confirmed.value,
+              child: const Text("مؤكد"),
+            ),
+            DropdownMenuItem(
+              value: OrderStatus.preparing.value,
+              child: const Text("قيد التحضير"),
+            ),
+            DropdownMenuItem(
+              value: OrderStatus.ready.value,
+              child: const Text("جاهز"),
+            ),
+            DropdownMenuItem(
+              value: OrderStatus.pickedUp.value,
+              child: const Text("تم الاستلام"),
+            ),
+            DropdownMenuItem(
+              value: OrderStatus.inTransit.value,
+              child: const Text("في الطريق"),
+            ),
+            DropdownMenuItem(
+              value: OrderStatus.delivered.value,
+              child: const Text("تم التوصيل"),
+            ),
+            DropdownMenuItem(
+              value: OrderStatus.cancelled.value,
+              child: const Text("ملغي"),
+            ),
           ],
           onChanged: (value) {
-            // TODO: تحديث الحالة في قاعدة البيانات
+            // Note: تحديث الحالة في قاعدة البيانات
           },
         ),
         actions: [
@@ -272,7 +301,7 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
-              // TODO: حفظ الحالة الجديدة
+              // Note: حفظ الحالة الجديدة
             },
             child: const Text('حفظ'),
           ),
@@ -298,7 +327,7 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () {
               Navigator.pop(context);
-              // TODO: حذف الطلب من Firebase
+              // Note: حذف الطلب من Firebase
             },
             child: const Text('حذف'),
           ),

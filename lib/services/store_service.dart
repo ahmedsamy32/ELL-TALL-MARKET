@@ -1,7 +1,8 @@
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../models/store_model.dart';
 import '../core/logger.dart';
+import '../models/order_model.dart';
+import '../models/store_model.dart';
 
 /// خدمة إدارة المتاجر - نسخة مبسطة متوافقة مع schema قاعدة البيانات
 /// متوافقة مع الوثائق الرسمية لـ Supabase v2.10.2
@@ -30,6 +31,7 @@ class StoreService {
         'location': location,
         'logo_url': logoUrl,
         'is_active': isActive,
+        'delivery_mode': 'store',
       };
 
       final response = await _supabase
@@ -109,15 +111,24 @@ class StoreService {
   /// جلب متاجر المالك/التاجر
   static Future<List<StoreModel>> getMerchantStores(String merchantId) async {
     try {
+      AppLogger.info('Fetching stores for merchant: $merchantId');
+
       final response = await _supabase
           .from('stores')
           .select()
           .eq('merchant_id', merchantId)
           .order('created_at', ascending: false);
 
-      return (response as List)
+      final stores = (response as List)
           .map((data) => StoreModel.fromMap(data))
           .toList();
+
+      AppLogger.info('Found ${stores.length} stores');
+      if (stores.isNotEmpty) {
+        AppLogger.info('   First store ID: ${stores.first.id}');
+      }
+
+      return stores;
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في جلب متاجر التاجر: ${e.message}', e);
       return [];
@@ -135,6 +146,7 @@ class StoreService {
     String? location,
     String? logoUrl,
     bool? isActive,
+    String? deliveryMode,
   }) async {
     try {
       final data = <String, dynamic>{};
@@ -144,6 +156,7 @@ class StoreService {
       if (location != null) data['location'] = location;
       if (logoUrl != null) data['logo_url'] = logoUrl;
       if (isActive != null) data['is_active'] = isActive;
+      if (deliveryMode != null) data['delivery_mode'] = deliveryMode;
 
       if (data.isEmpty) return await getStoreById(storeId);
 
@@ -222,11 +235,11 @@ class StoreService {
       final totalOrders = orders.length;
 
       final completedOrders = orders
-          .where((o) => o['status'] == 'delivered')
+          .where((o) => o['status'] == OrderStatus.delivered.value)
           .toList();
 
       final pendingOrders = orders
-          .where((o) => o['status'] == 'pending')
+          .where((o) => o['status'] == OrderStatus.pending.value)
           .length;
 
       final totalRevenue = completedOrders.fold<double>(
@@ -297,12 +310,17 @@ class StoreService {
     required String fileName,
   }) async {
     try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) {
+        throw Exception('يجب تسجيل الدخول قبل رفع الصور');
+      }
       final fileExt = fileName.split('.').last;
-      final filePath = 'stores/$storeId/logo.$fileExt';
+      // التوافق مع سياسات bucket "stores": أول مجلد يجب أن يكون userId
+      final filePath = '$userId/stores/$storeId/logo.$fileExt';
 
       // رفع الصورة
       await _supabase.storage
-          .from('store-images')
+          .from('stores')
           .uploadBinary(
             filePath,
             imageBytes,
@@ -310,9 +328,7 @@ class StoreService {
           );
 
       // الحصول على الرابط العام
-      final imageUrl = _supabase.storage
-          .from('store-images')
-          .getPublicUrl(filePath);
+      final imageUrl = _supabase.storage.from('stores').getPublicUrl(filePath);
 
       // تحديث المتجر بالشعار الجديد
       await updateStore(storeId: storeId, logoUrl: imageUrl);
@@ -424,32 +440,35 @@ class StoreService {
     final activeProducts = stats['active_products'] as int? ?? 0;
     if (activeProducts >= 10) {
       score += 30;
-    } else if (activeProducts >= 5)
+    } else if (activeProducts >= 5) {
       score += 20;
-    else if (activeProducts >= 1)
+    } else if (activeProducts >= 1) {
       score += 10;
+    }
 
     // النقاط حسب الطلبات
     final totalOrders = stats['total_orders'] as int? ?? 0;
     if (totalOrders >= 50) {
       score += 40;
-    } else if (totalOrders >= 20)
+    } else if (totalOrders >= 20) {
       score += 30;
-    else if (totalOrders >= 5)
+    } else if (totalOrders >= 5) {
       score += 20;
-    else if (totalOrders >= 1)
+    } else if (totalOrders >= 1) {
       score += 10;
+    }
 
     // النقاط حسب الإيرادات
     final revenue = stats['total_revenue'] as double? ?? 0.0;
     if (revenue >= 10000) {
       score += 30;
-    } else if (revenue >= 5000)
+    } else if (revenue >= 5000) {
       score += 20;
-    else if (revenue >= 1000)
+    } else if (revenue >= 1000) {
       score += 15;
-    else if (revenue >= 100)
+    } else if (revenue >= 100) {
       score += 10;
+    }
 
     return score > 100 ? 100 : score;
   }
@@ -486,5 +505,614 @@ class StoreService {
     }
 
     return recommendations;
+  }
+
+  // ================================
+  // 🔧 V2 helpers aligned with current StoreModel
+  // ================================
+
+  /// جلب متجر واحد بواسطة merchant_id (قد يكون لكل تاجر متجر واحد)
+  static Future<StoreModel?> getStoreByMerchantIdV2(String merchantId) async {
+    try {
+      final response = await _supabase
+          .from('stores')
+          .select('*')
+          .eq('merchant_id', merchantId)
+          .maybeSingle();
+
+      if (response == null) return null;
+      return StoreModel.fromSupabaseMap(response);
+    } on PostgrestException catch (e) {
+      AppLogger.error(
+        'PostgreSQL خطأ في جلب المتجر بواسطة التاجر: ${e.message}',
+        e,
+      );
+      return null;
+    } catch (e) {
+      AppLogger.error('خطأ في جلب المتجر بواسطة التاجر', e);
+      return null;
+    }
+  }
+
+  /// تحديث حقول المتجر المتوافقة مع StoreModel الحالي
+  static Future<StoreModel?> updateStoreFieldsV2({
+    required String storeId,
+    String? name,
+    String? description,
+    String? phone,
+    String? address,
+    String? city,
+    String? governorate,
+    double? latitude,
+    double? longitude,
+    int? deliveryTime,
+    bool? isOpen,
+    double? deliveryFee,
+    double? minOrder,
+    String? category,
+    Map<String, dynamic>? openingHours,
+    String? imageUrl,
+    String? coverUrl,
+    String? deliveryMode,
+  }) async {
+    try {
+      final data = <String, dynamic>{
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+
+      if (name != null) data['name'] = name;
+      if (description != null) data['description'] = description;
+      if (phone != null) data['phone'] = phone;
+      if (address != null) data['address'] = address;
+      if (city != null) data['city'] = city;
+      if (governorate != null) data['governorate'] = governorate;
+      if (latitude != null) data['latitude'] = latitude;
+      if (longitude != null) data['longitude'] = longitude;
+      if (deliveryTime != null) data['delivery_time'] = deliveryTime;
+      if (isOpen != null) data['is_open'] = isOpen;
+      if (deliveryFee != null) data['delivery_fee'] = deliveryFee;
+      if (minOrder != null) data['min_order'] = minOrder;
+      if (category != null) data['category'] = category;
+      if (openingHours != null) data['opening_hours'] = openingHours;
+      if (imageUrl != null) data['image_url'] = imageUrl;
+      if (coverUrl != null) data['cover_url'] = coverUrl;
+      if (deliveryMode != null) data['delivery_mode'] = deliveryMode;
+
+      final response = await _supabase
+          .from('stores')
+          .update(data)
+          .eq('id', storeId)
+          .select('*')
+          .single();
+
+      AppLogger.info('✅ تم تحديث المتجر (V2): ${response['name']}');
+      return StoreModel.fromSupabaseMap(response);
+    } on PostgrestException catch (e) {
+      AppLogger.error('PostgreSQL خطأ في تحديث المتجر (V2): ${e.message}', e);
+      throw Exception('فشل تحديث المتجر: ${e.message}');
+    } catch (e) {
+      AppLogger.error('خطأ في تحديث المتجر (V2)', e);
+      throw Exception('فشل تحديث المتجر: ${e.toString()}');
+    }
+  }
+
+  /// رفع صورة (شعار/غلاف) وإرجاع الرابط العام فقط
+  /// ملاحظة: لا يقوم هذا التابع بتحديث سجل المتجر تلقائياً
+  static Future<String?> uploadStoreImageV2({
+    required String storeId,
+    required Uint8List bytes,
+    required String fileName,
+    String type = 'logo',
+  }) async {
+    try {
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      if (userId == null) {
+        throw Exception('يجب تسجيل الدخول قبل رفع الصور');
+      }
+      // تحقّق من ملكية المتجر قبل الرفع لتفادي أخطاء RLS 403
+      try {
+        final owner = await _supabase
+            .from('stores')
+            .select('merchant_id')
+            .eq('id', storeId)
+            .single();
+        final ownerId = owner['merchant_id'] as String?;
+        if (ownerId == null || ownerId != userId) {
+          throw Exception(
+            'لا يوجد إذن لرفع صور لهذا المتجر (مالك المتجر مختلف)\nuserId=$userId\nstoreId=$storeId\nmerchantId(owner)=$ownerId',
+          );
+        }
+      } catch (e) {
+        // في حالة الفشل نُظهر رسالة واضحة بدل رمي خطأ داخلي من RLS
+        rethrow;
+      }
+      final ext = fileName.split('.').last;
+      final safeType = (type == 'cover') ? 'cover' : 'logo';
+      // السياسات الحالية في bucket 'stores' تتطلب أول مجلد = userId
+      // والمسار يحتوي '/stores/{storeId}/'
+      final filePath = '$userId/stores/$storeId/$safeType.$ext';
+
+      AppLogger.info(
+        'محاولة رفع صورة: type=$type, filePath=$filePath, userId=$userId, storeId=$storeId',
+      );
+
+      // استخدم upsert لتحديث الملف إذا كان موجوداً
+      await _supabase.storage
+          .from('stores')
+          .uploadBinary(
+            filePath,
+            bytes,
+            fileOptions: const FileOptions(upsert: true),
+          );
+
+      AppLogger.info('تم رفع الصورة بنجاح: $filePath');
+
+      final url = _supabase.storage.from('stores').getPublicUrl(filePath);
+      // تنظيف أي نسخ قديمة بامتدادات مختلفة لضمان مشاهدة أحدث صورة دائماً
+      await _cleanupOldStoreImages(
+        userId: userId,
+        storeId: storeId,
+        type: safeType,
+        keepFileName: '$safeType.$ext',
+      );
+      return url;
+    } on StorageException catch (e) {
+      // حسّن الرسالة بحالة الخطأ ومسار الملف للمساعدة في تشخيص RLS
+      final userId = Supabase.instance.client.auth.currentUser?.id;
+      final safeType = (type == 'cover') ? 'cover' : 'logo';
+      final ext = fileName.split('.').last;
+      final debugPath = (userId != null)
+          ? '$userId/stores/$storeId/$safeType.$ext'
+          : '(unknown-user)/stores/$storeId/$safeType.$ext';
+
+      final statusRaw = e.statusCode;
+      final int? statusCode = statusRaw == null
+          ? null
+          : int.tryParse(statusRaw.toString());
+      final messageLower = e.message.toLowerCase();
+      final isRlsBlock =
+          (statusCode == 403) || messageLower.contains('row-level');
+      final hint = isRlsBlock
+          ? '\nتلميح: يبدو أن سياسة RLS للتخزين تمنع العملية.\n- تأكد أن المسار يبدأ بـ userId الصحيح.\n- النمط المطلوب: {userId}/stores/{storeId}/(logo|cover).ext\n- جرّب تطبيق سياسات التخزين في Supabase_schema.sql (قسم STORAGE BUCKETS).'
+          : '';
+
+      final detailed =
+          'فشل رفع الصورة (code=${statusCode ?? 'unknown'}): ${e.message}\npath=$debugPath';
+      AppLogger.error('Storage خطأ في رفع صورة المتجر (V2): $detailed', e);
+      throw Exception('$detailed$hint');
+    } catch (e) {
+      AppLogger.error('خطأ في رفع صورة المتجر (V2)', e);
+      rethrow;
+    }
+  }
+
+  static Future<void> _cleanupOldStoreImages({
+    required String userId,
+    required String storeId,
+    required String type,
+    required String keepFileName,
+  }) async {
+    final folderPath = '$userId/stores/$storeId';
+    try {
+      final files = await _supabase.storage
+          .from('stores')
+          .list(path: folderPath);
+      for (final file in files) {
+        final name = (file as dynamic).name as String?;
+        if (name == null) continue;
+        if (!name.toLowerCase().startsWith('$type.')) continue;
+        if (name == keepFileName) continue;
+        final fullPath = '$folderPath/$name';
+        await _supabase.storage.from('stores').remove([fullPath]);
+        AppLogger.info('🧹 تم حذف النسخة القديمة للصورة: $fullPath');
+      }
+    } catch (e) {
+      AppLogger.error('⚠️ تعذر حذف النسخ القديمة لصور $type: $e', e);
+    }
+  }
+
+  /// محاولة الحصول على رابط صورة الغلاف المخزنة في التخزين
+  /// تعتمد على نمط الحفظ: `{userId}/stores/{storeId}/cover.{ext}` في bucket 'stores'
+  static Future<String?> getStoreCoverUrl(String storeId) async {
+    try {
+      // استخدم مالك المتجر الفعلي بدلاً من المستخدم الحالي لضمان إيجاد الغلاف لأي عارض
+      final storeRow = await _supabase
+          .from('stores')
+          .select('merchant_id, cover_url')
+          .eq('id', storeId)
+          .single();
+
+      final existingCover = storeRow['cover_url'] as String?;
+      if (existingCover != null && existingCover.isNotEmpty) {
+        return existingCover;
+      }
+
+      final ownerId = storeRow['merchant_id'] as String?;
+      if (ownerId == null) return null;
+      final basePath = '$ownerId/stores/$storeId';
+      final files = await _supabase.storage.from('stores').list(path: basePath);
+
+      String? coverName;
+      for (final f in files) {
+        try {
+          final name = (f as dynamic).name as String?;
+          if (name != null && name.toLowerCase().startsWith('cover.')) {
+            coverName = name;
+            break;
+          }
+        } catch (_) {
+          // تجاهل أخطاء التحويل
+        }
+      }
+
+      if (coverName == null) return null;
+      final url = _supabase.storage
+          .from('stores')
+          .getPublicUrl('$basePath/$coverName');
+      return url;
+    } on StorageException catch (e) {
+      AppLogger.error(
+        'Storage خطأ في قراءة قائمة ملفات الغلاف: ${e.message}',
+        e,
+      );
+      return null;
+    } catch (e) {
+      AppLogger.error('خطأ في جلب رابط الغلاف', e);
+      return null;
+    }
+  }
+
+  // ================================
+  // 🧩 Settings entities: branches, delivery areas, payment methods, order windows
+  // ================================
+
+  // ---- Branches ----
+  static Future<List<Map<String, dynamic>>> getStoreBranches(
+    String storeId,
+  ) async {
+    try {
+      final res = await _supabase
+          .from('store_branches')
+          .select('*')
+          .eq('store_id', storeId)
+          .order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في جلب الفروع: ${e.message}', e);
+      return [];
+    }
+  }
+
+  static Future<Map<String, dynamic>?> addStoreBranch({
+    required String storeId,
+    required String name,
+    required String address,
+    String? phone,
+    double? latitude,
+    double? longitude,
+    bool isActive = true,
+  }) async {
+    try {
+      final payload = {
+        'store_id': storeId,
+        'name': name,
+        'address': address,
+        'phone': phone,
+        'latitude': latitude,
+        'longitude': longitude,
+        'is_active': isActive,
+      }..removeWhere((k, v) => v == null);
+
+      final res = await _supabase
+          .from('store_branches')
+          .insert(payload)
+          .select('*')
+          .single();
+      return Map<String, dynamic>.from(res);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في إضافة الفرع: ${e.message}', e);
+      rethrow;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> updateStoreBranch(
+    String id,
+    Map<String, dynamic> changes,
+  ) async {
+    try {
+      final payload = {
+        ...changes,
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+      final res = await _supabase
+          .from('store_branches')
+          .update(payload)
+          .eq('id', id)
+          .select('*')
+          .single();
+      return Map<String, dynamic>.from(res);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في تعديل الفرع: ${e.message}', e);
+      rethrow;
+    }
+  }
+
+  static Future<void> deleteStoreBranch(String id) async {
+    await _supabase.from('store_branches').delete().eq('id', id);
+  }
+
+  // ---- Delivery Areas ----
+  static Future<List<Map<String, dynamic>>> getStoreDeliveryAreas(
+    String storeId,
+  ) async {
+    try {
+      final res = await _supabase
+          .from('store_delivery_areas')
+          .select('*')
+          .eq('store_id', storeId)
+          .order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(res as List);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في جلب مناطق التوصيل: ${e.message}', e);
+      return [];
+    }
+  }
+
+  static Future<Map<String, dynamic>?> addDeliveryArea({
+    required String storeId,
+    required String areaName,
+    required double fee,
+    required double minOrder,
+    bool isActive = true,
+  }) async {
+    try {
+      final payload = {
+        'store_id': storeId,
+        'area_name': areaName,
+        'fee': fee,
+        'min_order': minOrder,
+        'is_active': isActive,
+      };
+      final res = await _supabase
+          .from('store_delivery_areas')
+          .insert(payload)
+          .select('*')
+          .single();
+      return Map<String, dynamic>.from(res);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في إضافة منطقة التوصيل: ${e.message}', e);
+      rethrow;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> updateDeliveryArea(
+    String id,
+    Map<String, dynamic> changes,
+  ) async {
+    try {
+      final payload = {
+        ...changes,
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+      final res = await _supabase
+          .from('store_delivery_areas')
+          .update(payload)
+          .eq('id', id)
+          .select('*')
+          .single();
+      return Map<String, dynamic>.from(res);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في تعديل منطقة التوصيل: ${e.message}', e);
+      rethrow;
+    }
+  }
+
+  static Future<void> deleteDeliveryArea(String id) async {
+    await _supabase.from('store_delivery_areas').delete().eq('id', id);
+  }
+
+  // ---- Payment Methods ----
+  static Future<List<Map<String, dynamic>>> getStorePaymentMethods(
+    String storeId,
+  ) async {
+    try {
+      final res = await _supabase
+          .from('store_payment_methods')
+          .select('*')
+          .eq('store_id', storeId)
+          .order('created_at', ascending: true);
+      return List<Map<String, dynamic>>.from(res as List);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في جلب وسائل الدفع: ${e.message}', e);
+      return [];
+    }
+  }
+
+  /// method: 'cash' | 'card' | 'wallet'
+  static Future<void> setStorePaymentMethod({
+    required String storeId,
+    required String method,
+    required bool isActive,
+  }) async {
+    final payload = {
+      'store_id': storeId,
+      'method': method,
+      'is_active': isActive,
+    };
+    await _supabase
+        .from('store_payment_methods')
+        .upsert(payload, onConflict: 'store_id,method');
+  }
+
+  static Future<void> deleteStorePaymentMethod(
+    String storeId,
+    String method,
+  ) async {
+    await _supabase.from('store_payment_methods').delete().match({
+      'store_id': storeId,
+      'method': method,
+    });
+  }
+
+  // ---- Order Windows ----
+  static Future<List<Map<String, dynamic>>> getStoreOrderWindows(
+    String storeId,
+  ) async {
+    try {
+      final res = await _supabase
+          .from('store_order_windows')
+          .select('*')
+          .eq('store_id', storeId)
+          .order('day_of_week', ascending: true)
+          .order('open_time', ascending: true);
+      return List<Map<String, dynamic>>.from(res as List);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في جلب فترات الاستلام: ${e.message}', e);
+      return [];
+    }
+  }
+
+  static Future<Map<String, dynamic>?> addStoreOrderWindow({
+    required String storeId,
+    required int dayOfWeek, // 0..6
+    required String openTime, // HH:MM:SS
+    required String closeTime, // HH:MM:SS
+    bool isActive = true,
+  }) async {
+    try {
+      final payload = {
+        'store_id': storeId,
+        'day_of_week': dayOfWeek,
+        'open_time': openTime,
+        'close_time': closeTime,
+        'is_active': isActive,
+      };
+      final res = await _supabase
+          .from('store_order_windows')
+          .insert(payload)
+          .select('*')
+          .single();
+      return Map<String, dynamic>.from(res);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في إضافة فترة الاستلام: ${e.message}', e);
+      rethrow;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> updateStoreOrderWindow(
+    String id,
+    Map<String, dynamic> changes,
+  ) async {
+    try {
+      final res = await _supabase
+          .from('store_order_windows')
+          .update(changes)
+          .eq('id', id)
+          .select('*')
+          .single();
+      return Map<String, dynamic>.from(res);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في تعديل فترة الاستلام: ${e.message}', e);
+      rethrow;
+    }
+  }
+
+  static Future<void> deleteStoreOrderWindow(String id) async {
+    await _supabase.from('store_order_windows').delete().eq('id', id);
+  }
+
+  // ---- Store Sections ----
+  static Future<List<Map<String, dynamic>>> getStoreSections(
+    String storeId,
+  ) async {
+    try {
+      final res = await _supabase
+          .from('store_sections')
+          .select('*')
+          .eq('store_id', storeId)
+          .order('display_order', ascending: true);
+      return List<Map<String, dynamic>>.from(res as List);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في جلب الأقسام: ${e.message}', e);
+      return [];
+    }
+  }
+
+  static Future<Map<String, dynamic>?> addStoreSection({
+    required String storeId,
+    required String name,
+    String? description,
+    String? imageUrl,
+    int displayOrder = 0,
+    bool isActive = true,
+  }) async {
+    try {
+      final payload = {
+        'store_id': storeId,
+        'name': name,
+        if (description != null) 'description': description,
+        if (imageUrl != null) 'image_url': imageUrl,
+        'display_order': displayOrder,
+        'is_active': isActive,
+      };
+      final res = await _supabase
+          .from('store_sections')
+          .insert(payload)
+          .select('*')
+          .single();
+      return Map<String, dynamic>.from(res);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في إضافة القسم: ${e.message}', e);
+      rethrow;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> updateStoreSection(
+    String id,
+    Map<String, dynamic> changes,
+  ) async {
+    try {
+      final payload = {
+        ...changes,
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+      final res = await _supabase
+          .from('store_sections')
+          .update(payload)
+          .eq('id', id)
+          .select('*')
+          .single();
+      return Map<String, dynamic>.from(res);
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في تعديل القسم: ${e.message}', e);
+      rethrow;
+    }
+  }
+
+  static Future<void> deleteStoreSection(String id) async {
+    await _supabase.from('store_sections').delete().eq('id', id);
+  }
+
+  /// Reorder store sections by updating display_order for each section
+  static Future<void> reorderStoreSections(
+    String storeId,
+    List<String> orderedSectionIds,
+  ) async {
+    try {
+      // Update display_order for each section
+      for (int i = 0; i < orderedSectionIds.length; i++) {
+        await _supabase
+            .from('store_sections')
+            .update({
+              'display_order': i,
+              'updated_at': DateTime.now().toIso8601String(),
+            })
+            .eq('id', orderedSectionIds[i])
+            .eq('store_id', storeId);
+      }
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في إعادة ترتيب الأقسام: ${e.message}', e);
+      rethrow;
+    }
   }
 }

@@ -92,7 +92,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
 
   /// 📧 إرسال رابط استعادة كلمة المرور
   Future<void> _sendResetEmail() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!(_formKey.currentState?.validate() ?? false)) return;
 
     setState(() {
       _isLoading = true;
@@ -142,7 +142,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
 
   /// 🔐 تأكيد استعادة كلمة المرور باستخدام Supabase Auth
   Future<void> _confirmPasswordReset() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (!(_formKey.currentState?.validate() ?? false)) return;
 
     setState(() {
       _isLoading = true;

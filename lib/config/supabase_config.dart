@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 /// تهيئة Supabase الشاملة حسب الوثائق الرسمية
 /// https://supabase.com/docs/reference/dart/introduction
 class SupabaseConfig {
+  static bool _isInitialized = false;
+
   // معلومات المشروع من Supabase Dashboard
   // ⚠️ استبدل هذه القيم بقيم مشروعك الجديد
   static const String url = 'https://ebbkdhmwaawzxbidjynz.supabase.co';
@@ -29,6 +31,15 @@ class SupabaseConfig {
 
   /// تهيئة Supabase مع جميع الخيارات
   static Future<void> initialize() async {
+    if (_isInitialized) {
+      if (kDebugMode) {
+        debugPrint(
+          'ℹ️ SupabaseConfig.initialize: already initialized - skipping.',
+        );
+      }
+      return;
+    }
+
     try {
       debugPrint('🔄 بدء تهيئة Supabase...');
 
@@ -67,8 +78,10 @@ class SupabaseConfig {
       debugPrint('   - URL: $url');
       debugPrint('   - Auth: ${auth.currentUser?.id ?? 'غير مسجل'}');
       debugPrint('   - Debug Mode: $kDebugMode');
+      _isInitialized = true;
     } catch (e) {
       debugPrint('❌ خطأ في تهيئة Supabase: $e');
+      _isInitialized = false;
       rethrow; // إعادة الرفع للتعامل مع الخطأ في مستوى أعلى
     }
   }
@@ -244,16 +257,52 @@ class SupabaseConfig {
     FileOptions? fileOptions,
   }) async {
     try {
+      // التحقق من المصادقة أولاً
+      if (currentUser == null) {
+        debugPrint('❌ لا يمكن رفع الملف: المستخدم غير مصادق');
+        debugPrint('   - Bucket: $bucket');
+        debugPrint('   - Path: $path');
+        throw Exception('يجب تسجيل الدخول أولاً لرفع الملفات');
+      }
+
+      debugPrint('📤 رفع ملف:');
+      debugPrint('   - Bucket: $bucket');
+      debugPrint('   - Path: $path');
+      debugPrint('   - User: ${currentUser!.id}');
+
       await storage
           .from(bucket)
           .upload(path, file, fileOptions: fileOptions ?? const FileOptions());
 
       // الحصول على الرابط العام
       final publicUrl = storage.from(bucket).getPublicUrl(path);
+      debugPrint('✅ تم رفع الملف بنجاح: $publicUrl');
       return publicUrl;
-    } catch (e) {
-      debugPrint('❌ خطأ في رفع الملف: $e');
-      return null;
+    } on StorageException catch (e) {
+      debugPrint('❌ Storage Error:');
+      debugPrint('   - Message: ${e.message}');
+      debugPrint('   - StatusCode: ${e.statusCode}');
+      debugPrint('   - Error: ${e.error}');
+
+      // معالجة أخطاء RLS بشكل خاص
+      if (e.message.contains('row-level security') ||
+          e.message.contains('policy') ||
+          e.statusCode == '403' ||
+          e.statusCode == '401') {
+        debugPrint(
+          '⚠️ خطأ في صلاحيات Storage - تحقق من سياسات RLS في Supabase Dashboard',
+        );
+        throw Exception(
+          'ليس لديك صلاحية لرفع الملفات. يرجى التواصل مع الدعم الفني.',
+        );
+      }
+
+      rethrow;
+    } catch (e, stackTrace) {
+      debugPrint('❌ خطأ غير متوقع في رفع الملف:');
+      debugPrint('   - Error: $e');
+      debugPrint('   - Stack: $stackTrace');
+      rethrow;
     }
   }
 

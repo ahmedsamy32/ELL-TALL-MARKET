@@ -136,6 +136,13 @@ class AppSettingsModel with BaseModelMixin {
   final int cacheDuration; // INT DEFAULT 7 (days)
   final bool analyticsEnabled; // BOOLEAN DEFAULT TRUE
   final bool crashReports; // BOOLEAN DEFAULT TRUE
+
+  // Delivery settings (merged from legacy AppSettings)
+  final double appDeliveryBaseFee; // رسوم التوصيل الأساسية
+  final double appDeliveryFeePerKm; // رسوم لكل كيلومتر
+  final double appDeliveryMaxDistance; // أقصى مسافة للتوصيل (كم)
+  final int appDeliveryEstimatedTime; // الوقت التقديري للتوصيل (دقائق)
+
   @override
   final DateTime createdAt;
   @override
@@ -157,14 +164,18 @@ class AppSettingsModel with BaseModelMixin {
     this.cacheDuration = 7,
     this.analyticsEnabled = true,
     this.crashReports = true,
+    this.appDeliveryBaseFee = 15.0,
+    this.appDeliveryFeePerKm = 3.0,
+    this.appDeliveryMaxDistance = 25.0,
+    this.appDeliveryEstimatedTime = 30,
     required this.createdAt,
     this.updatedAt,
   });
 
   factory AppSettingsModel.fromMap(Map<String, dynamic> map) {
     return AppSettingsModel(
-      id: map['id'] as String,
-      clientId: map['client_id'] as String,
+      id: map['id'] as String? ?? '',
+      clientId: map['client_id'] as String? ?? '',
       notificationsEnabled: map['notifications_enabled'] as bool? ?? true,
       emailNotifications: map['email_notifications'] as bool? ?? true,
       smsNotifications: map['sms_notifications'] as bool? ?? false,
@@ -182,6 +193,14 @@ class AppSettingsModel with BaseModelMixin {
       cacheDuration: map['cache_duration'] as int? ?? 7,
       analyticsEnabled: map['analytics_enabled'] as bool? ?? true,
       crashReports: map['crash_reports'] as bool? ?? true,
+      appDeliveryBaseFee:
+          (map['app_delivery_base_fee'] as num?)?.toDouble() ?? 15.0,
+      appDeliveryFeePerKm:
+          (map['app_delivery_fee_per_km'] as num?)?.toDouble() ?? 3.0,
+      appDeliveryMaxDistance:
+          (map['app_delivery_max_distance'] as num?)?.toDouble() ?? 25.0,
+      appDeliveryEstimatedTime:
+          map['app_delivery_estimated_time'] as int? ?? 30,
       createdAt: BaseModelMixin.parseDateTime(map['created_at']),
       updatedAt: map['updated_at'] != null
           ? BaseModelMixin.parseDateTime(map['updated_at'])
@@ -223,6 +242,10 @@ class AppSettingsModel with BaseModelMixin {
       'cache_duration': cacheDuration,
       'analytics_enabled': analyticsEnabled,
       'crash_reports': crashReports,
+      'app_delivery_base_fee': appDeliveryBaseFee,
+      'app_delivery_fee_per_km': appDeliveryFeePerKm,
+      'app_delivery_max_distance': appDeliveryMaxDistance,
+      'app_delivery_estimated_time': appDeliveryEstimatedTime,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
     };
@@ -245,6 +268,10 @@ class AppSettingsModel with BaseModelMixin {
       'cache_duration': cacheDuration,
       'analytics_enabled': analyticsEnabled,
       'crash_reports': crashReports,
+      'app_delivery_base_fee': appDeliveryBaseFee,
+      'app_delivery_fee_per_km': appDeliveryFeePerKm,
+      'app_delivery_max_distance': appDeliveryMaxDistance,
+      'app_delivery_estimated_time': appDeliveryEstimatedTime,
     };
   }
 
@@ -264,6 +291,10 @@ class AppSettingsModel with BaseModelMixin {
     int? cacheDuration,
     bool? analyticsEnabled,
     bool? crashReports,
+    double? appDeliveryBaseFee,
+    double? appDeliveryFeePerKm,
+    double? appDeliveryMaxDistance,
+    int? appDeliveryEstimatedTime,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -283,6 +314,12 @@ class AppSettingsModel with BaseModelMixin {
       cacheDuration: cacheDuration ?? this.cacheDuration,
       analyticsEnabled: analyticsEnabled ?? this.analyticsEnabled,
       crashReports: crashReports ?? this.crashReports,
+      appDeliveryBaseFee: appDeliveryBaseFee ?? this.appDeliveryBaseFee,
+      appDeliveryFeePerKm: appDeliveryFeePerKm ?? this.appDeliveryFeePerKm,
+      appDeliveryMaxDistance:
+          appDeliveryMaxDistance ?? this.appDeliveryMaxDistance,
+      appDeliveryEstimatedTime:
+          appDeliveryEstimatedTime ?? this.appDeliveryEstimatedTime,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -303,6 +340,10 @@ class AppSettingsModel with BaseModelMixin {
     int? cacheDuration,
     bool? analyticsEnabled,
     bool? crashReports,
+    double? appDeliveryBaseFee,
+    double? appDeliveryFeePerKm,
+    double? appDeliveryMaxDistance,
+    int? appDeliveryEstimatedTime,
   }) {
     return copyWith(
       notificationsEnabled: notificationsEnabled,
@@ -318,6 +359,10 @@ class AppSettingsModel with BaseModelMixin {
       cacheDuration: cacheDuration,
       analyticsEnabled: analyticsEnabled,
       crashReports: crashReports,
+      appDeliveryBaseFee: appDeliveryBaseFee,
+      appDeliveryFeePerKm: appDeliveryFeePerKm,
+      appDeliveryMaxDistance: appDeliveryMaxDistance,
+      appDeliveryEstimatedTime: appDeliveryEstimatedTime,
       updatedAt: DateTime.now(),
     );
   }
@@ -362,109 +407,5 @@ class AppSettingsModel with BaseModelMixin {
   @override
   String toString() {
     return 'AppSettingsModel(id: $id, language: ${language.code}, currency: ${currency.code})';
-  }
-}
-
-/// Legacy AppSettings class for backward compatibility
-@Deprecated('Use AppSettingsModel instead')
-class AppSettings {
-  final bool notificationsEnabled;
-  final bool emailNotifications;
-  final bool smsNotifications;
-  final bool darkMode;
-  final String language;
-  final String currency;
-  final bool biometricAuth;
-  final bool savePaymentMethods;
-  final bool autoUpdate;
-  final bool dataSaver;
-  final int cacheDuration;
-  final bool analyticsEnabled;
-  final bool crashReports;
-
-  const AppSettings({
-    this.notificationsEnabled = true,
-    this.emailNotifications = true,
-    this.smsNotifications = false,
-    this.darkMode = false,
-    this.language = 'ar',
-    this.currency = 'EGP',
-    this.biometricAuth = false,
-    this.savePaymentMethods = true,
-    this.autoUpdate = true,
-    this.dataSaver = false,
-    this.cacheDuration = 7,
-    this.analyticsEnabled = true,
-    this.crashReports = true,
-  });
-
-  factory AppSettings.defaults() => const AppSettings();
-
-  factory AppSettings.fromJson(Map<String, dynamic> json) {
-    return AppSettings(
-      notificationsEnabled: json['notificationsEnabled'] ?? true,
-      emailNotifications: json['emailNotifications'] ?? true,
-      smsNotifications: json['smsNotifications'] ?? false,
-      darkMode: json['darkMode'] ?? false,
-      language: json['language'] ?? 'ar',
-      currency: json['currency'] ?? 'EGP',
-      biometricAuth: json['biometricAuth'] ?? false,
-      savePaymentMethods: json['savePaymentMethods'] ?? true,
-      autoUpdate: json['autoUpdate'] ?? true,
-      dataSaver: json['dataSaver'] ?? false,
-      cacheDuration: json['cacheDuration'] ?? 7,
-      analyticsEnabled: json['analyticsEnabled'] ?? true,
-      crashReports: json['crashReports'] ?? true,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'notificationsEnabled': notificationsEnabled,
-      'emailNotifications': emailNotifications,
-      'smsNotifications': smsNotifications,
-      'darkMode': darkMode,
-      'language': language,
-      'currency': currency,
-      'biometricAuth': biometricAuth,
-      'savePaymentMethods': savePaymentMethods,
-      'autoUpdate': autoUpdate,
-      'dataSaver': dataSaver,
-      'cacheDuration': cacheDuration,
-      'analyticsEnabled': analyticsEnabled,
-      'crashReports': crashReports,
-    };
-  }
-
-  AppSettings copyWith({
-    bool? notificationsEnabled,
-    bool? emailNotifications,
-    bool? smsNotifications,
-    bool? darkMode,
-    String? language,
-    String? currency,
-    bool? biometricAuth,
-    bool? savePaymentMethods,
-    bool? autoUpdate,
-    bool? dataSaver,
-    int? cacheDuration,
-    bool? analyticsEnabled,
-    bool? crashReports,
-  }) {
-    return AppSettings(
-      notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
-      emailNotifications: emailNotifications ?? this.emailNotifications,
-      smsNotifications: smsNotifications ?? this.smsNotifications,
-      darkMode: darkMode ?? this.darkMode,
-      language: language ?? this.language,
-      currency: currency ?? this.currency,
-      biometricAuth: biometricAuth ?? this.biometricAuth,
-      savePaymentMethods: savePaymentMethods ?? this.savePaymentMethods,
-      autoUpdate: autoUpdate ?? this.autoUpdate,
-      dataSaver: dataSaver ?? this.dataSaver,
-      cacheDuration: cacheDuration ?? this.cacheDuration,
-      analyticsEnabled: analyticsEnabled ?? this.analyticsEnabled,
-      crashReports: crashReports ?? this.crashReports,
-    );
   }
 }

@@ -38,9 +38,7 @@ class OnboardingScreenState extends State<OnboardingScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
-          color: Colors.black,
-        ),
+        decoration: const BoxDecoration(color: Colors.black),
         child: Stack(
           children: [
             PageView.builder(
@@ -72,18 +70,16 @@ class OnboardingScreenState extends State<OnboardingScreen> {
                   children: [
                     // زر التخطي (يظهر في جميع الصفحات عدا الأخيرة)
                     if (_currentPage < _onboardingData.length - 1)
-                      _buildCircleButton(
-                        text: 'تخطي',
-                        onPressed: _goToHome,
-                      )
+                      _buildCircleButton(text: 'تخطي', onPressed: _goToHome)
                     else
-                      const SizedBox(width: 70), // مساحة فارغة للحفاظ على التنسيق
-
+                      const SizedBox(
+                        width: 70,
+                      ), // مساحة فارغة للحفاظ على التنسيق
                     // نقاط التقدم
                     Row(
                       children: List.generate(
                         _onboardingData.length,
-                            (index) => Container(
+                        (index) => Container(
                           margin: const EdgeInsets.symmetric(horizontal: 4),
                           width: 8,
                           height: 8,
@@ -91,7 +87,9 @@ class OnboardingScreenState extends State<OnboardingScreen> {
                             shape: BoxShape.circle,
                             color: _currentPage == index
                                 ? Colors.white
-                                : Colors.white.withAlpha(128), // Changed from withOpacity(0.5)
+                                : Colors.white.withAlpha(
+                                    128,
+                                  ), // Changed from withOpacity(0.5)
                           ),
                         ),
                       ),
@@ -99,7 +97,9 @@ class OnboardingScreenState extends State<OnboardingScreen> {
 
                     // زر التالي أو ابدأ الآن
                     _buildCircleButton(
-                      text: _currentPage < _onboardingData.length - 1 ? 'التالي' : 'ابدأ الآن',
+                      text: _currentPage < _onboardingData.length - 1
+                          ? 'التالي'
+                          : 'ابدأ الآن',
                       onPressed: () {
                         if (_currentPage < _onboardingData.length - 1) {
                           _pageController.nextPage(
@@ -122,7 +122,10 @@ class OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   // دالة لبناء الأزرار الدائرية
-  Widget _buildCircleButton({required String text, required VoidCallback onPressed}) {
+  Widget _buildCircleButton({
+    required String text,
+    required VoidCallback onPressed,
+  }) {
     return Container(
       decoration: BoxDecoration(
         color: Colors.black.withAlpha(128), // Changed from withOpacity(0.5)
@@ -185,7 +188,7 @@ class OnboardingPage extends StatelessWidget {
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                Colors.black.withAlpha(51),  // Changed from withOpacity(0.2)
+                Colors.black.withAlpha(51), // Changed from withOpacity(0.2)
                 Colors.black.withAlpha(153), // Changed from withOpacity(0.6)
               ],
             ),

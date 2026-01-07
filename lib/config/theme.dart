@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../utils/app_colors.dart';
 
 final ThemeData appTheme = ThemeData(
+  useMaterial3: true,
   primaryColor: AppColors.primary,
   scaffoldBackgroundColor: Colors.white,
   fontFamily: 'Cairo',
@@ -17,16 +18,28 @@ final ThemeData appTheme = ThemeData(
   ),
 
   textTheme: const TextTheme(
-    headlineLarge: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.onSurface),
+    headlineLarge: TextStyle(
+      fontSize: 24,
+      fontWeight: FontWeight.bold,
+      color: AppColors.onSurface,
+    ),
     bodyLarge: TextStyle(fontSize: 16, color: AppColors.onSurface),
-    labelLarge: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.onPrimary),
+    labelLarge: TextStyle(
+      fontSize: 16,
+      fontWeight: FontWeight.bold,
+      color: AppColors.onPrimary,
+    ),
   ),
 
   appBarTheme: const AppBarTheme(
     backgroundColor: Colors.white,
     elevation: 0,
     iconTheme: IconThemeData(color: AppColors.onSurface),
-    titleTextStyle: TextStyle(color: AppColors.onSurface, fontSize: 20, fontWeight: FontWeight.bold),
+    titleTextStyle: TextStyle(
+      color: AppColors.onSurface,
+      fontSize: 20,
+      fontWeight: FontWeight.bold,
+    ),
   ),
 
   inputDecorationTheme: InputDecorationTheme(

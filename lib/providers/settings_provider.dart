@@ -1,15 +1,16 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/models/settings_model.dart';
 
 class SettingsProvider with ChangeNotifier {
   final _supabase = Supabase.instance.client;
 
-  late AppSettings _appSettings = AppSettings.defaults();
+  AppSettingsModel _appSettings = AppSettingsModel.empty();
   bool _isLoading = false;
   String? _error;
 
-  AppSettings get appSettings => _appSettings;
+  AppSettingsModel get appSettings => _appSettings;
   bool get isLoading => _isLoading;
   String? get error => _error;
 
@@ -27,34 +28,85 @@ class SettingsProvider with ChangeNotifier {
   Future<void> loadSettings() async {
     _setLoading(true);
     try {
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) {
+        // لا يوجد مستخدم مسجل دخول
+        _appSettings = AppSettingsModel.empty();
+        _setLoading(false);
+        return;
+      }
+
+      // محاولة قراءة الإعدادات الموجودة من جدول app_settings
       final response = await _supabase
           .from('app_settings')
           .select()
-          .single();
+          .eq('client_id', userId)
+          .maybeSingle();
 
-      _appSettings = AppSettings.fromJson(response);
+      if (response != null) {
+        _appSettings = AppSettingsModel.fromMap(response);
+      } else {
+        // إذا لم توجد إعدادات، أنشئ إعدادات افتراضية جديدة
+        _appSettings = AppSettingsModel.defaults(userId);
+        // حاول حفظ الإعدادات الافتراضية
+        try {
+          await updateAppSettings(_appSettings);
+        } catch (e) {
+          // تجاهل خطأ الحفظ، فقط استخدم الافتراضي
+          AppLogger.warning('⚠️ Could not save default settings', e);
+        }
+      }
       notifyListeners();
     } catch (e) {
-      if (kDebugMode) print('❌ Error loading settings: $e');
+      AppLogger.error('❌ Error loading settings', e);
       _setError(e.toString());
-      // Use defaults if loading fails
-      _appSettings = AppSettings.defaults();
+      // استخدم الإعدادات الافتراضية في حالة الخطأ
+      _appSettings = AppSettingsModel.empty();
     } finally {
       _setLoading(false);
     }
   }
 
   // ===== تحديث الإعدادات =====
-  Future<void> updateAppSettings(AppSettings settings) async {
+  Future<void> updateAppSettings(AppSettingsModel settings) async {
     try {
-      await _supabase
-          .from('app_settings')
-          .upsert(settings.toJson());
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) {
+        throw Exception('لا يمكن حفظ الإعدادات بدون تسجيل دخول');
+      }
 
+      // تحديث الحالة المحلية فوراً للاستجابة السريعة
+      final previousSettings = _appSettings;
       _appSettings = settings;
       notifyListeners();
+
+      // تحضير البيانات للحفظ باستخدام toDatabaseMap
+      final updateData = settings.toDatabaseMap();
+
+      try {
+        // محاولة التحديث أولاً (أسرع)
+        final result = await _supabase
+            .from('app_settings')
+            .update(updateData)
+            .eq('client_id', userId)
+            .select()
+            .maybeSingle();
+
+        // إذا لم يتم التحديث (لا يوجد سجل)، أنشئ سجلاً جديداً
+        if (result == null) {
+          await _supabase.from('app_settings').insert({
+            ...updateData,
+            'client_id': userId,
+          });
+        }
+      } catch (e) {
+        // في حالة الخطأ، استرجع الإعدادات السابقة
+        _appSettings = previousSettings;
+        notifyListeners();
+        rethrow;
+      }
     } catch (e) {
-      if (kDebugMode) print('❌ Error updating settings: $e');
+      AppLogger.error('❌ Error updating settings', e);
       _setError(e.toString());
       rethrow;
     }
@@ -63,10 +115,13 @@ class SettingsProvider with ChangeNotifier {
   // ===== إعادة تعيين الإعدادات =====
   Future<void> resetSettings() async {
     try {
-      final defaultSettings = AppSettings.defaults();
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) return;
+
+      final defaultSettings = AppSettingsModel.defaults(userId);
       await updateAppSettings(defaultSettings);
     } catch (e) {
-      if (kDebugMode) print('❌ Error resetting settings: $e');
+      AppLogger.error('❌ Error resetting settings', e);
       _setError(e.toString());
       rethrow;
     }
@@ -86,8 +141,13 @@ class SettingsProvider with ChangeNotifier {
 
       return response != null;
     } catch (e) {
-      if (kDebugMode) print('❌ Error checking maintenance status: $e');
+      AppLogger.error('❌ Error checking maintenance status', e);
       return false;
     }
+  }
+
+  // ===== تنسيق العملة =====
+  String formatCurrency(double amount) {
+    return '${amount.toStringAsFixed(2)} ${_appSettings.currency.symbol}';
   }
 }

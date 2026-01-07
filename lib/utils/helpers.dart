@@ -20,6 +20,31 @@ class Helpers {
     return DateFormat(format).format(time);
   }
 
+  // تنسيق العملة
+  static String formatCurrency(double amount, {String currencyCode = 'EGP'}) {
+    String symbol;
+    switch (currencyCode) {
+      case 'EGP':
+        symbol = 'ج.م';
+        break;
+      case 'SAR':
+        symbol = 'ر.س';
+        break;
+      case 'USD':
+        symbol = '\$';
+        break;
+      case 'EUR':
+        symbol = '€';
+        break;
+      case 'AED':
+        symbol = 'د.إ';
+        break;
+      default:
+        symbol = 'ج.م'; // Default to EGP
+    }
+    return '${amount.toStringAsFixed(2)} $symbol';
+  }
+
   // حساب الوقت المنقضي
   static String timeAgo(DateTime date) {
     final now = DateTime.now();
@@ -100,6 +125,7 @@ class Helpers {
   // نسخ النص إلى الحافظة
   static Future<void> copyToClipboard(String text, BuildContext context) async {
     await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('تم النسخ إلى الحافظة')));
@@ -114,7 +140,9 @@ class Helpers {
   }
 
   // تحويل Color إلى hex
+  // تحويل Color إلى hex
   static String colorToHex(Color color) {
+    // ignore: deprecated_member_use
     return '#${color.value.toRadixString(16).padLeft(8, '0')}';
   }
 

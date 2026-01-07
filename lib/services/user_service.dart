@@ -5,7 +5,7 @@ library;
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/user_model.dart';
-import '../models/Profile_model.dart'; // Import UserRole
+import '../models/profile_model.dart'; // Import UserRole
 import '../core/logger.dart';
 
 /// UserService - خدمات CRUD للمستخدمين

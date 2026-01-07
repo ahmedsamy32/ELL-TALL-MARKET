@@ -1,7 +1,7 @@
 ﻿/// User Management Model
 library;
 
-import 'Profile_model.dart'; // Import UserRole from Profile_model
+import 'profile_model.dart'; // Import UserRole from profile_model
 
 class UserModel {
   final String id;

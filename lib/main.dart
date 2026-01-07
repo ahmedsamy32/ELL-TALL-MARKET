@@ -1,6 +1,7 @@
 import 'package:ell_tall_market/providers/locale_provider.dart';
-import 'package:flutter/foundation.dart';
+
 import 'package:flutter/material.dart';
+import 'core/logger.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -13,11 +14,13 @@ import 'package:ell_tall_market/providers/cart_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/category_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
+import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/settings_provider.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/providers/dynamic_ui_provider.dart';
 import 'package:ell_tall_market/providers/favorites_provider.dart';
 import 'package:ell_tall_market/providers/store_provider.dart';
+import 'package:ell_tall_market/providers/banner_provider.dart';
 import 'package:ell_tall_market/services/network_manager.dart'; // ✅ إضافة مدير الشبكة
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -31,23 +34,32 @@ class NavigationService {
   static GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
   static Future<dynamic> navigateTo(String routeName, {Object? arguments}) {
-    return navigatorKey.currentState!.pushNamed(
-      routeName,
-      arguments: arguments,
-    );
+    final navigatorState = navigatorKey.currentState;
+    if (navigatorState == null) {
+      AppLogger.error('❌ NavigationService: navigatorState is null');
+      return Future.value(null);
+    }
+    return navigatorState.pushNamed(routeName, arguments: arguments);
   }
 
   static void goBack() {
-    if (navigatorKey.currentState!.canPop()) {
-      navigatorKey.currentState!.pop();
+    final navigatorState = navigatorKey.currentState;
+    if (navigatorState == null) {
+      AppLogger.error('❌ NavigationService: navigatorState is null');
+      return;
+    }
+    if (navigatorState.canPop()) {
+      navigatorState.pop();
     }
   }
 
   static Future<dynamic> replaceWith(String routeName, {Object? arguments}) {
-    return navigatorKey.currentState!.pushReplacementNamed(
-      routeName,
-      arguments: arguments,
-    );
+    final navigatorState = navigatorKey.currentState;
+    if (navigatorState == null) {
+      AppLogger.error('❌ NavigationService: navigatorState is null');
+      return Future.value(null);
+    }
+    return navigatorState.pushReplacementNamed(routeName, arguments: arguments);
   }
 }
 
@@ -55,9 +67,7 @@ class NavigationService {
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
-  if (kDebugMode) {
-    print('Handling a background message: ${message.messageId}');
-  }
+  AppLogger.info('Handling a background message: ${message.messageId}');
 }
 
 Future<void> main() async {
@@ -86,15 +96,11 @@ Future<void> main() async {
 
   // Get FCM token
   final token = await messaging.getToken();
-  if (kDebugMode) {
-    print('FCM Token: $token');
-  }
+  AppLogger.info('FCM Token: $token');
 
   // Initialize Network Manager
   NetworkManager().initialize();
-  if (kDebugMode) {
-    debugPrint('✅ Network Manager initialized');
-  }
+  AppLogger.info('✅ Network Manager initialized');
 
   // Initialize Supabase according to official docs
   await SupabaseConfig.initialize();
@@ -124,17 +130,20 @@ Future<void> main() async {
         ChangeNotifierProvider(create: (_) => CategoryProvider()),
         ChangeNotifierProvider(create: (_) => StoreProvider()),
         ChangeNotifierProvider(create: (_) => OrderProvider()),
+        ChangeNotifierProvider(create: (_) => MerchantProvider()),
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
         ChangeNotifierProvider(create: (_) => NotificationProvider()),
         ChangeNotifierProvider(create: (_) => DynamicUIProvider()),
+        ChangeNotifierProvider(create: (_) => BannerProvider()),
         ChangeNotifierProxyProvider<SupabaseProvider, FavoritesProvider>(
           create: (_) => FavoritesProvider(),
           update: (context, auth, previousFavorites) {
             final favoritesProvider = previousFavorites ?? FavoritesProvider();
             favoritesProvider.setAuthProvider(auth);
             // تحميل المفضلة عند تسجيل الدخول
-            if (auth.isLoggedIn && auth.currentUser != null) {
-              favoritesProvider.loadUserFavorites(auth.currentUser!.id);
+            final currentUser = auth.currentUser;
+            if (auth.isLoggedIn && currentUser != null) {
+              favoritesProvider.loadUserFavorites(currentUser.id);
             }
             return favoritesProvider;
           },
@@ -163,6 +172,16 @@ class MyApp extends StatelessWidget {
             GlobalWidgetsLocalizations.delegate,
             GlobalCupertinoLocalizations.delegate,
           ],
+          localeResolutionCallback: (locale, supportedLocales) {
+            // Check if the current device locale is supported
+            for (var supportedLocale in supportedLocales) {
+              if (supportedLocale.languageCode == locale?.languageCode) {
+                return supportedLocale;
+              }
+            }
+            // If the locale of the device is not supported, use the first one
+            return supportedLocales.first;
+          },
           initialRoute: AppRoutes.splash,
           routes: AppRoutes.routes,
           onGenerateRoute: AppRoutes.generateRoute,
@@ -194,7 +213,12 @@ class _SupabaseInitializerState extends State<SupabaseInitializer> {
   @override
   void initState() {
     super.initState();
-    _initializeSupabase();
+    // Kick off Supabase setup after the first frame to avoid provider rebuilds during build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _initializeSupabase();
+      }
+    });
   }
 
   Future<void> _initializeSupabase() async {
@@ -213,7 +237,9 @@ class _SupabaseInitializerState extends State<SupabaseInitializer> {
       await supabaseProvider.initialize().timeout(
         Duration(seconds: 3), // تقليل من 10 ثواني إلى 3
         onTimeout: () {
-          debugPrint('⚠️ Supabase initialization timeout - continuing anyway');
+          AppLogger.warning(
+            '⚠️ Supabase initialization timeout - continuing anyway',
+          );
         },
       );
 
@@ -223,7 +249,7 @@ class _SupabaseInitializerState extends State<SupabaseInitializer> {
         });
       }
     } catch (e) {
-      debugPrint('❌ Supabase initialization error: $e');
+      AppLogger.error('❌ Supabase initialization error: $e');
       if (mounted) {
         setState(() {
           _isInitializing = false;
@@ -256,7 +282,9 @@ class _SupabaseInitializerState extends State<SupabaseInitializer> {
     // Show error if initialization failed (but continue anyway)
     if (_errorMessage != null) {
       // Log error but continue to app
-      debugPrint('⚠️ Supabase init had errors but continuing: $_errorMessage');
+      AppLogger.warning(
+        '⚠️ Supabase init had errors but continuing: $_errorMessage',
+      );
     }
 
     // Return the normal app - continue even if there were errors
@@ -270,13 +298,13 @@ Future<void> initializeAppServices() async {
     // Initialize Auth Deep Link Handler for authentication links
     AuthDeepLinkHandler.initialize();
     if (ProductionConfig.shouldShowDebugLogs) {
-      debugPrint('✅ Auth Deep Link Handler initialized');
+      AppLogger.info('✅ Auth Deep Link Handler initialized');
     }
 
     // Initialize Supabase with production-aware timeout
     await SupabaseConfig.initialize();
     if (ProductionConfig.shouldShowDebugLogs) {
-      debugPrint('✅ Supabase initialized successfully');
+      AppLogger.info('✅ Supabase initialized successfully');
     }
 
     // تعطيل اختبار الاتصال المباشر لتجنب التوقف
@@ -297,8 +325,8 @@ Future<void> initializeAppServices() async {
     // }
   } catch (e) {
     if (ProductionConfig.shouldShowDebugLogs) {
-      debugPrint('❌ Service initialization failed: $e');
-      debugPrint('📱 App will continue in offline mode');
+      AppLogger.error('❌ Service initialization failed: $e');
+      AppLogger.info('📱 App will continue in offline mode');
     }
 
     // Show user-friendly message in case of connection failure

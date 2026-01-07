@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class CustomTextField extends StatefulWidget {
   final TextEditingController? controller;
@@ -17,6 +18,9 @@ class CustomTextField extends StatefulWidget {
   final bool enabled;
   final void Function()? onTap;
   final TextInputAction? textInputAction;
+  final FocusNode? focusNode;
+  final void Function(String)? onFieldSubmitted;
+  final List<TextInputFormatter>? inputFormatters;
 
   const CustomTextField({
     super.key,
@@ -36,6 +40,9 @@ class CustomTextField extends StatefulWidget {
     this.enabled = true,
     this.onTap,
     this.textInputAction,
+    this.focusNode,
+    this.onFieldSubmitted,
+    this.inputFormatters,
   });
 
   @override
@@ -65,6 +72,9 @@ class _CustomTextFieldState extends State<CustomTextField> {
       enabled: widget.enabled,
       onTap: widget.onTap,
       textInputAction: widget.textInputAction,
+      focusNode: widget.focusNode,
+      onFieldSubmitted: widget.onFieldSubmitted,
+      inputFormatters: widget.inputFormatters,
       decoration: InputDecoration(
         labelText: widget.label,
         hintText: widget.hintText,
@@ -81,6 +91,7 @@ class _CustomTextFieldState extends State<CustomTextField> {
         fillColor: widget.enabled ? Colors.grey[100] : Colors.grey[200],
         prefixIcon: widget.prefixIcon,
         prefixText: widget.prefixText,
+        counterText: widget.maxLength != null ? '' : null,
         suffixIcon: widget.isPasswordField
             ? IconButton(
                 icon: Icon(

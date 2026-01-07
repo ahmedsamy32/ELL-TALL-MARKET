@@ -71,16 +71,22 @@ class CartService {
             *,
             products (
               id,
+              store_id,
               name,
               description,
               price,
               image_url,
-              stock,
+              stock_quantity,
+              in_stock,
               is_active,
+              created_at,
               stores!inner (
                 id,
                 name,
-                merchant_id
+                merchant_id,
+                min_order,
+                delivery_mode,
+                delivery_fee
               )
             )
           ''')
@@ -133,7 +139,7 @@ class CartService {
         final newQuantity = (existingItem['quantity'] as int) + quantity;
 
         // التحقق من توفر الكمية الجديدة
-        if (newQuantity > (product['stock'] as int)) {
+        if (newQuantity > (product['stock_quantity'] as int)) {
           throw Exception('الكمية المطلوبة تتجاوز المخزون المتاح');
         }
 
@@ -154,7 +160,12 @@ class CartService {
         final itemData = {
           'cart_id': cart.id,
           'product_id': productId,
+          'store_id': product['store_id'],
+          'product_name': product['name'],
+          'product_price': product['price'],
+          'product_image': product['image_url'],
           'quantity': quantity,
+          'total_price': (product['price'] as num) * quantity,
         };
 
         final response = await _supabase
@@ -189,13 +200,13 @@ class CartService {
       // التحقق من ملكية العنصر للمستخدم
       final cartItem = await _supabase
           .from('cart_items')
-          .select('*, carts!inner(user_id), products(stock)')
+          .select('*, carts!inner(user_id), products(stock_quantity)')
           .eq('id', cartItemId)
           .eq('carts.user_id', userId)
           .single();
 
       // التحقق من توفر الكمية
-      final productStock = cartItem['products']['stock'] as int;
+      final productStock = cartItem['products']['stock_quantity'] as int;
       if (newQuantity > productStock) {
         throw Exception(
           'الكمية المطلوبة تتجاوز المخزون المتاح ($productStock)',
@@ -351,7 +362,7 @@ class CartService {
       for (final item in items) {
         final product = item['products'];
         final requestedQty = item['quantity'] as int;
-        final availableStock = product['stock'] as int;
+        final availableStock = product['stock_quantity'] as int;
         final isActive = product['is_active'] as bool;
 
         if (!isActive) {
@@ -408,7 +419,7 @@ class CartService {
           for (final item in userCartItems) {
             final productDetails = await _supabase
                 .from('products')
-                .select('name, price, image_url, stock')
+                .select('name, price, image_url, stock_quantity')
                 .eq('id', item['product_id'])
                 .single();
 
@@ -547,12 +558,15 @@ class CartService {
     try {
       final product = await _supabase
           .from('products')
-          .select('stock, is_active, price, name')
+          .select(
+            'id, store_id, stock_quantity, in_stock, is_active, price, name, image_url',
+          )
           .eq('id', productId)
           .single();
 
       if (!(product['is_active'] as bool)) return null;
-      if ((product['stock'] as int) < requestedQuantity) return null;
+      if (!(product['in_stock'] as bool)) return null;
+      if ((product['stock_quantity'] as int) < requestedQuantity) return null;
 
       return product;
     } catch (e) {
@@ -610,6 +624,46 @@ class CartService {
   // ================================
   // 🧹 Cleanup Operations
   // ================================
+
+  /// جلب معلومات المنتج مع بيانات المتجر (للتحقق من نظام التوصيل)
+  static Future<Map<String, dynamic>?> getProductWithStore(
+    String productId,
+  ) async {
+    try {
+      final response = await _supabase
+          .from('products')
+          .select('''
+            id,
+            store_id,
+            name,
+            stores!inner (
+              id,
+              name,
+              delivery_mode
+            )
+          ''')
+          .eq('id', productId)
+          .maybeSingle();
+
+      if (response == null) return null;
+
+      // تحويل البيانات لتكون سهلة الاستخدام
+      final store = response['stores'] as Map<String, dynamic>?;
+      return {
+        'product_id': response['id'],
+        'product_name': response['name'],
+        'store_id': response['store_id'],
+        'store_name': store?['name'],
+        'delivery_mode': store?['delivery_mode'],
+      };
+    } on PostgrestException catch (e) {
+      AppLogger.error('خطأ في جلب معلومات المنتج: ${e.message}', e);
+      return null;
+    } catch (e) {
+      AppLogger.error('خطأ في جلب معلومات المنتج', e);
+      return null;
+    }
+  }
 
   /// تنظيف السلال القديمة المهجورة
   static Future<int> cleanupAbandonedCarts({int daysOld = 30}) async {

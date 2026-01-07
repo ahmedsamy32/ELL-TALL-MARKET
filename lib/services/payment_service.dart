@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:math';
-import 'package:flutter/foundation.dart';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../core/logger.dart';
 import 'package:ell_tall_market/models/order_enums.dart';
 import 'package:ell_tall_market/config/supabase_config.dart';
-import 'package:ell_tall_market/core/logger.dart';
 
 /// Enhanced payment method enum with comprehensive options
 enum PaymentMethodEnhanced {
@@ -67,8 +67,6 @@ enum Currency { egp, usd, eur, sar, aed }
 
 /// Enhanced PaymentService with comprehensive financial management
 class PaymentServiceEnhanced {
-  static const String _logTag = '💳 PaymentService';
-
   // ===== Singleton Pattern =====
   static PaymentServiceEnhanced? _instance;
   static PaymentServiceEnhanced get instance =>
@@ -102,7 +100,7 @@ class PaymentServiceEnhanced {
     bool autoCapture = true,
   }) async {
     try {
-      if (kDebugMode) print('$_logTag Processing payment for order: $orderId');
+      AppLogger.info('Processing payment for order: $orderId');
 
       // Validate payment data
       final validation = await _validatePaymentRequest(
@@ -217,7 +215,7 @@ class PaymentServiceEnhanced {
         'timestamp': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Payment processing failed: $e');
+      AppLogger.error('Payment processing failed', e);
       AppLogger.error('Payment processing failed for order $orderId: $e');
 
       return _createErrorResponse('Payment processing failed: ${e.toString()}');
@@ -227,7 +225,7 @@ class PaymentServiceEnhanced {
   /// Capture authorized payment
   Future<Map<String, dynamic>> capturePayment(String transactionId) async {
     try {
-      if (kDebugMode) print('$_logTag Capturing payment: $transactionId');
+      AppLogger.info('Capturing payment: $transactionId');
 
       // Get payment record
       final paymentRecord = await _getPaymentRecord(transactionId);
@@ -296,7 +294,7 @@ class PaymentServiceEnhanced {
         'timestamp': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Payment capture failed: $e');
+      AppLogger.error('❌ Payment capture failed', e);
       return _createErrorResponse('Payment capture failed: ${e.toString()}');
     }
   }
@@ -310,9 +308,7 @@ class PaymentServiceEnhanced {
     String? refundedBy,
   }) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Processing refund for transaction: $transactionId');
-      }
+      AppLogger.info('Processing refund for transaction: $transactionId');
 
       // Get original payment record
       final paymentRecord = await _getPaymentRecord(transactionId);
@@ -423,7 +419,7 @@ class PaymentServiceEnhanced {
         'timestamp': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Refund processing failed: $e');
+      AppLogger.error('❌ Refund processing failed', e);
       return _createErrorResponse('Refund processing failed: ${e.toString()}');
     }
   }
@@ -440,9 +436,7 @@ class PaymentServiceEnhanced {
     Map<String, dynamic>? collectionData,
   }) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Captain collecting payment for order: $orderId');
-      }
+      AppLogger.info('Captain collecting payment for order: $orderId');
 
       // Validate collection
       final validation = await _validatePaymentCollection(
@@ -505,7 +499,7 @@ class PaymentServiceEnhanced {
         'message': 'Payment collected successfully',
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Payment collection failed: $e');
+      AppLogger.error('❌ Payment collection failed', e);
       return _createErrorResponse('Payment collection failed: ${e.toString()}');
     }
   }
@@ -518,9 +512,7 @@ class PaymentServiceEnhanced {
     String? notes,
   }) async {
     try {
-      if (kDebugMode) {
-        print('$_logTag Transferring payment to store for order: $orderId');
-      }
+      AppLogger.info('Transferring payment to store for order: $orderId');
 
       // Get order and payment details
       final orderDetails = await _getOrderPaymentDetails(orderId);
@@ -618,7 +610,7 @@ class PaymentServiceEnhanced {
         'message': 'Payment transferred to store successfully',
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Store transfer failed: $e');
+      AppLogger.error('❌ Store transfer failed', e);
       return _createErrorResponse('Store transfer failed: ${e.toString()}');
     }
   }
@@ -639,9 +631,7 @@ class PaymentServiceEnhanced {
           startDate ?? DateTime.now().subtract(const Duration(days: 30));
       final end = endDate ?? DateTime.now();
 
-      if (kDebugMode) {
-        print('$_logTag Generating financial report from $start to $end');
-      }
+      AppLogger.info('Generating financial report from $start to $end');
 
       // Build query
       var query = _supabase
@@ -705,9 +695,7 @@ class PaymentServiceEnhanced {
         'generated_at': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      if (kDebugMode) {
-        print('$_logTag ❌ Financial report generation failed: $e');
-      }
+      AppLogger.error('❌ Financial report generation failed', e);
       return _createErrorResponse(
         'Financial report generation failed: ${e.toString()}',
       );
@@ -725,7 +713,7 @@ class PaymentServiceEnhanced {
           startDate ?? DateTime.now().subtract(const Duration(days: 7));
       final end = endDate ?? DateTime.now();
 
-      if (kDebugMode) print('$_logTag Getting payment analytics');
+      AppLogger.info('Getting payment analytics');
 
       // Get transaction data
       var query = _supabase
@@ -856,7 +844,7 @@ class PaymentServiceEnhanced {
         'generated_at': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Payment analytics failed: $e');
+      AppLogger.error('Payment analytics failed', e);
       return _createErrorResponse('Payment analytics failed: ${e.toString()}');
     }
   }
@@ -869,11 +857,7 @@ class PaymentServiceEnhanced {
     Map<String, dynamic>? riskFactors,
   }) async {
     try {
-      if (kDebugMode) {
-        print(
-          '$_logTag Running fraud detection for transaction: $transactionId',
-        );
-      }
+      AppLogger.info('Running fraud detection for transaction: $transactionId');
 
       final transaction = await _getPaymentRecord(transactionId);
       if (transaction == null) {
@@ -978,7 +962,7 @@ class PaymentServiceEnhanced {
         'checked_at': DateTime.now().toIso8601String(),
       };
     } catch (e) {
-      if (kDebugMode) print('$_logTag ❌ Fraud detection failed: $e');
+      AppLogger.error('Fraud detection failed', e);
       return {
         'success': false,
         'error': 'Fraud detection failed: ${e.toString()}',
@@ -1403,9 +1387,9 @@ class PaymentServiceEnhanced {
   /// Cleanup resources
   Future<void> dispose() async {
     try {
-      if (kDebugMode) print('$_logTag ♻️ Payment service disposed');
+      AppLogger.info('♻️ Payment service disposed');
     } catch (e) {
-      if (kDebugMode) print('$_logTag ⚠️ Error during disposal: $e');
+      AppLogger.warning('⚠️ Error during disposal', e);
     }
   }
 }

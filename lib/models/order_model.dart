@@ -1,9 +1,9 @@
-/// Order models that match the Supabase orders and order_items tables
-/// Updated to match the new comprehensive schema with order_status_logs
-library;
-
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ell_tall_market/core/logger.dart';
+import 'package:ell_tall_market/models/order_enums.dart';
+
+export 'package:ell_tall_market/models/order_enums.dart';
 
 /// Base mixin for common model functionality
 mixin BaseModelMixin {
@@ -24,167 +24,6 @@ mixin BaseModelMixin {
   }
 }
 
-/// Order Status Enum
-enum OrderStatus {
-  pending,
-  confirmed,
-  preparing,
-  ready,
-  pickedUp,
-  inTransit,
-  delivered,
-  cancelled;
-
-  static OrderStatus fromString(String status) {
-    switch (status.toLowerCase()) {
-      case 'pending':
-        return OrderStatus.pending;
-      case 'confirmed':
-        return OrderStatus.confirmed;
-      case 'preparing':
-        return OrderStatus.preparing;
-      case 'ready':
-        return OrderStatus.ready;
-      case 'picked_up':
-        return OrderStatus.pickedUp;
-      case 'in_transit':
-        return OrderStatus.inTransit;
-      case 'delivered':
-        return OrderStatus.delivered;
-      case 'cancelled':
-        return OrderStatus.cancelled;
-      default:
-        return OrderStatus.pending;
-    }
-  }
-
-  String get value {
-    switch (this) {
-      case OrderStatus.pending:
-        return 'pending';
-      case OrderStatus.confirmed:
-        return 'confirmed';
-      case OrderStatus.preparing:
-        return 'preparing';
-      case OrderStatus.ready:
-        return 'ready';
-      case OrderStatus.pickedUp:
-        return 'picked_up';
-      case OrderStatus.inTransit:
-        return 'in_transit';
-      case OrderStatus.delivered:
-        return 'delivered';
-      case OrderStatus.cancelled:
-        return 'cancelled';
-    }
-  }
-
-  String get displayName {
-    switch (this) {
-      case OrderStatus.pending:
-        return 'في الانتظار';
-      case OrderStatus.confirmed:
-        return 'مؤكد';
-      case OrderStatus.preparing:
-        return 'قيد التحضير';
-      case OrderStatus.ready:
-        return 'جاهز';
-      case OrderStatus.pickedUp:
-        return 'تم الاستلام';
-      case OrderStatus.inTransit:
-        return 'في الطريق';
-      case OrderStatus.delivered:
-        return 'تم التوصيل';
-      case OrderStatus.cancelled:
-        return 'ملغي';
-    }
-  }
-}
-
-/// Payment Method Enum
-enum PaymentMethod {
-  cash,
-  card,
-  wallet;
-
-  static PaymentMethod fromString(String method) {
-    switch (method.toLowerCase()) {
-      case 'cash':
-        return PaymentMethod.cash;
-      case 'card':
-        return PaymentMethod.card;
-      case 'wallet':
-        return PaymentMethod.wallet;
-      default:
-        return PaymentMethod.cash;
-    }
-  }
-
-  String get value {
-    switch (this) {
-      case PaymentMethod.cash:
-        return 'cash';
-      case PaymentMethod.card:
-        return 'card';
-      case PaymentMethod.wallet:
-        return 'wallet';
-    }
-  }
-
-  String get displayName {
-    switch (this) {
-      case PaymentMethod.cash:
-        return 'دفع نقدي';
-      case PaymentMethod.card:
-        return 'بطاقة ائتمان';
-      case PaymentMethod.wallet:
-        return 'محفظة إلكترونية';
-    }
-  }
-}
-
-/// Payment Status Enum
-enum PaymentStatus {
-  pending,
-  paid,
-  failed;
-
-  static PaymentStatus fromString(String status) {
-    switch (status.toLowerCase()) {
-      case 'pending':
-        return PaymentStatus.pending;
-      case 'paid':
-        return PaymentStatus.paid;
-      case 'failed':
-        return PaymentStatus.failed;
-      default:
-        return PaymentStatus.pending;
-    }
-  }
-
-  String get value {
-    switch (this) {
-      case PaymentStatus.pending:
-        return 'pending';
-      case PaymentStatus.paid:
-        return 'paid';
-      case PaymentStatus.failed:
-        return 'failed';
-    }
-  }
-
-  String get displayName {
-    switch (this) {
-      case PaymentStatus.pending:
-        return 'في الانتظار';
-      case PaymentStatus.paid:
-        return 'مدفوع';
-      case PaymentStatus.failed:
-        return 'فشل الدفع';
-    }
-  }
-}
-
 /// Order model that matches the Supabase orders table
 class OrderModel with BaseModelMixin {
   static const String tableName = 'orders';
@@ -195,6 +34,8 @@ class OrderModel with BaseModelMixin {
   final String clientId; // UUID REFERENCES clients(id) ON DELETE CASCADE
   final String storeId; // UUID REFERENCES stores(id) ON DELETE CASCADE
   final String? captainId; // UUID REFERENCES captains(id)
+  final String? storeName; // اسم المتجر (من join)
+  final List<String> productNames; // أسماء المنتجات (من order_items)
 
   // معلومات الطلب
   final String? orderNumber; // TEXT UNIQUE
@@ -210,6 +51,7 @@ class OrderModel with BaseModelMixin {
 
   // حالة الطلب
   final OrderStatus status; // order_status_enum DEFAULT 'pending'
+  final String? cancellationReason; // TEXT - سبب الإلغاء
 
   // الدفع
   final PaymentMethod paymentMethod; // TEXT DEFAULT 'cash'
@@ -231,6 +73,8 @@ class OrderModel with BaseModelMixin {
     required this.clientId,
     required this.storeId,
     this.captainId,
+    this.storeName,
+    this.productNames = const [],
     this.orderNumber,
     required this.totalAmount,
     required this.deliveryFee,
@@ -240,6 +84,7 @@ class OrderModel with BaseModelMixin {
     this.deliveryLongitude,
     this.deliveryNotes,
     required this.status,
+    this.cancellationReason,
     required this.paymentMethod,
     required this.paymentStatus,
     this.acceptedAt,
@@ -251,11 +96,22 @@ class OrderModel with BaseModelMixin {
   });
 
   factory OrderModel.fromMap(Map<String, dynamic> map) {
+    final productNamesFromItems =
+        (map['order_items'] as List?)
+            ?.map((item) => (item as Map<String, dynamic>?)?['product_name'])
+            .whereType<String>()
+            .toList() ??
+        const [];
+
     return OrderModel(
       id: map['id'] as String,
       clientId: map['client_id'] as String,
       storeId: map['store_id'] as String,
       captainId: map['captain_id'] as String?,
+      storeName: map['store'] != null
+          ? (map['store'] as Map<String, dynamic>)['name'] as String?
+          : null,
+      productNames: productNamesFromItems,
       orderNumber: map['order_number'] as String?,
       totalAmount: (map['total_amount'] as num).toDouble(),
       deliveryFee: (map['delivery_fee'] as num?)?.toDouble() ?? 0.0,
@@ -265,6 +121,7 @@ class OrderModel with BaseModelMixin {
       deliveryLongitude: (map['delivery_longitude'] as num?)?.toDouble(),
       deliveryNotes: map['delivery_notes'] as String?,
       status: OrderStatus.fromString(map['status'] as String? ?? 'pending'),
+      cancellationReason: map['cancellation_reason'] as String?,
       paymentMethod: PaymentMethod.fromString(
         map['payment_method'] as String? ?? 'cash',
       ),
@@ -339,6 +196,7 @@ class OrderModel with BaseModelMixin {
     String? storeId,
     String? captainId,
     String? orderNumber,
+    List<String>? productNames,
     double? totalAmount,
     double? deliveryFee,
     double? taxAmount,
@@ -362,6 +220,7 @@ class OrderModel with BaseModelMixin {
       storeId: storeId ?? this.storeId,
       captainId: captainId ?? this.captainId,
       orderNumber: orderNumber ?? this.orderNumber,
+      productNames: productNames ?? this.productNames,
       totalAmount: totalAmount ?? this.totalAmount,
       deliveryFee: deliveryFee ?? this.deliveryFee,
       taxAmount: taxAmount ?? this.taxAmount,
@@ -657,7 +516,7 @@ class OrderService {
           .map<OrderModel>((order) => OrderModel.fromMap(order))
           .toList();
     } catch (e) {
-      print('Error getting client orders: $e');
+      AppLogger.error('Error getting client orders', e);
       return [];
     }
   }
@@ -675,7 +534,7 @@ class OrderService {
           .map<OrderModel>((order) => OrderModel.fromMap(order))
           .toList();
     } catch (e) {
-      print('Error getting store orders: $e');
+      AppLogger.error('Error getting store orders', e);
       return [];
     }
   }
@@ -696,7 +555,7 @@ class OrderService {
           .map<OrderModel>((order) => OrderModel.fromMap(order))
           .toList();
     } catch (e) {
-      print('Error getting captain orders: $e');
+      AppLogger.error('Error getting captain orders', e);
       return [];
     }
   }
@@ -713,7 +572,7 @@ class OrderService {
           .map<OrderItemModel>((item) => OrderItemModel.fromMap(item))
           .toList();
     } catch (e) {
-      print('Error getting order items: $e');
+      AppLogger.error('Error getting order items', e);
       return [];
     }
   }
@@ -733,7 +592,7 @@ class OrderService {
           .map<OrderStatusLogModel>((log) => OrderStatusLogModel.fromMap(log))
           .toList();
     } catch (e) {
-      print('Error getting order status logs: $e');
+      AppLogger.error('Error getting order status logs', e);
       return [];
     }
   }
@@ -751,7 +610,7 @@ class OrderService {
 
       return true;
     } catch (e) {
-      print('Error updating order status: $e');
+      AppLogger.error('Error updating order status', e);
       return false;
     }
   }
@@ -769,7 +628,7 @@ class OrderService {
 
       return true;
     } catch (e) {
-      print('Error updating payment status: $e');
+      AppLogger.error('Error updating payment status', e);
       return false;
     }
   }
@@ -784,7 +643,7 @@ class OrderService {
 
       return true;
     } catch (e) {
-      print('Error assigning captain: $e');
+      AppLogger.error('Error assigning captain', e);
       return false;
     }
   }

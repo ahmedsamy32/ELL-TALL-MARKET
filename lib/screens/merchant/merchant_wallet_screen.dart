@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
+import 'package:ell_tall_market/providers/settings_provider.dart';
 import 'package:ell_tall_market/models/financial_model.dart';
-import 'package:ell_tall_market/services/financial_service.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:shimmer/shimmer.dart';
 
 class MerchantWalletScreen extends StatefulWidget {
   const MerchantWalletScreen({super.key});
 
   @override
-  _MerchantWalletScreenState createState() => _MerchantWalletScreenState();
+  State<MerchantWalletScreen> createState() => _MerchantWalletScreenState();
 }
 
 class _MerchantWalletScreenState extends State<MerchantWalletScreen>
@@ -21,12 +23,14 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
   DateTime? _startDate;
   DateTime? _endDate;
   bool _isLoading = true;
+  String? _errorMessage;
   double _currentBalance = 0;
   List<FinancialTransactionModel> _transactions = [];
   List<FinancialTransactionModel> _filteredTransactions = [];
   String _selectedTransactionType = 'all';
   String _selectedStatusFilter = 'all';
   final List<FlSpot> _transactionTrend = [];
+  late SettingsProvider _settingsProvider;
   Map<String, double> _summary = {
     'total_collected': 0,
     'total_transferred': 0,
@@ -34,11 +38,13 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
     'net_amount': 0,
   };
   String? _currentStoreId;
+  final SupabaseClient _supabase = Supabase.instance.client;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
     _loadData();
   }
 
@@ -49,7 +55,10 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
   }
 
   Future<void> _loadData() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
     try {
       final authProvider = Provider.of<SupabaseProvider>(
         context,
@@ -80,40 +89,96 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
       // In a complete implementation, you'd fetch the actual store
       _currentStoreId = merchant.id;
 
-      // Use FinancialServiceEnhanced to get store balance details
-      final balanceData = await FinancialServiceEnhanced.instance
-          .getStoreBalanceDetails(_currentStoreId!);
+      // Calculate balance from orders instead of non-existent financial_transactions
+      final ordersResponse = await _supabase
+          .from('orders')
+          .select('total_amount, delivery_fee, status, created_at')
+          .eq('store_id', _currentStoreId!)
+          .order('created_at', ascending: false);
 
-      // Get transactions using advanced method
-      final transactionsData = await FinancialServiceEnhanced.instance
-          .getAdvancedTransactions(
-            storeId: _currentStoreId,
-            startDate: _startDate,
-            endDate: _endDate,
-            limit: 100,
-          );
+      final ordersList = ordersResponse as List;
 
-      final transactionsList = transactionsData['transactions'] as List;
-      final transactions = transactionsList
-          .map((data) => FinancialTransactionModel.fromMap(data))
-          .toList();
+      // Calculate balance breakdown from orders
+      double totalRevenue = 0;
+      double totalDeliveryFees = 0;
+      double pendingAmount = 0;
+      double completedAmount = 0;
+
+      final recentOrders = <Map<String, dynamic>>[];
+
+      for (final order in ordersList) {
+        final totalAmount = (order['total_amount'] as num?)?.toDouble() ?? 0.0;
+        final deliveryFee = (order['delivery_fee'] as num?)?.toDouble() ?? 0.0;
+        final status = order['status'] as String?;
+
+        // Add to recent orders (limit to 15)
+        if (recentOrders.length < 15) {
+          recentOrders.add({
+            ...order,
+            'type': 'order',
+            'amount': totalAmount,
+            'notes': 'طلب رقم ${order['id']?.substring(0, 8) ?? 'غير محدد'}',
+          });
+        }
+
+        totalRevenue += totalAmount;
+        totalDeliveryFees += deliveryFee;
+
+        if (status == 'delivered') {
+          completedAmount += totalAmount;
+        } else if (status != 'cancelled') {
+          pendingAmount += totalAmount;
+        }
+      }
+
+      final balanceData = {
+        'current_balance': completedAmount * 0.9, // Assuming 10% commission
+        'total_revenue': totalRevenue,
+        'total_delivery_fees': totalDeliveryFees,
+        'pending_amount': pendingAmount,
+        'completed_amount': completedAmount,
+        'commission_rate': 0.1,
+        'recent_transactions': recentOrders,
+      };
+
+      // Create mock transactions list for compatibility
+      final transactions = recentOrders.map((order) {
+        return FinancialTransactionModel(
+          id: order['id'] ?? '',
+          orderId: order['id'] ?? '',
+          storeId: _currentStoreId!,
+          type: TransactionType.collection,
+          amount: (order['amount'] as num?)?.toDouble() ?? 0.0,
+          notes: order['notes'] ?? '',
+          status: TransactionStatus.completed,
+          createdAt: DateTime.parse(order['created_at']),
+          updatedAt: DateTime.parse(order['created_at']),
+        );
+      }).toList();
 
       // Calculate summary from balance data
       final summary = <String, double>{
-        'total_collected': (balanceData['total_revenue'] ?? 0.0).toDouble(),
-        'total_transferred': (balanceData['total_settled'] ?? 0.0).toDouble(),
-        'total_refunded': (balanceData['total_refunded'] ?? 0.0).toDouble(),
-        'net_amount': (balanceData['net_revenue'] ?? 0.0).toDouble(),
+        'total_collected':
+            (balanceData['total_revenue'] as num?)?.toDouble() ?? 0.0,
+        'total_transferred':
+            (balanceData['completed_amount'] as num?)?.toDouble() ?? 0.0,
+        'total_refunded': 0.0, // No refunds in current schema
+        'net_amount':
+            ((balanceData['total_revenue'] as num?)?.toDouble() ?? 0.0) * 0.9,
       };
 
+      if (!mounted) return;
       setState(() {
-        _currentBalance = balanceData['current_balance'] ?? 0.0;
+        _currentBalance =
+            (balanceData['current_balance'] as num?)?.toDouble() ?? 0.0;
         _transactions = transactions;
         _summary = summary;
         _filteredTransactions = transactions;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
+      _errorMessage = 'حدث خطأ أثناء تحميل بيانات المحفظة. حاول لاحقاً.';
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('حدث خطأ في تحميل البيانات')));
@@ -140,52 +205,126 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
         ),
       ),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : TabBarView(
-              controller: _tabController,
-              children: [
-                _buildTransactionsTab(),
-                _buildAnalyticsTab(),
-                _buildChartsTab(),
-              ],
-            ),
+          ? _buildShimmerBody()
+          : (_errorMessage != null
+                ? _buildErrorState(_errorMessage!)
+                : TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildTransactionsTab(),
+                      _buildAnalyticsTab(),
+                      _buildChartsTab(),
+                    ],
+                  )),
     );
   }
 
-  Widget _buildTransactionsTab() {
-    return Column(
-      children: [
-        _buildBalanceCard(),
-        _buildTransactionFilters(),
-        Expanded(child: _buildFilteredTransactionsList()),
-      ],
-    );
-  }
-
-  Widget _buildAnalyticsTab() {
-    return SingleChildScrollView(
-      padding: EdgeInsets.all(16),
+  Widget _buildShimmerBody() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          _buildSummaryCards(),
-          SizedBox(height: 24),
-          _buildTransactionsChart(),
+          _buildShimmerCard(height: 120),
+          const SizedBox(height: 16),
+          _buildShimmerCard(height: 60),
+          const SizedBox(height: 16),
+          Expanded(
+            child: ListView.separated(
+              itemCount: 6,
+              separatorBuilder: (_, index) => const SizedBox(height: 12),
+              itemBuilder: (_, index) => _buildShimmerCard(height: 80),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildChartsTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+  Widget _buildShimmerCard({double height = 120}) {
+    return Shimmer.fromColors(
+      baseColor: Colors.grey.shade300,
+      highlightColor: Colors.grey.shade100,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState(String message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.red),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _loadData,
+              icon: const Icon(Icons.refresh),
+              label: const Text('إعادة المحاولة'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTransactionsTab() {
+    return RefreshIndicator(
+      onRefresh: _loadData,
       child: Column(
         children: [
-          _buildTransactionTrendChart(),
-          const SizedBox(height: 24),
-          _buildTransactionDistributionPieChart(),
-          const SizedBox(height: 24),
-          _buildMonthlyComparisonChart(),
+          _buildBalanceCard(),
+          _buildTransactionFilters(),
+          Expanded(child: _buildFilteredTransactionsList()),
         ],
+      ),
+    );
+  }
+
+  Widget _buildAnalyticsTab() {
+    return RefreshIndicator(
+      onRefresh: _loadData,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.all(16),
+        child: Column(
+          children: [
+            _buildSummaryCards(),
+            SizedBox(height: 24),
+            _buildTransactionsChart(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChartsTab() {
+    return RefreshIndicator(
+      onRefresh: _loadData,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            _buildTransactionTrendChart(),
+            const SizedBox(height: 24),
+            _buildTransactionDistributionPieChart(),
+            const SizedBox(height: 24),
+            _buildMonthlyComparisonChart(),
+          ],
+        ),
       ),
     );
   }
@@ -203,7 +342,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
             ),
             SizedBox(height: 8),
             Text(
-              '${_currentBalance.toStringAsFixed(2)} ريال',
+              _settingsProvider.formatCurrency(_currentBalance),
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
@@ -284,7 +423,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
             ),
             SizedBox(height: 4),
             Text(
-              '${amount.toStringAsFixed(2)} ريال',
+              _settingsProvider.formatCurrency(amount),
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
@@ -683,12 +822,18 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
 
   Widget _buildFilteredTransactionsList() {
     if (_filteredTransactions.isEmpty) {
-      return const Center(
-        child: Text('لا توجد معاملات تطابق المعايير المحددة'),
+      return SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Container(
+          height: 400,
+          alignment: Alignment.center,
+          child: const Text('لا توجد معاملات تطابق المعايير المحددة'),
+        ),
       );
     }
 
     return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
       itemCount: _filteredTransactions.length,
       padding: const EdgeInsets.all(16),
       itemBuilder: (context, index) {
@@ -705,7 +850,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
         leading: _getTransactionIcon(transaction.type),
         title: Text(_getTransactionTitle(transaction)),
         subtitle: Text(
-          '${transaction.amount.toStringAsFixed(2)} ريال - ${_formatDate(transaction.createdAt)}',
+          '${_settingsProvider.formatCurrency(transaction.amount)} - ${_formatDate(transaction.createdAt)}',
         ),
         trailing: _buildStatusChip(transaction.status),
         children: [
