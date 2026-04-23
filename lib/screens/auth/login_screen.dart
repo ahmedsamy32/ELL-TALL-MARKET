@@ -11,6 +11,7 @@ import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -20,6 +21,9 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  static const String _rememberMeKey = 'login_remember_me';
+  static const String _rememberedEmailKey = 'login_remembered_email';
+
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -33,6 +37,8 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
+
+    _loadRememberMeState();
 
     // التحقق من وجود بريد إلكتروني مُرسل من صفحة التسجيل
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -52,6 +58,47 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       }
     });
+  }
+
+  Future<void> _loadRememberMeState() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final remember = prefs.getBool(_rememberMeKey) ?? false;
+      final rememberedEmail = prefs.getString(_rememberedEmailKey) ?? '';
+
+      if (!mounted) return;
+      setState(() {
+        _rememberMe = remember;
+        if (remember && rememberedEmail.isNotEmpty) {
+          _emailController.text = rememberedEmail;
+        }
+      });
+    } catch (e) {
+      AppLogger.warning('[Login] تعذر تحميل إعداد تذكرني: $e');
+    }
+  }
+
+  Future<void> _persistRememberMeState({String? email}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_rememberMeKey, _rememberMe);
+
+      if (_rememberMe) {
+        final value = (email ?? _emailController.text).trim();
+        if (value.isNotEmpty) {
+          await prefs.setString(_rememberedEmailKey, value);
+        }
+      } else {
+        await prefs.remove(_rememberedEmailKey);
+      }
+    } catch (e) {
+      AppLogger.warning('[Login] تعذر حفظ إعداد تذكرني: $e');
+    }
+  }
+
+  void _toggleRememberMe() {
+    setState(() => _rememberMe = !_rememberMe);
+    _persistRememberMeState();
   }
 
   @override
@@ -243,6 +290,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (success) {
         AppLogger.info("[Login] تم تسجيل الدخول بنجاح");
+
+        await _persistRememberMeState(email: email);
+        if (!mounted) return;
 
         ScaffoldMessenger.of(context).clearSnackBars();
         SnackBarHelper.showSuccess(context, '✅ تم تسجيل الدخول بنجاح!');
@@ -869,11 +919,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               InkWell(
-                                onTap: _isLoading
-                                    ? null
-                                    : () => setState(
-                                        () => _rememberMe = !_rememberMe,
-                                      ),
+                                onTap: _isLoading ? null : _toggleRememberMe,
                                 borderRadius: BorderRadius.circular(8),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
@@ -1422,11 +1468,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               InkWell(
-                                onTap: _isLoading
-                                    ? null
-                                    : () => setState(
-                                        () => _rememberMe = !_rememberMe,
-                                      ),
+                                onTap: _isLoading ? null : _toggleRememberMe,
                                 borderRadius: BorderRadius.circular(8),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
