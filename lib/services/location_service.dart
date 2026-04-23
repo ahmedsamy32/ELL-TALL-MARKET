@@ -11,7 +11,7 @@ class LocationService {
   static Future<List<Map<String, dynamic>>> getNearbyStores({
     required double latitude,
     required double longitude,
-    double maxDistanceKm = 20,
+    double maxDistanceKm = 15,
     String? categoryFilter,
   }) async {
     try {

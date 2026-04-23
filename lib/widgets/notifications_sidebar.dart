@@ -7,7 +7,9 @@ import 'package:ell_tall_market/models/notification_model.dart';
 
 /// 🔔 شريط جانبي للإشعارات محدث ليعمل مع NotificationProvider
 class NotificationsSidebar extends StatefulWidget {
-  const NotificationsSidebar({super.key});
+  final String? targetRole; // الدور المستهدف (client, merchant, captain, admin)
+
+  const NotificationsSidebar({super.key, this.targetRole});
 
   @override
   State<NotificationsSidebar> createState() => _NotificationsSidebarState();
@@ -18,8 +20,12 @@ class _NotificationsSidebarState extends State<NotificationsSidebar> {
   Widget build(BuildContext context) {
     return Consumer<NotificationProvider>(
       builder: (context, notificationProvider, child) {
-        final notifications = notificationProvider.notifications;
-        final unreadCount = notificationProvider.unreadCount;
+        final notifications = notificationProvider.getNotificationsForRole(
+          widget.targetRole,
+        );
+        final unreadCount = notificationProvider.getUnreadCountForRole(
+          widget.targetRole,
+        );
         final isLoading = notificationProvider.isLoading;
 
         return Drawer(
@@ -40,7 +46,7 @@ class _NotificationsSidebarState extends State<NotificationsSidebar> {
                 child: SafeArea(
                   child: Container(
                     padding: const EdgeInsets.all(16.0),
-                    height: 80, // ارتفاع ثابت للمحتوى فقط بعد SafeArea
+                    height: 100, // ارتفاع كافٍ للمحتوى لمنع التجاوز (Overflow)
                     child: Row(
                       children: [
                         Container(

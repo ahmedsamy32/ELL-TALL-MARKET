@@ -86,7 +86,11 @@ class CartService {
                 merchant_id,
                 min_order,
                 delivery_mode,
-                delivery_fee
+                delivery_fee,
+                latitude,
+                longitude,
+                governorate,
+                delivery_radius_km
               )
             )
           ''')
@@ -112,27 +116,71 @@ class CartService {
     required String userId,
     required String productId,
     int quantity = 1,
+    Map<String, dynamic>? selectedOptions,
+    String? cachedCartId,
   }) async {
     try {
-      // التحقق من وجود المنتج وتوفره
-      final product = await _checkProductAvailability(productId, quantity);
+      // ⚡ تشغيل كل الاستعلامات الممكنة بالتوازي
+      late final Map<String, dynamic>? product;
+      late final String? cartId;
+      late final List<dynamic> existingCartItems;
+
+      if (cachedCartId != null) {
+        // لو عندنا معرف السلة → نشغل product check + cart_items query بالتوازي
+        final productFuture = _checkProductAvailability(productId, quantity);
+        final cartItemsFuture = _supabase
+            .from('cart_items')
+            .select()
+            .eq('cart_id', cachedCartId)
+            .eq('product_id', productId);
+
+        final results = await Future.wait<dynamic>([
+          productFuture,
+          cartItemsFuture,
+        ]);
+        product = results[0] as Map<String, dynamic>?;
+        existingCartItems = results[1] as List<dynamic>;
+        cartId = cachedCartId;
+      } else {
+        // تشغيل product + getUserCart بالتوازي
+        final productFuture = _checkProductAvailability(productId, quantity);
+        final cartFuture = getUserCart(userId);
+
+        final results = await Future.wait<dynamic>([productFuture, cartFuture]);
+        product = results[0] as Map<String, dynamic>?;
+        final cart = results[1] as CartModel?;
+        cartId = cart?.id;
+
+        if (product == null) {
+          throw Exception('المنتج غير متوفر أو الكمية المطلوبة غير كافية');
+        }
+        if (cartId == null) {
+          throw Exception('فشل في الحصول على السلة');
+        }
+
+        // نحتاج استعلام cart_items بعد ما نعرف cartId
+        existingCartItems = await _supabase
+            .from('cart_items')
+            .select()
+            .eq('cart_id', cartId)
+            .eq('product_id', productId);
+      }
+
       if (product == null) {
         throw Exception('المنتج غير متوفر أو الكمية المطلوبة غير كافية');
       }
 
-      // الحصول على السلة أو إنشاؤها
-      final cart = await getUserCart(userId);
-      if (cart == null) {
-        throw Exception('فشل في الحصول على السلة');
-      }
+      // البحث عن المنتج بنفس الخيارات
+      final items = existingCartItems;
+      Map<String, dynamic>? existingItem;
 
-      // التحقق من وجود المنتج في السلة
-      final existingItem = await _supabase
-          .from('cart_items')
-          .select()
-          .eq('cart_id', cart.id)
-          .eq('product_id', productId)
-          .maybeSingle();
+      for (final item in items) {
+        final itemOptions = item['selected_options'] as Map<String, dynamic>?;
+        if (_compareOptions(itemOptions, selectedOptions)) {
+          existingItem = item;
+          break;
+        }
+      }
 
       if (existingItem != null) {
         // تحديث الكمية للمنتج الموجود
@@ -158,7 +206,7 @@ class CartService {
       } else {
         // إضافة منتج جديد للسلة
         final itemData = {
-          'cart_id': cart.id,
+          'cart_id': cartId,
           'product_id': productId,
           'store_id': product['store_id'],
           'product_name': product['name'],
@@ -166,6 +214,7 @@ class CartService {
           'product_image': product['image_url'],
           'quantity': quantity,
           'total_price': (product['price'] as num) * quantity,
+          'selected_options': selectedOptions ?? {},
         };
 
         final response = await _supabase
@@ -184,6 +233,25 @@ class CartService {
       AppLogger.error('خطأ في إضافة المنتج للسلة', e);
       throw Exception('فشل إضافة المنتج للسلة: ${e.toString()}');
     }
+  }
+
+  /// قارن بين خيارين لمعرفة التطابق
+  static bool _compareOptions(
+    Map<String, dynamic>? opt1,
+    Map<String, dynamic>? opt2,
+  ) {
+    // معالجة الحالات الخاصة: null و {} يعتبران متساويان
+    final options1 = opt1 == null || opt1.isEmpty ? null : opt1;
+    final options2 = opt2 == null || opt2.isEmpty ? null : opt2;
+
+    if (options1 == null && options2 == null) return true;
+    if (options1 == null || options2 == null) return false;
+    if (options1.length != options2.length) return false;
+
+    for (final key in options1.keys) {
+      if (options1[key]?.toString() != options2[key]?.toString()) return false;
+    }
+    return true;
   }
 
   /// تحديث كمية منتج في السلة
@@ -550,7 +618,7 @@ class CartService {
   // 🛠️ Helper Functions
   // ================================
 
-  /// التحقق من توفر المنتج
+  /// التحقق من توفر المنتج مع بيانات المتجر (استعلام واحد مدمج)
   static Future<Map<String, dynamic>?> _checkProductAvailability(
     String productId,
     int requestedQuantity,
@@ -558,9 +626,14 @@ class CartService {
     try {
       final product = await _supabase
           .from('products')
-          .select(
-            'id, store_id, stock_quantity, in_stock, is_active, price, name, image_url',
-          )
+          .select('''
+            id, store_id, stock_quantity, in_stock, is_active, price, name, image_url,
+            stores!inner (
+              id,
+              name,
+              delivery_mode
+            )
+          ''')
           .eq('id', productId)
           .single();
 
@@ -661,6 +734,21 @@ class CartService {
       return null;
     } catch (e) {
       AppLogger.error('خطأ في جلب معلومات المنتج', e);
+      return null;
+    }
+  }
+
+  /// جلب نظام التوصيل لمتجر معين (استعلام خفيف جداً - حقل واحد فقط)
+  static Future<String?> getStoreDeliveryMode(String storeId) async {
+    try {
+      final response = await _supabase
+          .from('stores')
+          .select('delivery_mode')
+          .eq('id', storeId)
+          .maybeSingle();
+      return (response?['delivery_mode'] as String?) ?? 'store';
+    } catch (e) {
+      AppLogger.error('خطأ في جلب نظام توصيل المتجر', e);
       return null;
     }
   }

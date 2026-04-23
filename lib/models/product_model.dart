@@ -721,7 +721,9 @@ class ProductModel with BaseModelMixin {
   final List<String>? imageUrls; // TEXT[] - Multiple product images
   final bool inStock; // BOOLEAN DEFAULT TRUE
   final int stockQuantity; // INT DEFAULT 0
-  final bool isActive; // BOOLEAN DEFAULT TRUE
+  final bool isActive; // BOOLEAN DEFAULT TRUE.
+  final double rating; // DECIMAL(2,1) DEFAULT 0.0
+  final int reviewCount; // INT DEFAULT 0
   final List<String>? tags; // TEXT[]
   final List<QuantityBasedPrice>? quantityBasedPrices; // Advanced pricing
   final List<SeasonalOffer>? seasonalOffers; // Seasonal offers
@@ -752,6 +754,8 @@ class ProductModel with BaseModelMixin {
     this.inStock = true,
     this.stockQuantity = 0,
     this.isActive = true,
+    this.rating = 0.0,
+    this.reviewCount = 0,
     this.tags,
     this.quantityBasedPrices,
     this.seasonalOffers,
@@ -806,6 +810,10 @@ class ProductModel with BaseModelMixin {
       inStock: map['in_stock'] as bool? ?? true,
       stockQuantity: map['stock_quantity'] as int? ?? 0,
       isActive: map['is_active'] as bool? ?? true,
+      rating: map['rating'] != null
+          ? double.parse(map['rating'].toString())
+          : 0.0,
+      reviewCount: map['review_count'] as int? ?? 0,
       tags: map['tags'] != null ? List<String>.from(map['tags']) : null,
       customFields: map['custom_fields'] != null
           ? Map<String, dynamic>.from(map['custom_fields'] as Map)
@@ -814,8 +822,19 @@ class ProductModel with BaseModelMixin {
       seasonalOffers: null, // Will be loaded separately
       vipPrices: null, // Will be loaded separately
       promotionalDiscounts: null, // Will be loaded separately
-      variantGroups: null, // Will be loaded separately
-      variants: null, // Will be loaded separately
+      variantGroups: map['variant_groups'] != null
+          ? (map['variant_groups'] as List<dynamic>)
+                .map(
+                  (e) =>
+                      ProductVariantGroup.fromJson(e as Map<String, dynamic>),
+                )
+                .toList()
+          : null,
+      variants: map['variants'] != null
+          ? (map['variants'] as List<dynamic>)
+                .map((e) => ProductVariant.fromJson(e as Map<String, dynamic>))
+                .toList()
+          : null,
       createdAt: BaseModelMixin.parseDateTime(map['created_at']),
       updatedAt: map['updated_at'] != null
           ? BaseModelMixin.parseDateTime(map['updated_at'])
@@ -836,6 +855,8 @@ class ProductModel with BaseModelMixin {
       price: 0.0,
       stockQuantity: 0,
       isActive: true,
+      rating: 0.0,
+      reviewCount: 0,
       createdAt: DateTime.now(),
     );
   }
@@ -857,14 +878,17 @@ class ProductModel with BaseModelMixin {
       'image_url': imageUrl,
       'custom_fields': customFields,
       'is_active': isActive,
+      'rating': rating,
+      'review_count': reviewCount,
+      'variant_groups': variantGroups?.map((e) => e.toJson()).toList(),
+      'variants': variants?.map((e) => e.toJson()).toList(),
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
     };
   }
 
   Map<String, dynamic> toDatabaseMap() {
-    // For insert/update operations, exclude auto-generated fields
-    return {
+    final map = {
       'store_id': storeId,
       'category_id': categoryId,
       'section_id': sectionId,
@@ -877,10 +901,21 @@ class ProductModel with BaseModelMixin {
       'stock_quantity': stockQuantity,
       'tags': tags,
       'image_url': imageUrl,
-      'image_urls': imageUrls, // ✅ تفعيل حفظ الصور المتعددة
+      'image_urls': imageUrls,
       'custom_fields': customFields,
       'is_active': isActive,
+      'rating': rating,
+      'review_count': reviewCount,
     };
+
+    if (variantGroups != null) {
+      map['variant_groups'] = variantGroups!.map((e) => e.toJson()).toList();
+    }
+    if (variants != null) {
+      map['variants'] = variants!.map((e) => e.toJson()).toList();
+    }
+
+    return map;
   }
 
   ProductModel copyWith({
@@ -898,12 +933,16 @@ class ProductModel with BaseModelMixin {
     bool? inStock,
     int? stockQuantity,
     bool? isActive,
+    double? rating,
+    int? reviewCount,
     List<String>? tags,
     Map<String, dynamic>? customFields,
     List<QuantityBasedPrice>? quantityBasedPrices,
     List<SeasonalOffer>? seasonalOffers,
     List<VIPPrice>? vipPrices,
     List<PromotionalDiscount>? promotionalDiscounts,
+    List<ProductVariantGroup>? variantGroups,
+    List<ProductVariant>? variants,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -922,12 +961,16 @@ class ProductModel with BaseModelMixin {
       inStock: inStock ?? this.inStock,
       stockQuantity: stockQuantity ?? this.stockQuantity,
       isActive: isActive ?? this.isActive,
+      rating: rating ?? this.rating,
+      reviewCount: reviewCount ?? this.reviewCount,
       tags: tags ?? this.tags,
       customFields: customFields ?? this.customFields,
       quantityBasedPrices: quantityBasedPrices ?? this.quantityBasedPrices,
       seasonalOffers: seasonalOffers ?? this.seasonalOffers,
       vipPrices: vipPrices ?? this.vipPrices,
       promotionalDiscounts: promotionalDiscounts ?? this.promotionalDiscounts,
+      variantGroups: variantGroups ?? this.variantGroups,
+      variants: variants ?? this.variants,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

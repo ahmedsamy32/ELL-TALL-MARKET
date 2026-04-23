@@ -122,7 +122,7 @@ class CaptainProvider with ChangeNotifier {
     required String profileId,
     required String vehicleType,
     String? vehicleNumber,
-    String? driverLicense,
+    String? licenseNumber,
     bool isActive = true,
     Map<String, dynamic>? additionalData,
   }) async {
@@ -132,7 +132,7 @@ class CaptainProvider with ChangeNotifier {
         profileId: profileId,
         vehicleType: vehicleType,
         vehicleNumber: vehicleNumber,
-        driverLicense: driverLicense,
+        licenseNumber: licenseNumber,
         isActive: isActive,
         additionalData: additionalData,
       );
@@ -158,7 +158,7 @@ class CaptainProvider with ChangeNotifier {
     required String captainId,
     String? vehicleType,
     String? vehicleNumber,
-    String? driverLicense,
+    String? licenseNumber,
     bool? isActive,
     Map<String, dynamic>? additionalData,
   }) async {
@@ -168,7 +168,7 @@ class CaptainProvider with ChangeNotifier {
         captainId: captainId,
         vehicleType: vehicleType,
         vehicleNumber: vehicleNumber,
-        driverLicense: driverLicense,
+        licenseNumber: licenseNumber,
         isActive: isActive,
         additionalData: additionalData,
       );

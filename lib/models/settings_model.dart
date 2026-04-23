@@ -62,7 +62,6 @@ extension AppLanguageExtension on AppLanguage {
 /// Currency enum for supported currencies
 enum AppCurrency {
   egp, // Egyptian Pound
-  sar, // Saudi Riyal
   usd, // US Dollar
 }
 
@@ -72,8 +71,6 @@ extension AppCurrencyExtension on AppCurrency {
     switch (this) {
       case AppCurrency.egp:
         return 'EGP';
-      case AppCurrency.sar:
-        return 'SAR';
       case AppCurrency.usd:
         return 'USD';
     }
@@ -83,8 +80,6 @@ extension AppCurrencyExtension on AppCurrency {
     switch (this) {
       case AppCurrency.egp:
         return 'ج.م';
-      case AppCurrency.sar:
-        return 'ر.س';
       case AppCurrency.usd:
         return '\$';
     }
@@ -94,8 +89,6 @@ extension AppCurrencyExtension on AppCurrency {
     switch (this) {
       case AppCurrency.egp:
         return 'جنيه مصري';
-      case AppCurrency.sar:
-        return 'ريال سعودي';
       case AppCurrency.usd:
         return 'دولار أمريكي';
     }
@@ -105,8 +98,6 @@ extension AppCurrencyExtension on AppCurrency {
     switch (code) {
       case 'EGP':
         return AppCurrency.egp;
-      case 'SAR':
-        return AppCurrency.sar;
       case 'USD':
         return AppCurrency.usd;
       default:

@@ -1,20 +1,26 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:ell_tall_market/screens/user/home_screen.dart';
 import 'package:ell_tall_market/screens/user/order_history_screen.dart';
 import 'package:ell_tall_market/screens/user/favorites_screen.dart';
 import 'package:ell_tall_market/screens/user/profile_screen.dart';
 import 'package:ell_tall_market/screens/shared/advanced_map_screen.dart';
+import 'package:ell_tall_market/screens/common/notifications_screen.dart';
 import 'package:ell_tall_market/widgets/role_based_drawer.dart';
-import 'package:ell_tall_market/widgets/notifications_sidebar.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/cart_provider.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
+import 'package:ell_tall_market/providers/location_provider.dart';
+import 'package:ell_tall_market/providers/store_provider.dart';
+import 'package:ell_tall_market/services/google_maps_api_service.dart';
+import 'package:ell_tall_market/services/notification_service.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
+import 'package:ell_tall_market/utils/address_utils.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ell_tall_market/core/logger.dart';
 
 class MainNavigationScreen extends StatefulWidget {
@@ -43,6 +49,8 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
   bool _isLoadingLocation = false;
   LatLng? _selectedPosition;
 
+  final GoogleMapsApiService _mapsApi = GoogleMapsApiService();
+
   // App Colors
   static const Color primaryColor = Color(0xFF6A5AE0);
   static const Color accentColor = Color(0xFFFF9E80);
@@ -52,12 +60,33 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: _currentIndex);
+    _loadCachedLocation(); // عرض آخر موقع محفوظ فوراً
     _getCurrentLocation(); // تحديد الموقع عند بدء التطبيق
+
+    // جلب الإشعارات وحفظ device token للمستخدم
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final authProvider = Provider.of<SupabaseProvider>(
+        context,
+        listen: false,
+      );
+      if (authProvider.isLoggedIn && authProvider.currentUser != null) {
+        Provider.of<NotificationProvider>(
+          context,
+          listen: false,
+        ).loadUserNotifications(authProvider.currentUser!.id);
+
+        // حفظ FCM token للعميل عند فتح الشاشة الرئيسية
+        NotificationServiceEnhanced.instance.saveTokenForCurrentUser(
+          role: 'client',
+        );
+      }
+    });
   }
 
   @override
   void dispose() {
     _pageController.dispose();
+    _mapsApi.dispose();
     super.dispose();
   }
 
@@ -96,13 +125,95 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
     });
   }
 
-  // دالة تحديد الموقع الحالي من GPS
+  // ━━━━━ M1: تحميل آخر موقع محفوظ فوراً (بدون GPS) ━━━━━
+  Future<void> _loadCachedLocation() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lat = prefs.getDouble('last_lat');
+      final lng = prefs.getDouble('last_lng');
+      final address = prefs.getString('last_address');
+
+      if (lat != null && lng != null && mounted) {
+        _selectedPosition = LatLng(lat, lng);
+        final locationProvider = context.read<LocationProvider>();
+        locationProvider.setLocation(latitude: lat, longitude: lng);
+
+        setState(() {
+          _currentAddress = address;
+          _isLoadingLocation = true; // GPS لسه شغال
+        });
+
+        // جلب المتاجر فوراً من الموقع المحفوظ
+        _fetchNearbyStores(lat, lng);
+      }
+    } catch (e) {
+      AppLogger.warning('فشل تحميل الموقع المحفوظ: $e');
+    }
+  }
+
+  // ━━━━━ M1: حفظ الموقع والعنوان في SharedPreferences ━━━━━
+  Future<void> _cacheLocation(double lat, double lng, String address) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble('last_lat', lat);
+      await prefs.setDouble('last_lng', lng);
+      await prefs.setString('last_address', address);
+    } catch (e) {
+      AppLogger.warning('فشل حفظ الموقع: $e');
+    }
+  }
+
+  // ━━━━━ E2: حوار رفض صلاحية الموقع نهائياً ━━━━━
+  void _showLocationDeniedForeverDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('صلاحية الموقع مطلوبة'),
+        content: const Text(
+          'تم رفض صلاحية الموقع نهائياً. '
+          'لتفعيلها مرة أخرى، يرجى الذهاب إلى إعدادات التطبيق '
+          'وتفعيل صلاحية الموقع يدوياً.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('لاحقاً'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              Geolocator.openAppSettings();
+            },
+            child: const Text('فتح الإعدادات'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // دالة تحديد الموقع الحالي من GPS — محسّنة للسرعة
   Future<void> _getCurrentLocation() async {
     if (_isLoadingLocation) return;
 
     setState(() => _isLoadingLocation = true);
 
     try {
+      // ━━━━━ E1: التحقق من تفعيل خدمة الموقع ━━━━━
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        if (!mounted) return;
+        setState(() {
+          _isLoadingLocation = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('يرجى تفعيل خدمة الموقع (GPS) من الإعدادات'),
+            duration: Duration(seconds: 4),
+          ),
+        );
+        return;
+      }
+
       // التحقق من صلاحيات الموقع
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
@@ -117,97 +228,221 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
         }
       }
 
+      // ━━━━━ E2: إظهار حوار عند رفض الصلاحية نهائياً ━━━━━
       if (permission == LocationPermission.deniedForever) {
         if (!mounted) return;
         setState(() {
-          _currentAddress = null;
           _isLoadingLocation = false;
         });
+        _showLocationDeniedForeverDialog();
         return;
       }
 
-      // الحصول على الموقع الحالي
-      Position position =
-          await Geolocator.getCurrentPosition(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.medium,
-              timeLimit: Duration(seconds: 10),
-            ),
-          ).timeout(
-            const Duration(seconds: 10),
-            onTimeout: () {
-              throw Exception('انتهت مهلة تحديد الموقع');
-            },
-          );
+      // ━━━━━ الخطوة 1: آخر موقع معروف فوراً (0 ثوانٍ) ━━━━━
+      final lastPosition = await Geolocator.getLastKnownPosition();
+      if (lastPosition != null && mounted) {
+        // عرض الموقع فوراً بدون انتظار GPS
+        _selectedPosition = LatLng(
+          lastPosition.latitude,
+          lastPosition.longitude,
+        );
+        final locationProvider = context.read<LocationProvider>();
+        locationProvider.setLocation(
+          latitude: lastPosition.latitude,
+          longitude: lastPosition.longitude,
+        );
+        // عرض "الموقع الحالي" مؤقتاً + بدء جلب المتاجر فوراً
+        setState(() {
+          // لا نحفظ placeholder — نبقي العنوان القديم أو null
+          _isLoadingLocation = true; // نبقى في حالة تحميل للعنوان التفصيلي
+        });
+        _fetchNearbyStores(lastPosition.latitude, lastPosition.longitude);
+        // بدء reverse geocode في الخلفية للموقع المبدئي
+        _resolveAddressInBackground(
+          lastPosition.latitude,
+          lastPosition.longitude,
+        );
+      }
 
-      // تحويل الإحداثيات إلى عنوان
-      List<Placemark> placemarks = await placemarkFromCoordinates(
-        position.latitude,
-        position.longitude,
-      );
+      // ━━━━━ الخطوة 2: GPS دقيق (سريع - 8 ثوانٍ حد أقصى) ━━━━━
+      Position? accuratePosition;
+      try {
+        accuratePosition =
+            await Geolocator.getCurrentPosition(
+              locationSettings: const LocationSettings(
+                accuracy: LocationAccuracy.low, // أسرع بكثير من medium/high
+                timeLimit: Duration(seconds: 8),
+              ),
+            ).timeout(
+              const Duration(seconds: 10),
+              onTimeout: () {
+                AppLogger.warning('⏱️ GPS timeout after 10s');
+                throw TimeoutException('GPS timeout');
+              },
+            );
+      } on TimeoutException catch (_) {
+        // لو الـ GPS بطيء، نستخدم آخر موقع معروف (اللي عرضناه فوق)
+        AppLogger.info('📍 استخدام آخر موقع معروف (GPS بطيء)');
+        accuratePosition = lastPosition;
+      }
 
+      // لو مفيش أي موقع خالص
+      if (accuratePosition == null) {
+        if (mounted) {
+          setState(() {
+            _currentAddress = null;
+            _isLoadingLocation = false;
+          });
+        }
+        return;
+      }
+
+      // ━━━━━ الخطوة 3: تحديث بالموقع الدقيق ━━━━━
       if (!mounted) return;
 
-      if (placemarks.isNotEmpty) {
-        final placemark = placemarks.first;
-        List<String> addressParts = [];
+      _selectedPosition = LatLng(
+        accuratePosition.latitude,
+        accuratePosition.longitude,
+      );
+      final locationProvider = context.read<LocationProvider>();
+      locationProvider.setLocation(
+        latitude: accuratePosition.latitude,
+        longitude: accuratePosition.longitude,
+      );
 
-        // إضافة الشارع أو الحي
-        if (placemark.street != null && placemark.street!.isNotEmpty) {
-          addressParts.add(placemark.street!);
-        } else if (placemark.thoroughfare != null &&
-            placemark.thoroughfare!.isNotEmpty) {
-          addressParts.add(placemark.thoroughfare!);
-        } else if (placemark.subLocality != null &&
-            placemark.subLocality!.isNotEmpty) {
-          addressParts.add(placemark.subLocality!);
-        }
+      // لو الموقع الدقيق مختلف عن المبدئي، نحدث المتاجر والعنوان
+      final movedSignificantly =
+          lastPosition == null ||
+          Geolocator.distanceBetween(
+                lastPosition.latitude,
+                lastPosition.longitude,
+                accuratePosition.latitude,
+                accuratePosition.longitude,
+              ) >
+              100; // أكثر من 100 متر فرق
 
-        // إضافة المدينة
-        if (placemark.locality != null && placemark.locality!.isNotEmpty) {
-          addressParts.add(placemark.locality!);
-        } else if (placemark.subAdministrativeArea != null &&
-            placemark.subAdministrativeArea!.isNotEmpty) {
-          addressParts.add(placemark.subAdministrativeArea!);
-        }
-
-        // إضافة المحافظة
-        if (placemark.administrativeArea != null &&
-            placemark.administrativeArea!.isNotEmpty) {
-          addressParts.add(placemark.administrativeArea!);
-        }
-
-        // بناء العنوان النهائي
-        String address = addressParts.join('، ');
-
-        setState(() {
-          _currentAddress = address.isNotEmpty ? address : 'الموقع الحالي';
-          _selectedPosition = LatLng(position.latitude, position.longitude);
-          _isLoadingLocation = false;
-        });
-      } else {
-        setState(() {
-          _currentAddress = 'الموقع الحالي';
-          _selectedPosition = LatLng(position.latitude, position.longitude);
-          _isLoadingLocation = false;
-        });
+      if (movedSignificantly) {
+        _fetchNearbyStores(
+          accuratePosition.latitude,
+          accuratePosition.longitude,
+        );
       }
+
+      // resolve العنوان التفصيلي (بدون حجب الـ UI)
+      _resolveAddressInBackground(
+        accuratePosition.latitude,
+        accuratePosition.longitude,
+      );
     } catch (e) {
+      AppLogger.error('❌ خطأ في تحديد الموقع', e);
       if (mounted) {
         setState(() {
-          _currentAddress = null;
+          // نحتفظ بالعنوان القديم كما هو (لا تغيير)
           _isLoadingLocation = false;
         });
       }
     }
   }
 
-  // عرض Bottom Sheet لاختيار العنوان
-  void _showAddressBottomSheet(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+  /// resolve العنوان في الخلفية بدون حجب الـ UI
+  Future<void> _resolveAddressInBackground(double lat, double lng) async {
+    try {
+      String? addressText;
+
+      // محاولة Google Maps API أولاً (مع timeout قصير 5 ثوانٍ)
+      try {
+        final result = await _mapsApi
+            .reverseGeocodeArabic(LatLng(lat, lng))
+            .timeout(const Duration(seconds: 5));
+        final display = result?.displayAddress;
+        if (display != null && display.trim().isNotEmpty) {
+          addressText = display.trim();
+        }
+      } catch (_) {
+        // صامت - ننتقل للـ fallback
+      }
+
+      // Fallback: geocoding package (مع timeout قصير 5 ثوانٍ)
+      if (addressText == null) {
+        try {
+          final fallback = await AddressUtils.fallbackAddressFromPlacemark(
+            lat,
+            lng,
+          );
+          if (fallback != null && fallback.trim().isNotEmpty) {
+            addressText = fallback.trim();
+          }
+        } catch (_) {}
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _currentAddress =
+            addressText; // null لو مفيش عنوان — لا نحفظ placeholder
+        _isLoadingLocation = false;
+      });
+
+      // M1: حفظ الموقع والعنوان في SharedPreferences لاستعادتهما فوراً
+      if (addressText != null) {
+        _cacheLocation(lat, lng, addressText);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          // نحتفظ بالعنوان القديم كما هو
+          _isLoadingLocation = false;
+        });
+      }
+    }
+  }
+
+  // جلب المتاجر القريبة من الموقع المحدد
+  Future<void> _fetchNearbyStores(double latitude, double longitude) async {
+    try {
+      final storeProvider = context.read<StoreProvider>();
+      await storeProvider.fetchNearbyStores(
+        latitude: latitude,
+        longitude: longitude,
+        maxDistanceKm: 15,
+      );
+      AppLogger.info(
+        '🏪 تم تحديث المتاجر القريبة: ${storeProvider.nearbyStores.length} متجر',
+      );
+    } catch (e) {
+      AppLogger.error('❌ خطأ في جلب المتاجر القريبة', e);
+    }
+  }
+
+  // عرض Bottom Sheet للإشعارات
+  void _showNotificationsBottomSheet(BuildContext parentContext) {
+    final colorScheme = Theme.of(parentContext).colorScheme;
 
     showModalBottomSheet(
-      context: context,
+      context: parentContext,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        builder: (context, scrollController) => Container(
+          decoration: BoxDecoration(
+            color: colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: NotificationsScreen(targetRole: 'client'),
+        ),
+      ),
+    );
+  }
+
+  // عرض Bottom Sheet لاختيار العنوان
+  void _showAddressBottomSheet(BuildContext parentContext) {
+    final colorScheme = Theme.of(parentContext).colorScheme;
+
+    showModalBottomSheet(
+      context: parentContext,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Container(
@@ -245,7 +480,7 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
                     ),
                     IconButton(
                       icon: Icon(Icons.close, color: colorScheme.onSurface),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pop(parentContext),
                     ),
                   ],
                 ),
@@ -277,7 +512,7 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
                             address: _currentAddress!,
                             icon: Icons.my_location,
                             onTap: () {
-                              Navigator.pop(context);
+                              Navigator.pop(parentContext);
                             },
                           );
                         }
@@ -290,7 +525,7 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
                               'The C House, Masaken Al Astad Street, 2\nجامعه الزقازيق',
                           icon: Icons.home,
                           onTap: () {
-                            Navigator.pop(context);
+                            Navigator.pop(parentContext);
                             // يمكن حفظ العنوان المختار
                           },
                         );
@@ -304,13 +539,13 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
                       subtitle: 'اختر موقع على الخريطة',
                       icon: Icons.add_location_alt,
                       onTap: () async {
-                        Navigator.pop(context);
+                        Navigator.pop(parentContext);
 
-                        final messenger = ScaffoldMessenger.of(context);
+                        final messenger = ScaffoldMessenger.of(parentContext);
 
                         // الحصول على userId من authProvider
                         final result = await Navigator.push(
-                          context,
+                          parentContext,
                           MaterialPageRoute(
                             builder: (context) => AdvancedMapScreen(
                               userType: MapUserType.customer,
@@ -326,10 +561,23 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
                         if (!mounted) return;
                         if (result == null) return;
 
+                        final pos = result['position'] as LatLng?;
                         setState(() {
-                          _selectedPosition = result['position'];
+                          _selectedPosition = pos;
                           _currentAddress = result['address'];
                         });
+
+                        // تحديث LocationProvider وجلب المتاجر القريبة
+                        if (pos != null) {
+                          final locationProvider = context
+                              .read<LocationProvider>();
+                          locationProvider.setLocation(
+                            latitude: pos.latitude,
+                            longitude: pos.longitude,
+                            address: result['address'],
+                          );
+                          _fetchNearbyStores(pos.latitude, pos.longitude);
+                        }
 
                         messenger.showSnackBar(
                           SnackBar(
@@ -349,7 +597,7 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
                       subtitle: 'السماح لتطبيق طلبات بتحديد الموقع',
                       icon: Icons.gps_fixed,
                       onTap: () {
-                        Navigator.pop(context);
+                        Navigator.pop(parentContext);
                         _getCurrentLocation();
                       },
                     ),
@@ -482,82 +730,109 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isWide = MediaQuery.sizeOf(context).width >= 1200;
+
+    final pages = [
+      HomeScreen(key: _pageKeys[0]),
+      OrderHistoryScreen(key: _pageKeys[1]),
+      FavoritesScreen(key: _pageKeys[2]),
+      ProfileScreen(key: _pageKeys[3]),
+    ];
 
     return Scaffold(
-      drawer: const RoleBasedDrawer(),
-      endDrawer: const NotificationsSidebar(),
-      appBar: _buildAppBar(context, colorScheme),
-      body: PageView(
-        controller: _pageController,
-        onPageChanged: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
-        },
-        children: [
-          HomeScreen(key: _pageKeys[0]),
-          OrderHistoryScreen(key: _pageKeys[1]),
-          FavoritesScreen(key: _pageKeys[2]),
-          ProfileScreen(key: _pageKeys[3]),
-        ],
-      ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.1),
-              blurRadius: 10,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
+      drawer: !isWide ? const RoleBasedDrawer() : null,
+      appBar: _buildAppBar(context, colorScheme, isWide),
+      body: isWide
+          ? Row(
               children: [
-                _buildNavItem(
-                  icon: Icons.home_outlined,
-                  activeIcon: Icons.home,
-                  label: 'الرئيسية',
-                  index: 0,
-                ),
-                _buildNavItem(
-                  icon: Icons.receipt_long_outlined,
-                  activeIcon: Icons.receipt_long,
-                  label: 'الطلبات',
-                  index: 1,
-                ),
-                _buildNavItem(
-                  icon: Icons.favorite_border,
-                  activeIcon: Icons.favorite,
-                  label: 'المفضلة',
-                  index: 2,
-                ),
-                _buildNavItem(
-                  icon: Icons.person_outline,
-                  activeIcon: Icons.person,
-                  label: 'حسابي',
-                  index: 3,
+                const RoleBasedDrawer(isSidebar: true),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: Column(
+                    children: [
+                      _buildNavTabBar(colorScheme),
+                      Expanded(
+                        child: IndexedStack(
+                          index: _currentIndex,
+                          children: pages,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
+            )
+          : PageView(
+              controller: _pageController,
+              onPageChanged: (index) {
+                setState(() => _currentIndex = index);
+              },
+              children: pages,
             ),
-          ),
-        ),
-      ),
+      bottomNavigationBar: !isWide
+          ? Container(
+              decoration: BoxDecoration(
+                color: colorScheme.surface,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.1),
+                    blurRadius: 10,
+                    offset: const Offset(0, -2),
+                  ),
+                ],
+              ),
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _buildNavItem(
+                        icon: Icons.home_outlined,
+                        activeIcon: Icons.home,
+                        label: 'الرئيسية',
+                        index: 0,
+                      ),
+                      _buildNavItem(
+                        icon: Icons.receipt_long_outlined,
+                        activeIcon: Icons.receipt_long,
+                        label: 'الطلبات',
+                        index: 1,
+                      ),
+                      _buildNavItem(
+                        icon: Icons.favorite_border,
+                        activeIcon: Icons.favorite,
+                        label: 'المفضلة',
+                        index: 2,
+                      ),
+                      _buildNavItem(
+                        icon: Icons.person_outline,
+                        activeIcon: Icons.person,
+                        label: 'حسابي',
+                        index: 3,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          : null,
     );
   }
 
   PreferredSizeWidget _buildAppBar(
     BuildContext context,
     ColorScheme colorScheme,
+    bool isWide,
   ) {
     return AppBar(
+      automaticallyImplyLeading: !isWide,
+      elevation: 0,
       backgroundColor: colorScheme.primary,
       foregroundColor: colorScheme.onPrimary,
-      elevation: 0,
       title: Consumer<SupabaseProvider>(
         builder: (context, authProvider, child) {
           final user = authProvider.currentUserProfile;
@@ -601,23 +876,21 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                  colorScheme.onPrimary.withValues(alpha: 0.7),
+                                  colorScheme.onPrimary,
                                 ),
                               ),
                             )
                           : Icon(
                               Icons.location_on_rounded,
                               size: 14,
-                              color: colorScheme.onPrimary.withValues(
-                                alpha: 0.7,
-                              ),
+                              color: colorScheme.onPrimary,
                             ),
                       const SizedBox(width: 4),
                       Text(
                         'التوصيل إلى',
                         style: TextStyle(
                           fontSize: 11,
-                          color: colorScheme.onPrimary.withValues(alpha: 0.7),
+                          color: colorScheme.onPrimary.withValues(alpha: 0.8),
                         ),
                       ),
                     ],
@@ -699,39 +972,41 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
         // الإشعارات
         Consumer<NotificationProvider>(
           builder: (context, notificationProvider, child) {
-            final unreadCount = notificationProvider.unreadCount;
+            final unreadCount = notificationProvider.getUnreadCountForRole(
+              'client',
+            );
             return Stack(
               children: [
                 IconButton(
                   icon: const Icon(Icons.notifications_rounded),
                   onPressed: () {
                     HapticFeedback.lightImpact();
-                    Scaffold.of(context).openEndDrawer();
+                    _showNotificationsBottomSheet(context);
                   },
                 ),
                 if (unreadCount > 0)
                   Positioned(
-                    right: 6,
-                    top: 6,
+                    right: 8,
+                    top: 8,
                     child: Container(
-                      padding: const EdgeInsets.all(4),
+                      padding: const EdgeInsets.all(2),
                       decoration: BoxDecoration(
                         color: colorScheme.error,
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: colorScheme.primary,
-                          width: 2,
+                          width: 1.5,
                         ),
                       ),
                       constraints: const BoxConstraints(
-                        minWidth: 18,
-                        minHeight: 18,
+                        minWidth: 16,
+                        minHeight: 16,
                       ),
                       child: Text(
                         unreadCount > 99 ? '99+' : unreadCount.toString(),
                         style: TextStyle(
                           color: colorScheme.onError,
-                          fontSize: 10,
+                          fontSize: 9,
                           fontWeight: FontWeight.bold,
                         ),
                         textAlign: TextAlign.center,
@@ -743,6 +1018,62 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
           },
         ),
       ],
+    );
+  }
+
+  Widget _buildNavTabBar(ColorScheme colorScheme) {
+    final items = [
+      (Icons.home_outlined, Icons.home, 'الرئيسية'),
+      (Icons.receipt_long_outlined, Icons.receipt_long, 'الطلبات'),
+      (Icons.favorite_border, Icons.favorite, 'المفضلة'),
+      (Icons.person_outline, Icons.person, 'حسابي'),
+    ];
+    return Container(
+      color: colorScheme.surface,
+      child: Row(
+        children: List.generate(items.length, (index) {
+          final isActive = _currentIndex == index;
+          return Expanded(
+            child: InkWell(
+              onTap: () => _checkLoginForProtectedTabs(index),
+              child: Container(
+                height: 42,
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(
+                      color: isActive
+                          ? colorScheme.primary
+                          : Colors.transparent,
+                      width: 2,
+                    ),
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      isActive ? items[index].$2 : items[index].$1,
+                      color: isActive ? colorScheme.primary : Colors.black,
+                      size: 18,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      items[index].$3,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isActive ? colorScheme.primary : Colors.black,
+                        fontWeight: isActive
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
     );
   }
 

@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/logger.dart';
@@ -11,15 +10,16 @@ class CaptainService {
   static const int _pageSize = 20;
 
   /// تسجيل كابتن جديد
+  /// ملاحظة: captains.id = profiles.id (FK مباشر)
   static Future<CaptainModel?> createCaptain({
     required String profileId,
     required String vehicleType,
     String? vehicleNumber,
-    String? driverLicense,
+    String? licenseNumber,
     bool isActive = true,
     Map<String, dynamic>? additionalData,
     Map<String, dynamic>? workingHours,
-    List<String>? workingAreas,
+    List<dynamic>? workingAreas,
     String? contactPhone,
     String? nationalId,
     String? profileImageUrl,
@@ -28,18 +28,20 @@ class CaptainService {
   }) async {
     try {
       // التحقق من عدم وجود كابتن بنفس البروفايل
-      final existingCaptain = await getCaptainByProfileId(profileId);
+      final existingCaptain = await getCaptainById(profileId);
       if (existingCaptain != null) {
         AppLogger.error('الكابتن مسجل مسبقاً لهذا البروفايل', null);
         throw Exception('الكابتن مسجل مسبقاً لهذا البروفايل');
       }
 
       final captainData = {
-        'profile_id': profileId,
+        'id': profileId, // captains.id references profiles(id)
         'vehicle_type': vehicleType,
         'vehicle_number': vehicleNumber,
-        'driver_license': driverLicense,
+        'license_number': licenseNumber,
         'is_active': isActive,
+        'is_available': true,
+        'is_online': false,
         'working_hours': workingHours ?? {},
         'working_areas': workingAreas ?? [],
         'contact_phone': contactPhone,
@@ -52,17 +54,13 @@ class CaptainService {
         'rating_count': 0,
         'total_deliveries': 0,
         'total_earnings': 0.0,
-        'availability_status': 'available',
-        'online_status': false,
         'verification_status': 'pending',
-        'created_at': DateTime.now().toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
       };
 
       final response = await _supabase
           .from('captains')
           .insert(captainData)
-          .select('*, profiles(*)')
+          .select('*, profiles!captains_id_fkey(*)')
           .single();
 
       AppLogger.info('تم تسجيل كابتن جديد للبروفايل: $profileId');
@@ -81,7 +79,7 @@ class CaptainService {
     try {
       final response = await _supabase
           .from('captains')
-          .select('*, profiles(*)')
+          .select('*, profiles!captains_id_fkey(*)')
           .eq('id', captainId)
           .single();
 
@@ -96,12 +94,13 @@ class CaptainService {
   }
 
   /// جلب كابتن بواسطة معرف البروفايل
+  /// captains.id = profiles.id (FK مباشر)
   static Future<CaptainModel?> getCaptainByProfileId(String profileId) async {
     try {
       final response = await _supabase
           .from('captains')
-          .select('*, profiles(*)')
-          .eq('profile_id', profileId)
+          .select('*, profiles!captains_id_fkey(*)')
+          .eq('id', profileId)
           .single();
 
       return CaptainModel.fromMap(response);
@@ -123,14 +122,16 @@ class CaptainService {
     String? verificationStatus,
     String? vehicleType,
     bool? isActive,
-    String? availabilityStatus,
-    bool? onlineStatus,
+    bool? isAvailable,
+    bool? isOnline,
     String orderBy = 'created_at',
     bool ascending = false,
   }) async {
     try {
       final int startIndex = (page - 1) * _pageSize;
-      var query = _supabase.from('captains').select('*, profiles(*)');
+      var query = _supabase
+          .from('captains')
+          .select('*, profiles!captains_id_fkey(*)');
 
       if (verificationStatus != null) {
         query = query.eq('verification_status', verificationStatus);
@@ -144,12 +145,12 @@ class CaptainService {
         query = query.eq('is_active', isActive);
       }
 
-      if (availabilityStatus != null) {
-        query = query.eq('availability_status', availabilityStatus);
+      if (isAvailable != null) {
+        query = query.eq('is_available', isAvailable);
       }
 
-      if (onlineStatus != null) {
-        query = query.eq('online_status', onlineStatus);
+      if (isOnline != null) {
+        query = query.eq('is_online', isOnline);
       }
 
       final response = await query
@@ -176,7 +177,7 @@ class CaptainService {
     try {
       final response = await _supabase
           .from('captains')
-          .select('*, profiles(*)')
+          .select('*, profiles!captains_id_fkey(*)')
           .eq('is_active', true)
           .order(orderBy, ascending: ascending);
 
@@ -201,9 +202,9 @@ class CaptainService {
     try {
       final response = await _supabase
           .from('captains')
-          .select('*, profiles(*)')
+          .select('*, profiles!captains_id_fkey(*)')
           .eq('is_active', true)
-          .eq('verification_status', 'verified')
+          .eq('verification_status', 'approved')
           .order(orderBy, ascending: ascending)
           .limit(limit);
 
@@ -227,17 +228,18 @@ class CaptainService {
     required String captainId,
     String? vehicleType,
     String? vehicleNumber,
-    String? driverLicense,
+    String? licenseNumber,
     bool? isActive,
+    bool? isAvailable,
+    bool? isOnline,
+    String? status,
     Map<String, dynamic>? workingHours,
-    List<String>? workingAreas,
+    List<dynamic>? workingAreas,
     String? contactPhone,
     String? nationalId,
     String? profileImageUrl,
     String? licenseImageUrl,
     String? vehicleImageUrl,
-    String? availabilityStatus,
-    bool? onlineStatus,
     String? verificationStatus,
     Map<String, dynamic>? additionalData,
   }) async {
@@ -248,8 +250,11 @@ class CaptainService {
 
       if (vehicleType != null) data['vehicle_type'] = vehicleType;
       if (vehicleNumber != null) data['vehicle_number'] = vehicleNumber;
-      if (driverLicense != null) data['driver_license'] = driverLicense;
+      if (licenseNumber != null) data['license_number'] = licenseNumber;
       if (isActive != null) data['is_active'] = isActive;
+      if (isAvailable != null) data['is_available'] = isAvailable;
+      if (isOnline != null) data['is_online'] = isOnline;
+      if (status != null) data['status'] = status;
       if (workingHours != null) data['working_hours'] = workingHours;
       if (workingAreas != null) data['working_areas'] = workingAreas;
       if (contactPhone != null) data['contact_phone'] = contactPhone;
@@ -257,10 +262,6 @@ class CaptainService {
       if (profileImageUrl != null) data['profile_image_url'] = profileImageUrl;
       if (licenseImageUrl != null) data['license_image_url'] = licenseImageUrl;
       if (vehicleImageUrl != null) data['vehicle_image_url'] = vehicleImageUrl;
-      if (availabilityStatus != null) {
-        data['availability_status'] = availabilityStatus;
-      }
-      if (onlineStatus != null) data['online_status'] = onlineStatus;
       if (verificationStatus != null) {
         data['verification_status'] = verificationStatus;
       }
@@ -270,7 +271,7 @@ class CaptainService {
           .from('captains')
           .update(data)
           .eq('id', captainId)
-          .select('*, profiles(*)')
+          .select('*, profiles!captains_id_fkey(*)')
           .single();
 
       AppLogger.info('تم تحديث الكابتن: $captainId');
@@ -319,7 +320,8 @@ class CaptainService {
   // 🌍 Location Management
   // ================================
 
-  /// تحديث موقع الكابتن
+  /// تحديث موقع الكابتن باستخدام دالة RPC
+  /// يحدّث جدولي captains و driver_locations معاً
   static Future<bool> updateCaptainLocation({
     required String captainId,
     required double latitude,
@@ -329,15 +331,17 @@ class CaptainService {
     double? heading,
   }) async {
     try {
-      await _supabase.from('captain_locations').upsert({
-        'captain_id': captainId,
-        'latitude': latitude,
-        'longitude': longitude,
-        'accuracy': accuracy,
-        'speed': speed,
-        'heading': heading,
-        'updated_at': DateTime.now().toIso8601String(),
-      });
+      await _supabase.rpc(
+        'update_captain_location',
+        params: {
+          'p_captain_id': captainId,
+          'p_lat': latitude,
+          'p_lng': longitude,
+          'p_heading': heading ?? 0,
+          'p_speed': speed ?? 0,
+          'p_accuracy': accuracy ?? 0,
+        },
+      );
 
       AppLogger.info('تم تحديث موقع الكابتن $captainId');
       return true;
@@ -350,15 +354,15 @@ class CaptainService {
     }
   }
 
-  /// جلب موقع الكابتن الحالي
+  /// جلب موقع الكابتن الحالي من driver_locations
   static Future<Map<String, dynamic>?> getCaptainLocation(
     String captainId,
   ) async {
     try {
       final response = await _supabase
-          .from('captain_locations')
+          .from('driver_locations')
           .select('*')
-          .eq('captain_id', captainId)
+          .eq('driver_id', captainId)
           .single();
 
       return response;
@@ -371,7 +375,7 @@ class CaptainService {
     }
   }
 
-  /// العثور على الكباتن القريبين
+  /// العثور على الكباتن القريبين باستخدام PostGIS
   static Future<List<CaptainModel>> findNearbyCaptains({
     required double latitude,
     required double longitude,
@@ -380,55 +384,39 @@ class CaptainService {
     int limit = 10,
   }) async {
     try {
-      // جلب الكباتن المتاحين
+      // استخدام دالة PostGIS للبحث المكاني
+      final response = await _supabase.rpc(
+        'get_nearby_captains',
+        params: {
+          'p_lat': latitude,
+          'p_lng': longitude,
+          'p_radius_km': maxDistance,
+          'p_limit': limit,
+        },
+      );
+
+      if (response == null || (response as List).isEmpty) {
+        return [];
+      }
+
+      // جلب بيانات الكباتن الكاملة
+      final captainIds = response
+          .map((r) => r['captain_id'] as String)
+          .toList();
+
       var query = _supabase
           .from('captains')
-          .select('''
-            *,
-            profiles(*),
-            captain_locations(*)
-          ''')
-          .eq('status', 'approved')
-          .eq('is_available', true)
-          .eq('is_online', true);
+          .select('*, profiles!captains_id_fkey(*)')
+          .inFilter('id', captainIds);
 
       if (vehicleType != null) {
         query = query.eq('vehicle_type', vehicleType);
       }
 
-      final response = await query;
+      final captainsData = await query;
 
-      final captains = (response as List)
+      return (captainsData as List)
           .map((data) => CaptainModel.fromMap(data))
-          .toList();
-
-      // فلترة الكباتن حسب المسافة
-      final nearbyCaptains = <Map<String, dynamic>>[];
-
-      for (final captain in captains) {
-        final location = await getCaptainLocation(captain.id);
-        if (location != null) {
-          final distance = _calculateDistance(
-            latitude,
-            longitude,
-            location['latitude'] as double,
-            location['longitude'] as double,
-          );
-
-          if (distance <= maxDistance) {
-            nearbyCaptains.add({'captain': captain, 'distance': distance});
-          }
-        }
-      }
-
-      // ترتيب حسب المسافة
-      nearbyCaptains.sort(
-        (a, b) => (a['distance'] as double).compareTo(b['distance'] as double),
-      );
-
-      return nearbyCaptains
-          .take(limit)
-          .map((item) => item['captain'] as CaptainModel)
           .toList();
     } on PostgrestException catch (e) {
       AppLogger.error(
@@ -488,26 +476,22 @@ class CaptainService {
         averageDeliveryTime = totalTime / deliveredOrders.length;
       }
 
-      // جلب التقييمات
-      final reviews = await _supabase
-          .from('captain_reviews')
-          .select('rating')
-          .eq('captain_id', captainId);
+      // جلب تقييم الكابتن من جدول captains مباشرة
+      final captainData = await _supabase
+          .from('captains')
+          .select('rating, rating_count')
+          .eq('id', captainId)
+          .single();
 
-      final averageRating = reviews.isNotEmpty
-          ? reviews.fold<double>(
-                  0.0,
-                  (sum, r) => sum + (r['rating'] as num).toDouble(),
-                ) /
-                reviews.length
-          : 0.0;
+      final averageRating = (captainData['rating'] as num?)?.toDouble() ?? 0.0;
+      final ratingCount = captainData['rating_count'] as int? ?? 0;
 
       return {
         'total_deliveries': totalDeliveries,
         'completed_deliveries': completedDeliveries,
         'total_earnings': totalEarnings,
         'average_rating': averageRating,
-        'review_count': reviews.length,
+        'rating_count': ratingCount,
         'average_delivery_time': averageDeliveryTime,
         'completion_rate': totalDeliveries > 0
             ? (completedDeliveries / totalDeliveries) * 100
@@ -737,19 +721,16 @@ class CaptainService {
       // جلب الحالة الحالية من قاعدة البيانات
       final response = await _supabase
           .from('captains')
-          .select('availability_status')
+          .select('is_available')
           .eq('id', captainId)
           .single();
 
-      final currentStatus =
-          response['availability_status'] as String? ?? 'available';
-      final newStatus = currentStatus == 'available'
-          ? 'unavailable'
-          : 'available';
+      final currentAvailable = response['is_available'] as bool? ?? true;
+      final newAvailable = !currentAvailable;
 
-      await updateCaptain(captainId: captainId, availabilityStatus: newStatus);
+      await updateCaptain(captainId: captainId, isAvailable: newAvailable);
 
-      AppLogger.info('تم تغيير حالة توفر الكابتن $captainId إلى $newStatus');
+      AppLogger.info('تم تغيير حالة توفر الكابتن $captainId إلى $newAvailable');
       return true;
     } catch (e) {
       AppLogger.error('خطأ في تغيير حالة التوفر', e);
@@ -770,7 +751,11 @@ class CaptainService {
       final currentOnlineStatus = response['is_online'] ?? false;
       final newOnlineStatus = !currentOnlineStatus;
 
-      await updateCaptain(captainId: captainId, onlineStatus: newOnlineStatus);
+      await updateCaptain(
+        captainId: captainId,
+        isOnline: newOnlineStatus,
+        status: newOnlineStatus ? 'online' : 'offline',
+      );
 
       AppLogger.info(
         'تم تغيير حالة الاتصال للكابتن $captainId إلى $newOnlineStatus',
@@ -816,9 +801,9 @@ class CaptainService {
   /// مراقبة موقع الكابتن فورياً
   static Stream<Map<String, dynamic>?> watchCaptainLocation(String captainId) {
     return _supabase
-        .from('captain_locations')
-        .stream(primaryKey: ['captain_id'])
-        .eq('captain_id', captainId)
+        .from('driver_locations')
+        .stream(primaryKey: ['driver_id'])
+        .eq('driver_id', captainId)
         .map((list) => list.isNotEmpty ? list.first : null);
   }
 
@@ -827,6 +812,7 @@ class CaptainService {
   // ================================
 
   /// إضافة تقييم للكابتن
+  /// يتم تخزين التقييم مباشرة في جدول captains (rating + rating_count)
   static Future<void> addRating({
     required String captainId,
     required String userId,
@@ -834,16 +820,22 @@ class CaptainService {
     String? comment,
   }) async {
     try {
-      await _supabase.from('captain_ratings').insert({
-        'captain_id': captainId,
-        'user_id': userId,
-        'rating': rating,
-        'comment': comment,
-        'created_at': DateTime.now().toIso8601String(),
-      });
+      // تحديث التقييم مباشرة باستخدام المتوسط التراكمي
+      await updateCaptainRating(captainId: captainId, newRating: rating);
 
-      // تحديث متوسط التقييم في جدول الكابتنز
-      await _updateCaptainAverageRating(captainId);
+      // يمكن تخزين التقييم التفصيلي في ratings table إذا أردنا
+      // حالياً نستخدم جدول ratings العام الموجود في المشروع
+      try {
+        await _supabase.from('ratings').insert({
+          'user_id': userId,
+          'rated_entity_type': 'captain',
+          'rated_entity_id': captainId,
+          'rating': rating,
+          'comment': comment,
+        });
+      } catch (_) {
+        // ratings table might not exist, that's ok
+      }
 
       AppLogger.info('تم إضافة تقييم للكابتن: $captainId');
     } on PostgrestException catch (e) {
@@ -855,34 +847,7 @@ class CaptainService {
     }
   }
 
-  /// تحديث متوسط التقييم للكابتن
-  static Future<void> _updateCaptainAverageRating(String captainId) async {
-    try {
-      final ratingsResponse = await _supabase
-          .from('captain_ratings')
-          .select('rating')
-          .eq('captain_id', captainId);
-
-      if (ratingsResponse.isNotEmpty) {
-        final ratings = ratingsResponse
-            .map<double>((r) => r['rating'].toDouble())
-            .toList();
-        final averageRating = ratings.reduce((a, b) => a + b) / ratings.length;
-
-        await _supabase
-            .from('captains')
-            .update({
-              'average_rating': averageRating,
-              'total_ratings': ratings.length,
-            })
-            .eq('id', captainId);
-      }
-    } catch (e) {
-      AppLogger.error('خطأ في تحديث متوسط التقييم', e);
-    }
-  }
-
-  /// الحصول على الكابتنز المتاحين في منطقة محددة
+  /// الحصول على الكباتن المتاحين في منطقة محددة باستخدام PostGIS RPC
   static Future<List<CaptainModel>> getAvailableCaptainsInArea({
     required double latitude,
     required double longitude,
@@ -890,59 +855,73 @@ class CaptainService {
     String? vehicleType,
   }) async {
     try {
+      // استخدام دالة get_nearby_captains الـ PostGIS للفلترة الدقيقة بالمسافة
+      final response = await _supabase.rpc(
+        'get_nearby_captains',
+        params: {
+          'p_lat': latitude,
+          'p_lng': longitude,
+          'p_radius_km': radiusInKm,
+          'p_limit': 50,
+        },
+      );
+
+      if (response == null || (response as List).isEmpty) {
+        AppLogger.info('لا يوجد كباتن متاحين في نطاق $radiusInKm كم');
+        return [];
+      }
+
+      // جلب بيانات الكباتن الكاملة بناءً على الـ IDs المرجعة
+      final captainIds = response
+          .map((r) => r['captain_id'] as String)
+          .toList();
+
       var query = _supabase
           .from('captains')
-          .select('*, profiles(*)')
-          .eq('is_active', true)
-          .eq('availability_status', 'available')
-          .eq('online_status', true)
-          .eq('verification_status', 'verified');
+          .select('*, profiles!captains_id_fkey(*)')
+          .inFilter('id', captainIds);
 
       if (vehicleType != null) {
         query = query.eq('vehicle_type', vehicleType);
       }
 
-      final response = await query;
+      final captainsData = await query;
 
-      // فلترة النتائج حسب المسافة (يمكن تحسينها باستخدام PostGIS في المستقبل)
-      final captains = response.map((json) => CaptainModel.fromMap(json)).where(
-        (captain) {
-          // إضافة منطق حساب المسافة إذا كانت إحداثيات الكابتن متاحة
-          return true; // مؤقتاً نرجع جميع الكابتنز المتاحين
-        },
-      ).toList();
+      final captains = captainsData
+          .map((json) => CaptainModel.fromMap(json))
+          .toList();
 
-      AppLogger.info('تم العثور على ${captains.length} كابتن متاح في المنطقة');
+      AppLogger.info(
+        'تم العثور على ${captains.length} كابتن متاح في نطاق $radiusInKm كم',
+      );
       return captains;
     } on PostgrestException catch (e) {
       AppLogger.error(
-        'PostgreSQL خطأ في البحث عن الكابتنز المتاحين: ${e.message}',
+        'PostgreSQL خطأ في البحث عن الكباتن المتاحين: ${e.message}',
         e,
       );
-      throw Exception('فشل البحث عن الكابتنز: ${e.message}');
+      throw Exception('فشل البحث عن الكباتن: ${e.message}');
     } catch (e) {
-      AppLogger.error('خطأ في البحث عن الكابتنز المتاحين', e);
-      throw Exception('فشل البحث عن الكابتنز: ${e.toString()}');
+      AppLogger.error('خطأ في البحث عن الكباتن المتاحين', e);
+      throw Exception('فشل البحث عن الكباتن: ${e.toString()}');
     }
   }
 
-  /// تعيين طلب للكابتن
+  /// تعيين طلب للكابتن باستخدام RPC
   static Future<bool> assignOrderToCaptain({
     required String captainId,
     required String orderId,
+    double deliveryFee = 0.0,
   }) async {
     try {
-      await _supabase
-          .from('orders')
-          .update({
-            'captain_id': captainId,
-            'status': 'assigned',
-            'assigned_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', orderId);
-
-      // تحديث حالة الكابتن إلى مشغول
-      await updateCaptain(captainId: captainId, availabilityStatus: 'busy');
+      await _supabase.rpc(
+        'assign_captain_to_order',
+        params: {
+          'p_order_id': orderId,
+          'p_captain_id': captainId,
+          'p_delivery_fee': deliveryFee,
+        },
+      );
 
       AppLogger.info('تم تعيين الطلب $orderId للكابتن $captainId');
       return true;
@@ -1015,9 +994,9 @@ class CaptainService {
     String? query,
     String? vehicleType,
     String? verificationStatus,
-    String? availabilityStatus,
+    bool? isAvailable,
     bool? isActive,
-    bool? onlineStatus,
+    bool? isOnline,
     double? minRating,
     DateTime? registeredAfter,
     DateTime? registeredBefore,
@@ -1025,7 +1004,9 @@ class CaptainService {
     int offset = 0,
   }) async {
     try {
-      var supabaseQuery = _supabase.from('captains').select('*, profiles(*)');
+      var supabaseQuery = _supabase
+          .from('captains')
+          .select('*, profiles!captains_id_fkey(*)');
 
       if (query != null && query.isNotEmpty) {
         supabaseQuery = supabaseQuery.or(
@@ -1046,23 +1027,20 @@ class CaptainService {
         );
       }
 
-      if (availabilityStatus != null) {
-        supabaseQuery = supabaseQuery.eq(
-          'availability_status',
-          availabilityStatus,
-        );
+      if (isAvailable != null) {
+        supabaseQuery = supabaseQuery.eq('is_available', isAvailable);
       }
 
       if (isActive != null) {
         supabaseQuery = supabaseQuery.eq('is_active', isActive);
       }
 
-      if (onlineStatus != null) {
-        supabaseQuery = supabaseQuery.eq('online_status', onlineStatus);
+      if (isOnline != null) {
+        supabaseQuery = supabaseQuery.eq('is_online', isOnline);
       }
 
       if (minRating != null) {
-        supabaseQuery = supabaseQuery.gte('average_rating', minRating);
+        supabaseQuery = supabaseQuery.gte('rating', minRating);
       }
 
       if (registeredAfter != null) {
@@ -1167,28 +1145,36 @@ class CaptainService {
           .from('captains')
           .select('id')
           .eq('is_active', true)
-          .eq('online_status', true)
-          .eq('availability_status', 'available')
+          .eq('is_online', true)
+          .eq('is_available', true)
           .count(CountOption.exact);
 
       // الكابتنز المعتمدين
       final verifiedCaptainsResponse = await _supabase
           .from('captains')
           .select('id')
-          .eq('verification_status', 'verified')
+          .eq('verification_status', 'approved')
           .count(CountOption.exact);
 
-      // إجمالي التقييمات
-      final totalRatingsResponse = await _supabase
-          .from('captain_ratings')
-          .select('rating');
+      // متوسط التقييمات من جدول captains مباشرة
+      final ratingsResponse = await _supabase
+          .from('captains')
+          .select('rating, rating_count')
+          .gt('rating_count', 0);
 
       double averageRating = 0.0;
-      if (totalRatingsResponse.isNotEmpty) {
-        final ratings = totalRatingsResponse
-            .map<double>((r) => r['rating'].toDouble())
-            .toList();
-        averageRating = ratings.reduce((a, b) => a + b) / ratings.length;
+      int totalRatings = 0;
+      if (ratingsResponse.isNotEmpty) {
+        double totalWeightedRating = 0;
+        for (final r in ratingsResponse) {
+          final rating = (r['rating'] as num).toDouble();
+          final count = r['rating_count'] as int;
+          totalWeightedRating += rating * count;
+          totalRatings += count;
+        }
+        if (totalRatings > 0) {
+          averageRating = totalWeightedRating / totalRatings;
+        }
       }
 
       AppLogger.info('تم استرجاع الإحصائيات العامة للكابتنز');
@@ -1199,7 +1185,7 @@ class CaptainService {
         'availableCaptains': availableCaptainsResponse.count,
         'verifiedCaptains': verifiedCaptainsResponse.count,
         'averageRating': averageRating,
-        'totalRatings': totalRatingsResponse.length,
+        'totalRatings': totalRatings,
         'verificationRate': totalCaptainsResponse.count > 0
             ? (verifiedCaptainsResponse.count / totalCaptainsResponse.count) *
                   100
@@ -1221,37 +1207,8 @@ class CaptainService {
   }
 
   // ================================
-  // �🛠️ Helper Functions
+  // 🛠️ Helper Functions
   // ================================
-
-  /// حساب المسافة بين نقطتين (بالكيلومتر)
-  static double _calculateDistance(
-    double lat1,
-    double lng1,
-    double lat2,
-    double lng2,
-  ) {
-    const double earthRadius = 6371;
-
-    final double dLat = _degreesToRadians(lat2 - lat1);
-    final double dLng = _degreesToRadians(lng2 - lng1);
-
-    final double a =
-        math.sin(dLat / 2) * math.sin(dLat / 2) +
-        math.cos(_degreesToRadians(lat1)) *
-            math.cos(_degreesToRadians(lat2)) *
-            math.sin(dLng / 2) *
-            math.sin(dLng / 2);
-
-    final double c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
-
-    return earthRadius * c;
-  }
-
-  /// تحويل الدرجات إلى راديان
-  static double _degreesToRadians(double degrees) {
-    return degrees * (math.pi / 180);
-  }
 
   /// التحقق من صحة رقم الرخصة
   static bool validateLicenseNumber(String licenseNumber) {

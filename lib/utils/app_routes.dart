@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/models/category_model.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/models/store_model.dart';
 import 'package:ell_tall_market/widgets/main_navigation.dart';
@@ -31,6 +33,7 @@ import 'package:ell_tall_market/screens/merchant/add_edit_product_screen.dart';
 
 import 'package:ell_tall_market/screens/captain/captain_orders_screen.dart';
 import 'package:ell_tall_market/screens/captain/order_delivery_screen.dart';
+import 'package:ell_tall_market/screens/captain/delivery_company_dashboard_screen.dart';
 
 import 'package:ell_tall_market/screens/admin/admin_dashboard_screen.dart';
 import 'package:ell_tall_market/screens/admin/manage_users_screen.dart';
@@ -41,13 +44,17 @@ import 'package:ell_tall_market/screens/admin/manage_coupons_screen.dart';
 import 'package:ell_tall_market/screens/admin/app_settings_screen.dart';
 import 'package:ell_tall_market/screens/admin/dynamic_ui_builder_screen.dart';
 import 'package:ell_tall_market/screens/admin/analytics_screen.dart';
-import 'package:ell_tall_market/screens/admin/manage_captains_screen.dart';
+import 'package:ell_tall_market/screens/admin/captain_reports_screen.dart';
 import 'package:ell_tall_market/screens/admin/manage_banners_screen.dart';
+import 'package:ell_tall_market/screens/admin/delivery_zone_pricing_screen.dart';
 
 import 'package:ell_tall_market/screens/common/splash_screen.dart';
 import 'package:ell_tall_market/screens/common/onboarding_screen.dart';
 import 'package:ell_tall_market/screens/common/search_screen.dart';
 import 'package:ell_tall_market/screens/common/notifications_screen.dart';
+import 'package:ell_tall_market/screens/common/about_app_screen.dart';
+import 'package:ell_tall_market/screens/common/privacy_policy_screen.dart';
+import 'package:ell_tall_market/screens/common/terms_conditions_screen.dart';
 import 'package:ell_tall_market/screens/user/settings_screen.dart';
 
 import '../screens/captain/captain_dashboard_screen.dart';
@@ -102,6 +109,7 @@ class AppRoutes {
   static const String captainDashboard = '/captain-dashboard';
   static const String captainOrders = '/captain-orders';
   static const String orderDelivery = '/order-delivery';
+  static const String deliveryCompanyDashboard = '/delivery-company-dashboard';
 
   // مسارات المشرف
   static const String adminDashboard = '/admin-dashboard';
@@ -115,6 +123,12 @@ class AppRoutes {
   static const String analytics = '/analytics';
   static const String manageCaptains = '/manage-captains';
   static const String manageBanners = '/manage-banners';
+  static const String deliveryZonePricing = '/delivery-zone-pricing';
+
+  // مسارات المعلومات والسياسات
+  static const String aboutApp = '/about-app';
+  static const String privacyPolicy = '/privacy-policy';
+  static const String termsConditions = '/terms-conditions';
 
   // ===== Routes Map =====
   static Map<String, WidgetBuilder> get routes {
@@ -129,7 +143,26 @@ class AppRoutes {
       callback: (context) => _CallbackScreen(), // معالج روابط تأكيد البريد
       home: (_) => const MainNavigationScreen(initialIndex: 0),
       main: (_) => const MainNavigationScreen(),
-      category: (_) => const CategoryScreen(),
+      category: (context) {
+        final args = ModalRoute.of(context)?.settings.arguments;
+
+        if (args is Map<String, dynamic>) {
+          final String? categoryId = args['id'] as String?;
+          final String? categoryName = args['name'] as String?;
+          return CategoryScreen(
+            categoryId: (categoryId ?? '').trim().isEmpty ? null : categoryId,
+            categoryName: (categoryName ?? '').trim().isEmpty
+                ? null
+                : categoryName,
+          );
+        }
+
+        if (args is CategoryModel) {
+          return CategoryScreen(categoryId: args.id, categoryName: args.name);
+        }
+
+        return const CategoryScreen();
+      },
       search: (_) => const SearchScreen(),
       notifications: (_) => const NotificationsScreen(),
       cart: (_) => const CartScreen(),
@@ -151,6 +184,7 @@ class AppRoutes {
       },
 
       captainDashboard: (_) => const CaptainDashboard(),
+      deliveryCompanyDashboard: (_) => const DeliveryCompanyDashboardScreen(),
       captainWallet: (_) => const CaptainWalletScreen(),
 
       stores: (_) => const StoresScreen(),
@@ -163,11 +197,15 @@ class AppRoutes {
       appSettings: (_) => const AppSettingsScreen(),
       dynamicUIBuilder: (_) => const DynamicUIBuilderScreen(),
       analytics: (_) => const AnalyticsScreen(),
-      manageCaptains: (_) => const ManageCaptainsScreen(),
+      manageCaptains: (_) => const CaptainReportsScreen(),
       manageBanners: (_) => const ManageBannersScreen(),
+      deliveryZonePricing: (_) => const DeliveryZonePricingScreen(),
       editProfile: (_) => const EditProfileScreen(),
       settings: (_) => const SettingsScreen(),
       addresses: (_) => const AddressesScreen(),
+      aboutApp: (_) => const AboutAppScreen(),
+      privacyPolicy: (_) => const PrivacyPolicyScreen(),
+      termsConditions: (_) => const TermsConditionsScreen(),
     };
   }
 
@@ -177,8 +215,7 @@ class AppRoutes {
 
     // معالجة callback routes حتى لو كان فيها query parameters
     final routeName = settings.name ?? '';
-    if (routeName.startsWith('/callback') ||
-        routeName.startsWith('/auth/callback')) {
+    if (routeName.contains('/callback')) {
       return _handleSupabaseAuthCallback(settings);
     }
 
@@ -193,13 +230,20 @@ class AppRoutes {
 
       case category:
         if (args is Map<String, dynamic>) {
-          final String categoryId = args['id'] ?? '';
-          final String categoryName = args['name'] ?? '';
+          final String categoryId = (args['id'] as String?) ?? '';
+          final String categoryName = (args['name'] as String?) ?? '';
           return MaterialPageRoute(
             builder: (_) => CategoryScreen(
-              categoryId: categoryId,
-              categoryName: categoryName,
+              categoryId: categoryId.trim().isEmpty ? null : categoryId,
+              categoryName: categoryName.trim().isEmpty ? null : categoryName,
             ),
+          );
+        }
+
+        if (args is CategoryModel) {
+          return MaterialPageRoute(
+            builder: (_) =>
+                CategoryScreen(categoryId: args.id, categoryName: args.name),
           );
         }
         return _errorRoute('Category data not provided');
@@ -254,9 +298,15 @@ class AppRoutes {
 
       case orderTracking:
         if (args is Map<String, dynamic>) {
-          final String orderId = args['orderId'] ?? '';
+          final String? orderId = args['orderId'] as String?;
+          final String? orderGroupId = args['orderGroupId'] as String?;
+          final String? orderNumber = args['orderNumber'] as String?;
           return MaterialPageRoute(
-            builder: (_) => OrderTrackingScreen(orderId: orderId),
+            builder: (_) => OrderTrackingScreen(
+              orderId: orderId,
+              orderGroupId: orderGroupId,
+              orderNumber: orderNumber,
+            ),
           );
         }
         return _errorRoute('Order data not provided');
@@ -327,6 +377,23 @@ class AppRoutes {
         }
         return _errorRoute('Order data not provided');
 
+      case deliveryCompanyDashboard:
+        return MaterialPageRoute(
+          builder: (context) {
+            final authProvider = Provider.of<SupabaseProvider>(
+              context,
+              listen: false,
+            );
+            if (!authProvider.isLoggedIn) {
+              return _buildRedirectScreen(context, login);
+            }
+            if (authProvider.isDeliveryCompanyAdmin || authProvider.isAdmin) {
+              return const DeliveryCompanyDashboardScreen();
+            }
+            return _errorScaffold('Delivery company admin access required');
+          },
+        );
+
       // ===== Admin Protected Routes =====
       case manageUsers:
       case manageProducts:
@@ -337,6 +404,7 @@ class AppRoutes {
       case dynamicUIBuilder:
       case analytics:
       case manageCaptains:
+      case deliveryZonePricing:
         return MaterialPageRoute(
           builder: (context) {
             final authProvider = Provider.of<SupabaseProvider>(
@@ -389,38 +457,40 @@ class AppRoutes {
           provider == null &&
           accessToken == null &&
           refreshToken == null) {
-        AppLogger.info('🔄 معالجة رابط تأكيد بريد (code exchange): $code');
+        // ✅ إذا كان type موجود (signup/invite) → تأكيد بريد → استبدال يدوي للكود
+        // ✅ إذا لم يكن type موجود → OAuth PKCE → Supabase يعالج الكود تلقائياً
+        if (type != null && type.isNotEmpty) {
+          AppLogger.info('🔄 معالجة رابط تأكيد بريد (code exchange): $code');
+          return MaterialPageRoute(
+            builder: (context) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                try {
+                  AppLogger.debug(
+                    '🚫 Email confirmation flow (auto sign-in prevention disabled)',
+                  );
+                } catch (e) {
+                  AppLogger.error('خطأ في تعيين علامة منع التسجيل التلقائي', e);
+                }
+              });
+              return _CodeExchangeScreen(code: code);
+            },
+          );
+        }
 
-        return MaterialPageRoute(
-          builder: (context) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              try {
-                // Note: setEmailConfirmationFlow method not available in SupabaseProvider
-                // Email confirmation flow is handled automatically by Supabase
-                // final authProvider = Provider.of<SupabaseProvider>(context, listen: false);
-                // authProvider.setEmailConfirmationFlow(true);
-                AppLogger.debug(
-                  '🚫 Email confirmation flow (auto sign-in prevention disabled)',
-                );
-              } catch (e) {
-                AppLogger.error('خطأ في تعيين علامة منع التسجيل التلقائي', e);
-              }
-            });
-            // استخدام شاشة خاصة لمعالجة code exchange
-            return _CodeExchangeScreen(code: code);
-          },
+        // OAuth PKCE: Supabase يستبدل الكود تلقائياً على الويب
+        // نعرض شاشة انتظار ونستمع لـ onAuthStateChange
+        AppLogger.info(
+          '✅ OAuth PKCE callback - في انتظار معالجة Supabase للكود تلقائياً',
         );
+        return MaterialPageRoute(builder: (_) => const _OAuthCallbackScreen());
       }
 
-      // ===== معالجة النوع القديم - Access Token (عادة في OAuth) =====
-      // إذا كان تأكيد بريد، ضع علامة منع التسجيل التلقائي فوراً
+      // معالجة تأكيد البريد من النوع القديم (type=signup)
       if (type == 'signup') {
-        // استخدام callback لتعيين العلامة فور بناء أول widget
         return MaterialPageRoute(
           builder: (context) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               try {
-                // Note: Email confirmation handled automatically by Supabase
                 AppLogger.debug('🚫 Email confirmation flow processing');
               } catch (e) {
                 AppLogger.error('خطأ في تعيين علامة منع التسجيل التلقائي', e);
@@ -431,15 +501,13 @@ class AppRoutes {
         );
       }
 
-      // في حالة وجود access_token أو provider (تبع OAuth): دع Supabase يدير الجلسة
+      // في حالة وجود access_token أو provider (OAuth implicit flow)
+      // نستخدم شاشة الانتظار بدلاً من LoginScreen لأن الـ subscription ضاع
       if (accessToken != null || provider != null) {
         AppLogger.info(
-          '✅ OAuth callback detected (provider=$provider), الاعتماد على onAuthStateChange',
+          '✅ OAuth callback detected (provider=$provider), في انتظار تسجيل الدخول',
         );
-        return MaterialPageRoute(
-          builder: (_) => const LoginScreen(),
-          settings: const RouteSettings(name: AppRoutes.login),
-        );
+        return MaterialPageRoute(builder: (_) => const _OAuthCallbackScreen());
       }
 
       // معالجة أخطاء الروابط المنتهية الصلاحية أو غير الصالحة
@@ -646,6 +714,9 @@ class AppRoutes {
       case captainOrders:
       case orderDelivery:
         return authProvider.isCaptain;
+
+      case deliveryCompanyDashboard:
+        return authProvider.isDeliveryCompanyAdmin || authProvider.isAdmin;
 
       case manageUsers:
       case manageProducts:
@@ -1052,6 +1123,191 @@ class _CallbackScreenState extends State<_CallbackScreen> {
   }
 }
 
+/// شاشة انتظار OAuth Callback - تستمع لـ onAuthStateChange وتنتقل حسب الدور
+class _OAuthCallbackScreen extends StatefulWidget {
+  const _OAuthCallbackScreen();
+
+  @override
+  State<_OAuthCallbackScreen> createState() => _OAuthCallbackScreenState();
+}
+
+class _OAuthCallbackScreenState extends State<_OAuthCallbackScreen> {
+  StreamSubscription<AuthState>? _authSubscription;
+  bool _navigated = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _handleOAuthCallback();
+  }
+
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _handleOAuthCallback() {
+    // استخدام postFrameCallback للتأكد من أن الـ widget جاهز
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _processOAuthCallback();
+    });
+  }
+
+  Future<void> _processOAuthCallback() async {
+    // ① فحص إذا كان المستخدم مسجل دخوله فعلاً
+    if (Supabase.instance.client.auth.currentUser != null) {
+      if (!_navigated) _navigateAfterSignIn();
+      return;
+    }
+
+    // ② على الويب: نستبدل الكود يدوياً من URL (PKCE لا يعالجه SDK تلقائياً)
+    if (kIsWeb) {
+      final code = Uri.base.queryParameters['code'];
+      if (code != null && code.isNotEmpty) {
+        try {
+          AppLogger.info('🔄 OAuth PKCE: جاري استبدال الكود...');
+          await Supabase.instance.client.auth.exchangeCodeForSession(code);
+          AppLogger.info('✅ تم استبدال الكود بنجاح');
+          if (mounted && !_navigated) _navigateAfterSignIn();
+          return;
+        } catch (e) {
+          AppLogger.warning('⚠️ exchangeCodeForSession: $e');
+          // الكود ربما استُهلك بالفعل من SDK، نفحص الجلسة مرة أخرى
+          if (Supabase.instance.client.auth.currentUser != null) {
+            if (mounted && !_navigated) _navigateAfterSignIn();
+            return;
+          }
+          // خطأ حقيقي
+          if (mounted) {
+            Navigator.of(
+              context,
+            ).pushNamedAndRemoveUntil(AppRoutes.login, (r) => false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  '❌ فشل تسجيل الدخول: ${e.toString().split('\n').first}',
+                ),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
+        }
+      }
+    }
+
+    // ③ fallback: الاستماع لـ onAuthStateChange (للموبايل أو إذا لم يوجد كود في URL)
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((
+      data,
+    ) {
+      if (data.event == AuthChangeEvent.signedIn &&
+          data.session?.user != null &&
+          !_navigated) {
+        _authSubscription?.cancel();
+        if (mounted) _navigateAfterSignIn();
+      }
+    });
+
+    // ④ timeout بعد 20 ثانية
+    Future.delayed(const Duration(seconds: 20), () {
+      if (mounted && !_navigated) {
+        _authSubscription?.cancel();
+        Navigator.of(
+          context,
+        ).pushNamedAndRemoveUntil(AppRoutes.login, (route) => false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('⏱️ انتهت مهلة تسجيل الدخول. يرجى المحاولة مرة أخرى'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _navigateAfterSignIn() async {
+    _navigated = true;
+    try {
+      final user = Supabase.instance.client.auth.currentUser!;
+
+      // جلب الدور من profiles
+      final profile = await Supabase.instance.client
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .maybeSingle();
+
+      if (!mounted) return;
+
+      final role = profile?['role'] as String?;
+      String route;
+      switch (role) {
+        case 'admin':
+          route = AppRoutes.adminDashboard;
+          break;
+        case 'delivery_company_admin':
+          route = AppRoutes.deliveryCompanyDashboard;
+          break;
+        case 'merchant':
+          route = AppRoutes.merchantDashboard;
+          break;
+        case 'captain':
+          route = AppRoutes.captainDashboard;
+          break;
+        default:
+          route = AppRoutes.home;
+      }
+
+      AppLogger.info('✅ OAuth تم بنجاح - التوجيه إلى: $route (role=$role)');
+      Navigator.of(context).pushNamedAndRemoveUntil(route, (r) => false);
+
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ تم تسجيل الدخول بواسطة جوجل بنجاح!'),
+              backgroundColor: Colors.green,
+              duration: Duration(seconds: 3),
+            ),
+          );
+        }
+      });
+    } catch (e) {
+      AppLogger.error('❌ خطأ في التنقل بعد OAuth', e);
+      if (mounted) {
+        Navigator.of(
+          context,
+        ).pushNamedAndRemoveUntil(AppRoutes.home, (r) => false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            const Text(
+              'جاري تسجيل الدخول بواسطة جوجل...',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'لا تغلق هذه الصفحة',
+              style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// شاشة خاصة لمعالجة Code Exchange (النوع الجديد)
 class _CodeExchangeScreen extends StatefulWidget {
   final String code;
@@ -1066,15 +1322,15 @@ class _CodeExchangeScreenState extends State<_CodeExchangeScreen> {
   @override
   void initState() {
     super.initState();
-    _handleCodeExchange();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _handleCodeExchange();
+    });
   }
 
   Future<void> _handleCodeExchange() async {
     try {
       AppLogger.info('🔄 بدء معالجة code exchange: ${widget.code}');
-
-      final navigator = Navigator.of(context);
-      final messenger = ScaffoldMessenger.of(context);
 
       // معالجة code exchange مع Supabase
       await Supabase.instance.client.auth
@@ -1098,21 +1354,21 @@ class _CodeExchangeScreenState extends State<_CodeExchangeScreen> {
       // التوجه للصفحة الرئيسية مع رسالة نجاح
       if (!mounted) return;
 
-      if (mounted) {
-        navigator.pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
+      Navigator.of(
+        context,
+      ).pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
 
-        // إظهار رسالة نجاح بعد التوجيه
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (!mounted) return;
-          messenger.showSnackBar(
-            const SnackBar(
-              content: Text('✅ تم تأكيد بريدك الإلكتروني بنجاح! مرحباً بك'),
-              backgroundColor: Colors.green,
-              duration: Duration(seconds: 4),
-            ),
-          );
-        });
-      }
+      // إظهار رسالة نجاح بعد التوجيه
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ تم تأكيد بريدك الإلكتروني بنجاح! مرحباً بك'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      });
     } catch (e) {
       AppLogger.error('خطأ في معالجة code exchange', e);
 
@@ -1135,14 +1391,13 @@ class _CodeExchangeScreenState extends State<_CodeExchangeScreen> {
       }
 
       if (context.mounted) {
-        final navigator = Navigator.of(context);
-        final messenger = ScaffoldMessenger.of(context);
-
-        navigator.pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
+        Navigator.of(
+          context,
+        ).pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
 
         Future.delayed(const Duration(milliseconds: 500), () {
           if (!mounted) return;
-          messenger.showSnackBar(
+          ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(errorMessage),
               backgroundColor: Colors.red,

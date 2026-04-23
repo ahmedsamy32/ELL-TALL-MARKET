@@ -1,6 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
+// Removed dart:io for Web compatibility
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/logger.dart';
@@ -734,7 +735,7 @@ class SettingsServiceEnhanced {
           'version': _currentSettingsVersion,
           'exported_at': DateTime.now().toIso8601String(),
           'app_version': '1.0.0', // Note: Get from package info
-          'platform': Platform.operatingSystem,
+          'platform': kIsWeb ? 'web' : defaultTargetPlatform.name,
         },
         'settings': <String, dynamic>{},
       };

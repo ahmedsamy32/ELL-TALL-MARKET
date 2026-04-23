@@ -1,8 +1,10 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../core/logger.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/models/captain_model.dart';
+import 'package:ell_tall_market/services/captain_service.dart';
+import 'package:uuid/uuid.dart';
+import '../core/logger.dart';
 
 /// 📋 خدمة إدارة الطلبات المتقدمة (Order Management Service)
 ///
@@ -102,7 +104,7 @@ class OrderService {
 
       // إنشاء الطلب
       final orderData = {
-        'customer_id': customerId,
+        'client_id': customerId,
         'status': 'pending',
         'subtotal': subtotal,
         'delivery_fee': deliveryFee,
@@ -115,6 +117,7 @@ class OrderService {
         'coupon_code': couponCode,
         'payment_method': paymentMethod,
         'payment_status': 'pending',
+        'order_group_id': const Uuid().v4(), // توليد معرف مجموعة جديد للتتبع
         'created_at': DateTime.now().toIso8601String(),
         'updated_at': DateTime.now().toIso8601String(),
       };
@@ -126,17 +129,22 @@ class OrderService {
           .single();
 
       final orderId = orderResponse['id'];
+      final orderNumber = orderResponse['order_number'];
 
       // إضافة عناصر الطلب
       final orderItemsData = items
           .map(
             (item) => {
               'order_id': orderId,
+              'order_number': orderNumber, // حمل رقم الطلب الأساسي
               'product_id': item['product_id'],
+              'product_name': item['product_name'] ?? '',
+              'product_price': item['price'],
               'quantity': item['quantity'],
-              'price': item['price'],
-              'total':
+              'total_price':
                   (item['price'] as num).toDouble() * (item['quantity'] as int),
+              'selected_options': item['selected_options'],
+              'special_instructions': item['special_instructions'],
             },
           )
           .toList();
@@ -144,6 +152,11 @@ class OrderService {
       await _supabase.from('order_items').insert(orderItemsData);
 
       AppLogger.info('تم إنشاء طلب جديد برقم: $orderId');
+
+      // ملاحظة: إشعارات التاجر والأدمن تُرسل من OrderProvider.createOrder()
+      // عبر notifyMerchantOfNewOrder() و notifyAdminOfNewOrder()
+      // لتجنب تكرار الإشعارات
+
       return await getOrderById(orderId);
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في إنشاء الطلب: ${e.message}', e);
@@ -157,12 +170,13 @@ class OrderService {
   // ===== الحصول على تفاصيل طلب محدد =====
   static Future<OrderModel?> getOrderById(String orderId) async {
     try {
+      AppLogger.info('🔵 DEBUG: getOrderById - جاري جلب الطلب برقم: $orderId');
       final response = await _supabase
           .from('orders')
           .select('''
             *,
-            customers:profiles!orders_customer_id_fkey(*),
-            captain:profiles!orders_captain_id_fkey(*),
+            client:profiles!client_id(full_name, phone),
+            captain:profiles!captain_id(full_name, phone),
             order_items(
               *,
               products(*, stores(*))
@@ -171,12 +185,60 @@ class OrderService {
           .eq('id', orderId)
           .single();
 
-      return OrderModel.fromMap(response);
+      AppLogger.info(
+        '🟢 DEBUG: getOrderById - تم الحصول على البيانات من DB: ${response['id']}',
+      );
+      final model = OrderModel.fromMap(response);
+      AppLogger.info(
+        '🟢 DEBUG: getOrderById - تم تحويل البيانات إلى OrderModel بنجاح',
+      );
+      return model;
     } on PostgrestException catch (e) {
+      AppLogger.error(
+        '❌ DEBUG: getOrderById - PostgreSQL Exception: ${e.message}',
+        e,
+      );
       AppLogger.error('PostgreSQL خطأ في جلب الطلب: ${e.message}', e);
       return null;
     } catch (e) {
+      AppLogger.error('❌ DEBUG: getOrderById - Exception: ${e.toString()}', e);
       AppLogger.error('خطأ في جلب الطلب', e);
+      return null;
+    }
+  }
+
+  // ===== الحصول على تفاصيل طلب محدد برقم الطلب =====
+  static Future<OrderModel?> getOrderByNumber(String orderNumber) async {
+    try {
+      final response = await _supabase
+          .from('orders')
+          .select('''
+            *,
+            client:profiles!client_id(full_name, phone),
+            captain:profiles!captain_id(full_name, phone),
+            order_items(
+              *,
+              products(*, stores(*))
+            )
+          ''')
+          .eq('order_number', orderNumber)
+          .maybeSingle();
+
+      if (response == null) {
+        // إذا لم نجد رقم طلب مطابق، نحاول البحث في المعرف (UUID) كخيار بديل
+        // في حال كان المستخدم أدخل المعرف بالخطأ
+        if (orderNumber.length >= 32) {
+          return await getOrderById(orderNumber);
+        }
+        return null;
+      }
+
+      return OrderModel.fromMap(response);
+    } on PostgrestException catch (e) {
+      AppLogger.error('PostgreSQL خطأ في جلب الطلب بالرقم: ${e.message}', e);
+      return null;
+    } catch (e) {
+      AppLogger.error('خطأ في جلب الطلب بالرقم', e);
       return null;
     }
   }
@@ -201,28 +263,17 @@ class OrderService {
   }
 
   // ===== تحديث موقع الكابتن =====
+  /// @deprecated استخدم CaptainService.updateCaptainLocation بدلاً من هذه الدالة
   static Future<bool> updateCaptainLocation(
     String captainId,
     double latitude,
     double longitude,
   ) async {
-    try {
-      await _supabase.from('captain_locations').upsert({
-        'captain_id': captainId,
-        'latitude': latitude,
-        'longitude': longitude,
-        'updated_at': DateTime.now().toIso8601String(),
-      });
-
-      AppLogger.info('تم تحديث موقع الكابتن $captainId');
-      return true;
-    } on PostgrestException catch (e) {
-      AppLogger.error('PostgreSQL خطأ في تحديث موقع الكابتن: ${e.message}', e);
-      return false;
-    } catch (e) {
-      AppLogger.error('خطأ في تحديث موقع الكابتن', e);
-      return false;
-    }
+    return CaptainService.updateCaptainLocation(
+      captainId: captainId,
+      latitude: latitude,
+      longitude: longitude,
+    );
   }
 
   // ===== تحديث حالة الطلب =====
@@ -246,37 +297,64 @@ class OrderService {
         updateData['captain_id'] = captainId;
       }
 
-      // إضافة timestamps للحالات المختلفة
-      switch (newStatus) {
-        case 'confirmed':
-          updateData['confirmed_at'] = DateTime.now().toIso8601String();
-          break;
-        case 'preparing':
-          updateData['preparing_at'] = DateTime.now().toIso8601String();
-          break;
-        case 'ready_for_pickup':
-          updateData['ready_at'] = DateTime.now().toIso8601String();
-          break;
-        case 'picked_up':
-          updateData['picked_up_at'] = DateTime.now().toIso8601String();
-          break;
-        case 'delivered':
-          updateData['delivered_at'] = DateTime.now().toIso8601String();
-          updateData['payment_status'] = 'completed';
-          break;
-        case 'cancelled':
-          updateData['cancelled_at'] = DateTime.now().toIso8601String();
-          break;
-      }
+      // ❌ تم حذف محاولات تحديث الأعمدة الناقصة
+      // لأن الأعمدة confirmed_at, preparing_at, etc غير موجودة في قاعدة البيانات
+      // Code PGRST204: Could not find the column in schema cache
+      // بدلاً من ذلك: تحديث status و updated_at فقط
 
+      AppLogger.info('\n🔵 DEBUG: قبل التحديث - updateData = $updateData');
+
+      // ✅ تحديث الطلب ثم جلبه بشكل منفصل لتجنب خطأ 406
       await _supabase.from('orders').update(updateData).eq('id', orderId);
 
+      // التحقق من نجاح التحديث بجلب الطلب
+      final verifyResponse = await _supabase
+          .from('orders')
+          .select('id, status')
+          .eq('id', orderId)
+          .maybeSingle();
+
+      if (verifyResponse == null || verifyResponse['status'] != newStatus) {
+        AppLogger.error(
+          '❌ فشل تحديث الطلب - RLS policy قد يكون منع التحديث أو الطلب غير موجود',
+        );
+        return null;
+      }
+
+      AppLogger.info('🟢 DEBUG: تم التحديث بنجاح في قاعدة البيانات');
+
       AppLogger.info('تم تحديث حالة الطلب $orderId إلى $newStatus');
-      return await getOrderById(orderId);
+
+      // إحضار بيانات الطلب المحدث
+      try {
+        AppLogger.info('🔵 DEBUG: جاري جلب الطلب المحدث من قاعدة البيانات...');
+        final order = await getOrderById(orderId);
+        AppLogger.info(
+          '🔵 DEBUG: نتيجة getOrderById = ${order != null ? "تم الحصول على الطلب" : "null - لم يتم العثور على الطلب"}',
+        );
+        // ❌ الإشعارات تُرسل حصرياً من OrderProvider — لا نكررها هنا
+      } catch (e) {
+        AppLogger.warning('⚠️ فشل جلب الطلب المحدث: $e');
+      }
+
+      AppLogger.info('🔵 DEBUG: إعادة جلب الطلب النهائي للتأكد من التحديث...');
+      final finalOrder = await getOrderById(orderId);
+      AppLogger.info(
+        '🔵 DEBUG: الطلب النهائي = ${finalOrder != null ? "موجود (${finalOrder.status})" : "null"}',
+      );
+      return finalOrder;
     } on PostgrestException catch (e) {
+      AppLogger.error(
+        '❌ DEBUG: PostgreSQL Exception - Code: ${e.code}, Message: ${e.message}',
+        e,
+      );
       AppLogger.error('PostgreSQL خطأ في تحديث حالة الطلب: ${e.message}', e);
       throw Exception('فشل تحديث حالة الطلب: ${e.message}');
     } catch (e) {
+      AppLogger.error(
+        '❌ DEBUG: Exception (غير PostgreSQL): ${e.toString()}',
+        e,
+      );
       AppLogger.error('خطأ في تحديث حالة الطلب', e);
       throw Exception('فشل تحديث حالة الطلب: ${e.toString()}');
     }
@@ -309,10 +387,10 @@ class OrderService {
         .onPostgresChanges(
           event: PostgresChangeEvent.update,
           schema: 'public',
-          table: 'captain_locations',
+          table: 'driver_locations',
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
-            column: 'captain_id',
+            column: 'driver_id',
             value: captainId,
           ),
           callback: (payload) {
@@ -418,7 +496,7 @@ class OrderService {
     String orderId,
   ) {
     return streamOrder(orderId).asyncExpand((order) {
-      final driverId = order?['assigned_driver_id']?.toString();
+      final driverId = order?['captain_id']?.toString();
       if (driverId == null || driverId.isEmpty) {
         return Stream<Map<String, dynamic>?>.value(null);
       }
@@ -471,14 +549,14 @@ class OrderService {
           .from('orders')
           .select('''
             *,
-            customers:profiles!orders_customer_id_fkey(*),
-            captain:profiles!orders_captain_id_fkey(*),
+            client:profiles!client_id(full_name, phone),
+            captain:profiles!captain_id(full_name, phone),
             order_items(
               *,
               products(*, stores(*))
             )
           ''')
-          .eq('customer_id', userId);
+          .eq('client_id', userId);
 
       if (status != null) {
         query = query.eq('status', status);
@@ -519,8 +597,8 @@ class OrderService {
       final int startIndex = (page - 1) * _pageSize;
       var query = _supabase.from('orders').select('''
             *,
-            customers:profiles!orders_customer_id_fkey(*),
-            captain:profiles!orders_captain_id_fkey(*),
+            client:profiles!client_id(full_name, phone),
+            captain:profiles!captain_id(full_name, phone),
             order_items(
               *,
               products(*, stores(*))
@@ -569,8 +647,8 @@ class OrderService {
           .from('orders')
           .select('''
             *,
-            customers:profiles!orders_customer_id_fkey(*),
-            captain:profiles!orders_captain_id_fkey(*),
+            client:profiles!client_id(full_name, phone),
+            captain:profiles!captain_id(full_name, phone),
             order_items(
               *,
               products!inner(*, stores!inner(*))
@@ -618,8 +696,8 @@ class OrderService {
           .from('orders')
           .select('''
             *,
-            customers:profiles!orders_customer_id_fkey(*),
-            captain:profiles!orders_captain_id_fkey(*),
+            client:profiles!client_id(full_name, phone),
+            captain:profiles!captain_id(full_name, phone),
             order_items(
               *,
               products(*, stores(*))
@@ -647,42 +725,50 @@ class OrderService {
     }
   }
 
-  // ===== الحصول على الطلبات المتاحة للكباتن =====
+  // ===== الحصول على الطلبات المتاحة للكباتن في المنطقة =====
   static Future<List<OrderModel>> getAvailableOrdersForCaptains({
     double? captainLat,
     double? captainLng,
     double maxDistance = 10.0, // كيلومتر
   }) async {
     try {
+      if (captainLat != null && captainLng != null) {
+        // استخدام RPC للفلترة الجغرافية
+        final response = await _supabase.rpc(
+          'get_nearby_available_orders',
+          params: {
+            'captain_lat': captainLat,
+            'captain_lng': captainLng,
+            'radius_km': maxDistance,
+          },
+        );
+
+        return (response as List)
+            .map((data) => OrderModel.fromMap(data))
+            .toList();
+      }
+
+      // في حال عدم توفر الموقع، نعتمد البحث التقليدي (لكن يفضل دائماً توفير الموقع)
       var query = _supabase
           .from('orders')
           .select('''
             *,
-            customers:profiles!orders_customer_id_fkey(*),
+            client:profiles!client_id(full_name, phone),
             order_items(
               *,
               products(*, stores(*))
             )
           ''')
           .or(
-            'status.eq.${OrderStatus.pending.value},status.eq.${OrderStatus.confirmed.value}',
+            'status.eq.${OrderStatus.pending.value},status.eq.${OrderStatus.confirmed.value},status.eq.${OrderStatus.ready.value}',
           )
           .isFilter('captain_id', null);
 
       final response = await query.order('created_at', ascending: true);
 
-      final orders = (response as List)
+      return (response as List)
           .map((data) => OrderModel.fromMap(data))
           .toList();
-
-      // تطبيق فلتر المسافة إذا تم توفير موقع الكابتن
-      if (captainLat != null && captainLng != null) {
-        // حالياً نعيد جميع الطلبات - يمكن تطوير فلترة جغرافية لاحقاً
-        // عند إضافة حقول lat/lng منفصلة لجدول الطلبات
-        return orders;
-      }
-
-      return orders;
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في جلب الطلبات المتاحة: ${e.message}', e);
       return [];
@@ -704,7 +790,7 @@ class OrderService {
       var query = _supabase.from('orders').select();
 
       if (customerId != null) {
-        query = query.eq('customer_id', customerId);
+        query = query.eq('client_id', customerId);
       }
 
       if (captainId != null) {
@@ -1067,8 +1153,8 @@ class OrderService {
     try {
       var query = _supabase.from('orders').select('''
             *,
-            profiles!orders_client_id_fkey(full_name, phone),
-            captains(profiles(full_name))
+            client:profiles!client_id(full_name, phone),
+            captain:profiles!captain_id(full_name, phone)
           ''');
 
       if (merchantId != null) {

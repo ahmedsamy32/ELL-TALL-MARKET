@@ -3,10 +3,15 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/providers/cart_provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/providers/favorites_provider.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/screens/user/product_detail_screen.dart';
 import 'package:ell_tall_market/core/logger.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/widgets/product_card.dart';
+import 'package:ell_tall_market/widgets/product_options_bottom_sheet.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 /// شاشة عرض سلة التسوق
 ///
@@ -100,42 +105,45 @@ class _CartScreenState extends State<CartScreen> {
             ),
         ],
       ),
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: () async {
-            AppLogger.info('🔄 جاري تحديث السلة...');
-            await cartProvider.loadCart();
+      body: ResponsiveCenter(
+        maxWidth: 900,
+        child: SafeArea(
+          child: RefreshIndicator(
+            onRefresh: () async {
+              AppLogger.info('🔄 جاري تحديث السلة...');
+              await cartProvider.loadCart();
 
-            // إعادة تحميل المنتجات المقترحة
-            setState(() {
-              _suggestedProducts = null;
-              _isSuggestionsLoading = false;
-            });
+              // إعادة تحميل المنتجات المقترحة
+              setState(() {
+                _suggestedProducts = null;
+                _isSuggestionsLoading = false;
+              });
 
-            AppLogger.info('✅ تم تحديث السلة بنجاح');
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Row(
-                    children: [
-                      Icon(Icons.check_circle, color: Colors.white, size: 20),
-                      SizedBox(width: 8),
-                      Text('تم تحديث السلة'),
-                    ],
+              AppLogger.info('✅ تم تحديث السلة بنجاح');
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: const Row(
+                      children: [
+                        Icon(Icons.check_circle, color: Colors.white, size: 20),
+                        SizedBox(width: 8),
+                        Text('تم تحديث السلة'),
+                      ],
+                    ),
+                    duration: const Duration(seconds: 1),
+                    behavior: SnackBarBehavior.floating,
+                    backgroundColor: Colors.green,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
-                  duration: const Duration(seconds: 1),
-                  behavior: SnackBarBehavior.floating,
-                  backgroundColor: Colors.green,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-              );
-            }
-          },
-          child: cartProvider.isEmpty
-              ? _buildEmptyCart(context)
-              : _buildCartWithItems(cartProvider, context),
+                );
+              }
+            },
+            child: cartProvider.isEmpty
+                ? _buildEmptyCart(context)
+                : _buildCartWithItems(cartProvider, context),
+          ),
         ),
       ),
     );
@@ -506,6 +514,51 @@ class _CartScreenState extends State<CartScreen> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 4),
+
+                      // عرض الخصائص المختارة
+                      if (item['selected_options'] != null &&
+                          (item['selected_options'] as Map).isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Wrap(
+                            spacing: 6,
+                            runSpacing: 2,
+                            children:
+                                (item['selected_options']
+                                        as Map<String, dynamic>)
+                                    .entries
+                                    .map((entry) {
+                                      return Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: colorScheme
+                                              .surfaceContainerHighest
+                                              .withValues(alpha: 0.5),
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
+                                          border: Border.all(
+                                            color: colorScheme.outlineVariant
+                                                .withValues(alpha: 0.3),
+                                          ),
+                                        ),
+                                        child: Text(
+                                          '${entry.key}: ${entry.value}',
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                            color: colorScheme.onSurfaceVariant,
+                                          ),
+                                        ),
+                                      );
+                                    })
+                                    .toList(),
+                          ),
+                        ),
                       const SizedBox(height: 6),
 
                       // badge نظام التوصيل فقط
@@ -871,10 +924,18 @@ class _CartScreenState extends State<CartScreen> {
           .limit(10);
 
       final products = (response as List)
+          .where((item) {
+            final isActive = item['is_active'] == true;
+            final inStock = item['in_stock'] == true;
+            final stockQuantity = (item['stock_quantity'] as int?) ?? 0;
+            return isActive && inStock && stockQuantity > 0;
+          })
           .map((item) => ProductModel.fromMap(item))
           .toList();
 
-      AppLogger.info('✅ تم جلب ${products.length} منتجات مقترحة من نفس المتاجر');
+      AppLogger.info(
+        '✅ تم جلب ${products.length} منتجات مقترحة من نفس المتاجر',
+      );
       return products.take(5).toList();
     } catch (e) {
       AppLogger.error('❌ خطأ في جلب المنتجات المقترحة', e);
@@ -882,7 +943,6 @@ class _CartScreenState extends State<CartScreen> {
     }
   }
 
-  /// بناء قسم المنتجات المقترحة
   Widget _buildSuggestionsSection(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
@@ -897,7 +957,7 @@ class _CartScreenState extends State<CartScreen> {
               color: colorScheme.primary,
               size: 24,
             ),
-            SizedBox(width: 8),
+            const SizedBox(width: 8),
             Text(
               'أكمل طلبك من نفس المتجر',
               style: theme.textTheme.titleLarge?.copyWith(
@@ -909,12 +969,29 @@ class _CartScreenState extends State<CartScreen> {
         ),
         const SizedBox(height: 16),
         SizedBox(
-          height: 180,
+          height: 260, // تم زيادة الارتفاع ليتناسب مع الكارت الجديد
           child: Builder(
             builder: (context) {
               // عرض مؤشر التحميل
               if (_isSuggestionsLoading) {
-                return const Center(child: CircularProgressIndicator());
+                return AppShimmer.wrap(
+                  context,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: EdgeInsets.zero,
+                    itemCount: 6,
+                    separatorBuilder: (_, _) => const SizedBox(width: 12),
+                    itemBuilder: (context, index) {
+                      return Container(
+                        width: 180, // تم زيادة العرض ليتناسب مع الكارت الجديد
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surface,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      );
+                    },
+                  ),
+                );
               }
 
               // عرض حالة فارغة
@@ -931,141 +1008,203 @@ class _CartScreenState extends State<CartScreen> {
 
               final products = _suggestedProducts!;
 
-              return ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: products.length,
-                itemBuilder: (context, index) {
-                  final product = products[index];
+              return Consumer<FavoritesProvider>(
+                builder: (context, favoritesProvider, _) {
+                  return ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: EdgeInsets.zero,
+                    itemCount: products.length,
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(width: 16),
+                    itemBuilder: (context, index) {
+                      final product = products[index];
+                      final isFavorite = favoritesProvider.isFavorite(
+                        product.id,
+                      );
 
-                  return Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                ProductDetailScreen(product: product),
-                          ),
-                        );
-                      },
-                      borderRadius: BorderRadius.circular(16),
-                      child: Container(
-                        width: 140,
-                        margin: const EdgeInsets.only(left: 12),
-                        decoration: BoxDecoration(
-                          color: colorScheme.surface,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: colorScheme.outline.withValues(alpha: 0.2),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // صورة المنتج المقترح
-                            ClipRRect(
-                              borderRadius: const BorderRadius.vertical(
-                                top: Radius.circular(16),
+                      return SizedBox(
+                        width: 180, // تم زيادة العرض لیتناسب مع الكارت الجديد
+                        child: ProductCard(
+                          product: product,
+                          isFavorite: isFavorite,
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    ProductDetailScreen(product: product),
                               ),
-                              child: Container(
-                                height: 100,
-                                width: double.infinity,
-                                color: colorScheme.surfaceContainerHighest,
-                                child:
-                                    (product.imageUrl != null &&
-                                        product.imageUrl!.isNotEmpty)
-                                    ? Image.network(
-                                        product.imageUrl!,
-                                        fit: BoxFit.cover,
-                                        errorBuilder:
-                                            (context, error, stackTrace) {
-                                              return Icon(
-                                                Icons.fastfood,
-                                                size: 40,
-                                                color: colorScheme.primary,
-                                              );
-                                            },
-                                      )
-                                    : Icon(
-                                        Icons.fastfood,
-                                        size: 40,
-                                        color: colorScheme.primary,
-                                      ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    product.name,
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                            );
+                          },
+                          onFavoritePressed: () async {
+                            final wasFavorite = favoritesProvider
+                                .isFavoriteProduct(product.id);
+                            await favoritesProvider.toggleFavoriteProduct(
+                              product,
+                            );
+                            if (mounted && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    wasFavorite
+                                        ? 'تمت الإزالة من المفضلة'
+                                        : 'تمت الإضافة للمفضلة',
                                   ),
-                                  const SizedBox(height: 4),
-                                  Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Text(
-                                        '${product.price.toStringAsFixed(2)} ج.م',
-                                        style: theme.textTheme.bodySmall
-                                            ?.copyWith(
-                                              color: colorScheme.primary,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                      ),
-                                      InkWell(
-                                        onTap: () async {
-                                          final cartProvider = context
-                                              .read<CartProvider>();
-                                          await cartProvider.addToCart(
-                                            productId: product.id,
-                                            quantity: 1,
-                                          );
-                                          if (context.mounted) {
+                                  backgroundColor: wasFavorite
+                                      ? Colors.red
+                                      : Colors.green,
+                                  duration: const Duration(seconds: 1),
+                                ),
+                              );
+                            }
+                          },
+                          onBuyPressed: () async {
+                            // فحص إذا المنتج عنده خيارات ديناميكية
+                            final hasDynamicFields =
+                                product.variantGroups != null &&
+                                product.variantGroups!.isNotEmpty;
+
+                            if (hasDynamicFields) {
+                              // المنتج عنده خيارات → افتح البوتوم شيت
+                              showModalBottomSheet(
+                                context: context,
+                                isScrollControlled: true,
+                                backgroundColor: Colors.transparent,
+                                builder: (context) => ProductOptionsBottomSheet(
+                                  product: product,
+                                  onAddToCart:
+                                      (
+                                        quantity,
+                                        selectedOptions,
+                                        variant,
+                                      ) async {
+                                        Navigator.pop(context);
+
+                                        final cartProvider =
+                                            Provider.of<CartProvider>(
+                                              context,
+                                              listen: false,
+                                            );
+
+                                        final success = await cartProvider
+                                            .addToCart(
+                                              productId: product.id,
+                                              quantity: quantity,
+                                              selectedOptions: selectedOptions,
+                                            );
+
+                                        if (context.mounted) {
+                                          if (success) {
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              SnackBar(
+                                                content: Row(
+                                                  children: [
+                                                    const Icon(
+                                                      Icons.check_circle,
+                                                      color: Colors.white,
+                                                    ),
+                                                    const SizedBox(width: 12),
+                                                    Expanded(
+                                                      child: Text(
+                                                        'تمت إضافة ${product.name} للسلة',
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                backgroundColor: Colors.green,
+                                                behavior:
+                                                    SnackBarBehavior.floating,
+                                                duration: const Duration(
+                                                  seconds: 2,
+                                                ),
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius:
+                                                      BorderRadius.circular(12),
+                                                ),
+                                              ),
+                                            );
+                                          } else {
                                             ScaffoldMessenger.of(
                                               context,
                                             ).showSnackBar(
                                               SnackBar(
                                                 content: Text(
-                                                  'تم إضافة ${product.name} للسلة',
+                                                  cartProvider.error ??
+                                                      'فشلت إضافة المنتج',
                                                 ),
-                                                backgroundColor: Colors.green,
+                                                backgroundColor:
+                                                    Colors.red[700],
+                                                behavior:
+                                                    SnackBarBehavior.floating,
                                                 duration: const Duration(
                                                   seconds: 2,
                                                 ),
                                               ),
                                             );
                                           }
-                                        },
-                                        child: Container(
-                                          padding: const EdgeInsets.all(4),
-                                          decoration: BoxDecoration(
-                                            color: colorScheme.primary,
-                                            shape: BoxShape.circle,
+                                        }
+                                      },
+                                ),
+                              );
+                            } else {
+                              // المنتج بدون خيارات → أضفه للسلة مباشرة
+                              final cartProvider = Provider.of<CartProvider>(
+                                context,
+                                listen: false,
+                              );
+
+                              final success = await cartProvider.addToCart(
+                                productId: product.id,
+                                quantity: 1,
+                              );
+
+                              if (context.mounted) {
+                                if (success) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.check_circle,
+                                            color: Colors.white,
                                           ),
-                                          child: Icon(
-                                            Icons.add,
-                                            size: 16,
-                                            color: colorScheme.onPrimary,
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Text(
+                                              'تمت إضافة ${product.name} للسلة',
+                                            ),
                                           ),
-                                        ),
+                                        ],
                                       ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
+                                      backgroundColor: Colors.green,
+                                      behavior: SnackBarBehavior.floating,
+                                      duration: const Duration(seconds: 2),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                    ),
+                                  );
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(
+                                        cartProvider.error ??
+                                            'فشلت إضافة المنتج',
+                                      ),
+                                      backgroundColor: Colors.red[700],
+                                      behavior: SnackBarBehavior.floating,
+                                      duration: const Duration(seconds: 2),
+                                    ),
+                                  );
+                                }
+                              }
+                            }
+                          },
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   );
                 },
               );

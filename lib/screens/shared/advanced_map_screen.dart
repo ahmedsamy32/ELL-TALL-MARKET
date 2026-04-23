@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'dart:math' show sqrt, asin;
+
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,6 +9,7 @@ import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/config/env.dart';
 import 'package:ell_tall_market/services/google_maps_api_service.dart';
 import 'package:ell_tall_market/services/order_service.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 
 /// 🗺️ Advanced Map Screen - يدعم 3 أنواع مستخدمين
 ///
@@ -34,6 +35,7 @@ class MapLocationDetails {
   final LatLng position;
   final String address;
   final String? street;
+  final String? landmark;
   final String? district;
   final String? city;
   final String? governorate;
@@ -42,6 +44,7 @@ class MapLocationDetails {
     required this.position,
     required this.address,
     this.street,
+    this.landmark,
     this.district,
     this.city,
     this.governorate,
@@ -91,11 +94,33 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
   LatLng? _selectedPosition;
   String _selectedAddress = 'جاري تحديد العنوان...';
   String? _selectedStreet;
+  String? _selectedLandmark;
   String? _selectedDistrict;
   String? _selectedCity;
   String? _selectedGovernorate;
   bool _isLoadingAddress = false;
   bool _isLoadingLocation = false;
+
+  void _tryFetchNearbyLandmark(LatLng position) {
+    if (!mounted) return;
+    if (_selectedLandmark != null && _selectedLandmark!.trim().isNotEmpty) {
+      return;
+    }
+
+    unawaited(() async {
+      try {
+        final nearby = await _mapsApi.nearbyLandmarkArabic(position: position);
+        if (!mounted) return;
+        if (nearby == null || nearby.trim().isEmpty) return;
+        if (_selectedLandmark != null && _selectedLandmark!.trim().isNotEmpty) {
+          return;
+        }
+        setState(() => _selectedLandmark = nearby);
+      } catch (_) {
+        // Ignore; landmark is optional.
+      }
+    }());
+  }
 
   // 🎯 Markers & Polylines
   final Set<Marker> _markers = {};
@@ -124,6 +149,58 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
   final double _deliveryRadius = 15.0; // كم
   Timer? _debounceTimer;
   final GoogleMapsApiService _mapsApi = GoogleMapsApiService();
+
+  String _composeDisplayAddress({
+    required String? governorate,
+    required String? city,
+    required String? district,
+    required String? street,
+    required String fallback,
+  }) {
+    String canonicalForDedup(String input) {
+      var s = input.trim();
+      if (s.isEmpty) return '';
+      s = s.replaceAll('\u0640', '');
+      s = s
+          .replaceFirst(RegExp(r'^\s*محافظة\s+'), '')
+          .replaceFirst(RegExp(r'^\s*مركز\s+'), '')
+          .replaceFirst(RegExp(r'^\s*مدينة\s+'), '')
+          .replaceFirst(RegExp(r'^\s*قرية\s+'), '')
+          .replaceFirst(RegExp(r'^\s*حي\s+'), '');
+      s = s
+          .replaceAll(RegExp(r'[\-–—‑]+'), ' ')
+          .replaceAll(RegExp(r'\s*(،|,)\s*'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim()
+          .toLowerCase();
+      return s;
+    }
+
+    final parts = <String>[];
+    void add(String? value) {
+      final v = (value ?? '').trim();
+      if (v.isEmpty) return;
+      final cv = canonicalForDedup(v);
+      if (cv.isEmpty) return;
+      for (final p in parts) {
+        final cp = canonicalForDedup(p);
+        // Avoid exact duplicates and cases where the existing value already
+        // fully contains the new one. We intentionally do NOT drop a new value
+        // just because it contains an older one (to keep city/governorate).
+        if (cp == cv || cp.contains(cv)) return;
+      }
+      parts.add(v);
+    }
+
+    // Show more specific parts first so "الحي" is visible even with ellipsis.
+    add(street);
+    add(district);
+    add(city);
+    add(governorate);
+
+    final composed = parts.join('، ');
+    return composed.isNotEmpty ? composed : fallback;
+  }
 
   @override
   void initState() {
@@ -171,7 +248,7 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
 
       setState(() => _liveOrder = order);
 
-      final assignedDriverId = order?['assigned_driver_id']?.toString();
+      final assignedDriverId = order?['captain_id']?.toString();
 
       _driverLocationSub?.cancel();
       if (assignedDriverId != null && assignedDriverId.isNotEmpty) {
@@ -365,8 +442,8 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
 
       Position position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          distanceFilter: 10,
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 10),
         ),
       );
 
@@ -397,9 +474,35 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
     setState(() => _isLoadingAddress = true);
 
     try {
-      // ✅ الحل الأدق لمشكلة Plus Codes: استخدام Google Geocoding API عبر HTTP
-      // (حزمة geocoding لا تدعم دائماً localeIdentifier في بعض الإصدارات)
-      final result = await _mapsApi.reverseGeocodeArabic(position);
+      String? extractDistrictFromText(String? text) {
+        final s = (text ?? '').trim();
+        if (s.isEmpty) return null;
+
+        // Common in 10th of Ramadan city: "مجاورة 31" / "مجاوره ٣١".
+        final mogawra = RegExp(
+          r'(?:مجاورة|مجاوره)\s*'
+          r'[0-9\u0660-\u0669]+'
+          r'(?:\s*[/\\\-–—]\s*[0-9\u0660-\u0669]+)*',
+        ).firstMatch(s);
+        if (mogawra != null) return mogawra.group(0)?.trim();
+
+        // Fallback: explicit حي.
+        final hay = RegExp(r'(?:الحي|حي)\s+[^،,]+').firstMatch(s);
+        return hay?.group(0)?.trim();
+      }
+
+      // ✅ استخدام Google Geocoding API عبر HTTP
+      // القيم تأتي صحيحة من _parseAddressComponents في google_maps_api_service.dart:
+      // - city = administrative_area_level_2 (المركز)
+      // - neighborhood = sublocality/neighborhood/admin_level_3,4 (القرية/الحي)
+      // - governorate = administrative_area_level_1 (المحافظة)
+      ReverseGeocodeResult? result;
+      try {
+        result = await _mapsApi.reverseGeocodeArabic(position);
+      } catch (e) {
+        // Don't abort the whole flow; we will fall back to device geocoding.
+        AppLogger.warning('⚠️ فشل Google Geocoding، سيتم استخدام fallback: $e');
+      }
       if (mounted && result != null) {
         String stripPrefix(String? v) {
           var s = (v ?? '').trim();
@@ -414,42 +517,86 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
           return s;
         }
 
-        bool looksCenter(String v) =>
-            v.contains('مركز') || v.contains('مدينة') || v.contains('قسم');
-
-        bool looksDistrict(String v) =>
-            v.contains('حي') ||
-            v.contains('قرية') ||
-            v.contains('عزبة') ||
-            v.contains('كفر') ||
-            v.contains('نجع');
-
-        String? city = result.city;
-        String? district = result.neighborhood;
-
-        // If Google swapped levels, fix it conservatively.
-        if (city != null && district != null) {
-          final c = city;
-          final d = district;
-          if (looksDistrict(c) && looksCenter(d)) {
-            city = d;
-            district = c;
-          }
-        } else if (city == null && district != null && looksCenter(district)) {
-          city = district;
-          district = null;
+        var street = stripPrefix(result.street);
+        final landmark = stripPrefix(result.landmark);
+        var district = stripPrefix(result.neighborhood);
+        if (district.isEmpty) {
+          district =
+              (extractDistrictFromText(result.formattedAddress) ??
+                      extractDistrictFromText(result.displayAddress) ??
+                      '')
+                  .trim();
         }
 
-        setState(() {
-          _selectedAddress = result.displayAddress;
-          _selectedStreet = stripPrefix(result.street);
-          _selectedDistrict = stripPrefix(district);
-          _selectedCity = stripPrefix(city);
-          _selectedGovernorate = stripPrefix(result.governorate);
-        });
-        AppLogger.info(
-          '📍 العنوان (Google Geocoding): ${result.displayAddress}',
+        // If Google does not provide a neighborhood/district, try the platform
+        // geocoder as a best-effort source (some areas return "مجاورة" there).
+        if (district.isEmpty) {
+          try {
+            final placemarks = await placemarkFromCoordinates(
+              position.latitude,
+              position.longitude,
+            ).timeout(const Duration(seconds: 6));
+
+            if (placemarks.isNotEmpty) {
+              final pm = placemarks.first;
+              final fromPm =
+                  _cleanAndValidate(pm.subLocality) ??
+                  _cleanAndValidate(pm.subAdministrativeArea) ??
+                  extractDistrictFromText(pm.street) ??
+                  extractDistrictFromText(pm.thoroughfare) ??
+                  extractDistrictFromText(pm.name);
+              final cleaned = (fromPm ?? '').trim();
+              if (cleaned.isNotEmpty) {
+                district = stripPrefix(cleaned);
+              }
+            }
+          } catch (_) {
+            // Ignore; district is optional.
+          }
+        }
+        final city = stripPrefix(result.city);
+        final governorate = stripPrefix(result.governorate);
+        // If Arabic street is missing, try English for the closest street name.
+        if (street.isEmpty) {
+          try {
+            final enResult = await _mapsApi.reverseGeocodeEnglish(position);
+            final enStreet = stripPrefix(enResult?.street);
+            if (enStreet.isNotEmpty) {
+              street = enStreet;
+            }
+          } catch (_) {
+            // Ignore; street fallback is optional.
+          }
+        }
+
+        final display = _composeDisplayAddress(
+          governorate: governorate,
+          city: city,
+          district: district,
+          street: street,
+          fallback: result.displayAddress,
         );
+
+        setState(() {
+          _selectedAddress = display;
+          _selectedStreet = street;
+          _selectedLandmark = landmark.isEmpty ? null : landmark;
+          _selectedDistrict = district.isEmpty ? null : district;
+          _selectedCity = city;
+          _selectedGovernorate = governorate;
+        });
+
+        AppLogger.info('📍 العنوان (Google Geocoding):');
+        AppLogger.info('   - المحافظة: ${result.governorate}');
+        AppLogger.info('   - المركز (city): ${result.city}');
+        AppLogger.info(
+          '   - القرية/الحي (neighborhood): ${result.neighborhood}',
+        );
+        AppLogger.info('   - الشارع: ${result.street}');
+        AppLogger.info('   - أقرب معلم (landmark): ${result.landmark}');
+
+        // If no landmark came from geocoding, try Places Nearby Search (best effort).
+        _tryFetchNearbyLandmark(position);
         return;
       }
 
@@ -486,7 +633,11 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
           if (cleaned == null) return;
           final cv = canonicalForDedup(cleaned);
           if (cv.isEmpty) return;
-          if (parts.any((p) => canonicalForDedup(p) == cv)) return;
+          // تحقق من التطابق الكامل أو الجزئي
+          for (final p in parts) {
+            final cp = canonicalForDedup(p);
+            if (cp == cv || cp.contains(cv) || cv.contains(cp)) return;
+          }
           parts.add(cleaned);
         }
 
@@ -503,29 +654,79 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
         final fallbackAddress = displayParts.isEmpty
             ? 'موقع محدد'
             : displayParts.join('، ');
+
+        // استخراج القيم مع تجنب التكرار
+        final governorate = _cleanAndValidate(placemark.administrativeArea);
         final city =
             _cleanAndValidate(placemark.locality) ??
             _cleanAndValidate(placemark.subAdministrativeArea);
-        final governorate = _cleanAndValidate(placemark.administrativeArea);
+
+        // التأكد من أن district مختلف عن city
+        String? district = _cleanAndValidate(placemark.subLocality);
+        if (district != null && city != null) {
+          final dCanon = canonicalForDedup(district);
+          final cCanon = canonicalForDedup(city);
+          if (dCanon == cCanon ||
+              dCanon.contains(cCanon) ||
+              cCanon.contains(dCanon)) {
+            district = null;
+          }
+        }
+        // fallback إلى subAdministrativeArea إذا لم يكن هناك district
+        if (district == null &&
+            city != _cleanAndValidate(placemark.subAdministrativeArea)) {
+          district = _cleanAndValidate(placemark.subAdministrativeArea);
+        }
+
+        // If the platform geocoder doesn't give subLocality, try to infer it
+        // from the fallback address text.
+        district ??= extractDistrictFromText(fallbackAddress);
+
+        // التأكد من أن street مختلف عن الحقول الأخرى
+        String? street =
+            _cleanAndValidate(placemark.thoroughfare) ??
+            _cleanAndValidate(placemark.street);
+        if (street != null) {
+          final sCanon = canonicalForDedup(street);
+          final cCanon = canonicalForDedup(city ?? '');
+          final dCanon = canonicalForDedup(district ?? '');
+          if (sCanon == cCanon ||
+              sCanon.contains(cCanon) ||
+              cCanon.contains(sCanon) ||
+              sCanon == dCanon ||
+              sCanon.contains(dCanon) ||
+              dCanon.contains(sCanon)) {
+            street = null;
+          }
+        }
+
+        final display = _composeDisplayAddress(
+          governorate: governorate,
+          city: city,
+          district: district,
+          street: street,
+          fallback: fallbackAddress,
+        );
 
         setState(() {
-          _selectedAddress = fallbackAddress;
-          _selectedStreet =
-              _cleanAndValidate(placemark.thoroughfare) ??
-              _cleanAndValidate(placemark.street);
-          _selectedDistrict =
-              _cleanAndValidate(placemark.subLocality) ??
-              _cleanAndValidate(placemark.subAdministrativeArea);
+          _selectedAddress = display;
+          _selectedStreet = street;
+          _selectedLandmark = null;
+          _selectedDistrict = district;
           _selectedCity = city;
           _selectedGovernorate = governorate;
         });
         AppLogger.info('📍 العنوان (fallback): $fallbackAddress');
+
+        // Try getting a nearby landmark name via Places (best effort).
+        _tryFetchNearbyLandmark(position);
       }
     } catch (e) {
       AppLogger.error('فشل تحويل الإحداثيات', e);
       setState(() {
         _selectedAddress = 'فشل تحديد العنوان';
         _selectedStreet = null;
+        _selectedLandmark = null;
         _selectedDistrict = null;
         _selectedCity = null;
         _selectedGovernorate = null;
@@ -694,26 +895,17 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
     });
   }
 
-  /// 📐 حساب المسافة بين نقطتين (Haversine formula)
+  /// 📐 حساب المسافة بين نقطتين بالكيلومتر
   double _calculateDistance(LatLng from, LatLng to) {
-    const earthRadius = 6371.0; // كم
-    final dLat = _toRadians(to.latitude - from.latitude);
-    final dLon = _toRadians(to.longitude - from.longitude);
-
-    final a =
-        (sin(dLat / 2) * sin(dLat / 2)) +
-        (cos(_toRadians(from.latitude)) *
-            cos(_toRadians(to.latitude)) *
-            sin(dLon / 2) *
-            sin(dLon / 2));
-
-    final c = 2 * asin(sqrt(a));
-    return earthRadius * c;
+    // استخدام Geolocator لحساب دقيق بدلاً من Haversine يدوي
+    return Geolocator.distanceBetween(
+          from.latitude,
+          from.longitude,
+          to.latitude,
+          to.longitude,
+        ) /
+        1000.0; // تحويل من متر إلى كيلومتر
   }
-
-  double _toRadians(double degree) => degree * (3.14159265359 / 180);
-  double sin(double value) => (value - (value * value * value) / 6);
-  double cos(double value) => 1 - (value * value) / 2;
 
   /// 🎯 تحريك الكاميرا لعرض نقطتين
   void _fitBounds(LatLng pos1, LatLng pos2) {
@@ -731,11 +923,14 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
     _mapController?.animateCamera(CameraUpdate.newLatLngBounds(bounds, 100));
   }
 
-  /// 🔴 بدء التتبع الحي (للكابتن)
+  // 🔴 آخر موقع تم حساب المسار منه (لمنع إعادة الحساب المتكررة)
+  LatLng? _lastRouteOrigin;
+
+  /// 🔴 بدء التتبع الحي (للكابتن) — محسّن للبطارية
   void _startLiveTracking() {
     const locationSettings = LocationSettings(
-      accuracy: LocationAccuracy.high,
-      distanceFilter: 10, // تحديث كل 10 متر
+      accuracy: LocationAccuracy.medium, // medium بدل high — يوفر بطارية
+      distanceFilter: 50, // تحديث كل 50 متر بدل 10
     );
 
     _positionStream =
@@ -765,9 +960,22 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
             // تحريك الكاميرا مع الكابتن
             _mapController?.animateCamera(CameraUpdate.newLatLng(newPosition));
 
-            // إعادة رسم المسار
+            // إعادة رسم المسار فقط لو الكابتن ابتعد أكثر من 200 متر عن آخر نقطة حُسب المسار منها
             if (widget.destinationPosition != null) {
-              _drawRoute(newPosition, widget.destinationPosition!);
+              final shouldRecalcRoute =
+                  _lastRouteOrigin == null ||
+                  Geolocator.distanceBetween(
+                        _lastRouteOrigin!.latitude,
+                        _lastRouteOrigin!.longitude,
+                        newPosition.latitude,
+                        newPosition.longitude,
+                      ) >
+                      200;
+
+              if (shouldRecalcRoute) {
+                _lastRouteOrigin = newPosition;
+                _drawRoute(newPosition, widget.destinationPosition!);
+              }
             }
           }
         });
@@ -810,6 +1018,7 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
           position: _selectedPosition!,
           address: _selectedAddress,
           street: _selectedStreet,
+          landmark: _selectedLandmark,
           district: _selectedDistrict,
           city: _selectedCity,
           governorate: _selectedGovernorate,
@@ -826,6 +1035,7 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
           'position': _selectedPosition,
           'address': _selectedAddress,
           'street': _selectedStreet,
+          'landmark': _selectedLandmark,
           'district': _selectedDistrict,
           'city': _selectedCity,
           'governorate': _selectedGovernorate,
@@ -1164,10 +1374,11 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
                                   SizedBox(
                                     width: 12,
                                     height: 12,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        colorScheme.primary,
+                                    child: AppShimmer.wrap(
+                                      context,
+                                      child: AppShimmer.circle(
+                                        context,
+                                        size: 12,
                                       ),
                                     ),
                                   ),
@@ -1186,6 +1397,22 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
+                            if (!_isLoadingAddress &&
+                                _selectedLandmark != null &&
+                                _selectedLandmark!.trim().isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'أقرب معلم: ${_selectedLandmark!}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey[700],
+                                  fontWeight: FontWeight.w500,
+                                  height: 1.2,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -1211,11 +1438,9 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
                       ? SizedBox(
                           width: 20,
                           height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              colorScheme.primary,
-                            ),
+                          child: AppShimmer.wrap(
+                            context,
+                            child: AppShimmer.circle(context, size: 20),
                           ),
                         )
                       : Icon(Icons.my_location, size: 20),
@@ -1370,12 +1595,12 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
                                     SizedBox(
                                       width: 12,
                                       height: 12,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(
-                                              colorScheme.primary,
-                                            ),
+                                      child: AppShimmer.wrap(
+                                        context,
+                                        child: AppShimmer.circle(
+                                          context,
+                                          size: 12,
+                                        ),
                                       ),
                                     ),
                                 ],
@@ -1418,11 +1643,9 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
                         ? SizedBox(
                             width: 20,
                             height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(
-                                colorScheme.primary,
-                              ),
+                            child: AppShimmer.wrap(
+                              context,
+                              child: AppShimmer.circle(context, size: 20),
                             ),
                           )
                         : Icon(Icons.my_location, size: 20),

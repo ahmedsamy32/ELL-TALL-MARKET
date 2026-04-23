@@ -72,7 +72,6 @@ class DeliveryProvider with ChangeNotifier {
         lat: pickupLat,
         lng: pickupLng,
         radiusKm: radiusKm,
-        availableOnly: true,
       );
 
       if (captains.isNotEmpty) {

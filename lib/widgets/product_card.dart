@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:ell_tall_market/models/product_model.dart';
-import 'package:ell_tall_market/utils/app_colors.dart';
+import 'package:ell_tall_market/widgets/rating_star.dart';
 
 class ProductCard extends StatelessWidget {
   final ProductModel product;
@@ -31,132 +31,11 @@ class ProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (compact) {
-      return _buildCompactCard(context);
-    }
-    return _buildDefaultCard(context);
+    // Always use the compact/grid style as per user request
+    return _buildCompactCard(context);
   }
 
-  /// البطاقة الافتراضية (الكبيرة)
-  Widget _buildDefaultCard(BuildContext context) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // صورة المنتج مع أيقونة المفضلة
-            Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-                  child:
-                      product.imageUrl != null && product.imageUrl!.isNotEmpty
-                      ? Image.network(
-                          product.imageUrl!,
-                          height: 120,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                          errorBuilder: (context, error, stackTrace) {
-                            return _buildPlaceholderImage(120);
-                          },
-                        )
-                      : _buildPlaceholderImage(120),
-                ),
-                // أيقونة المفضلة
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: GestureDetector(
-                    onTap: () {
-                      HapticFeedback.lightImpact();
-                      onFavoritePressed?.call();
-                    },
-                    child: Container(
-                      padding: EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        isFavorite ? Icons.favorite : Icons.favorite_border,
-                        color: isFavorite ? Colors.red : Colors.grey[600],
-                        size: 20,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-
-            // معلومات المنتج
-            Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    product.name,
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                    maxLines: nameMaxLines,
-                    overflow: nameOverflow,
-                  ),
-
-                  SizedBox(height: 4),
-
-                  // السعر
-                  Row(
-                    children: [
-                      Text(
-                        product.priceFormatted,
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary,
-                          fontSize: 16,
-                        ),
-                        maxLines: priceMaxLines,
-                        overflow: priceOverflow,
-                      ),
-                    ],
-                  ),
-
-                  SizedBox(height: 4),
-
-                  // المخزون
-                  if (product.stock < 10 && product.stock > 0)
-                    Text(
-                      'آخر ${product.stock} قطع',
-                      style: TextStyle(fontSize: 12, color: Colors.red),
-                    ),
-
-                  SizedBox(height: 8),
-
-                  // ✅ زر الشراء
-                  if (onBuyPressed != null)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: onBuyPressed,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        child: Text('اشتري الآن'),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // _buildDefaultCard deleted as we unified the design to _buildCompactCard
 
   /// البطاقة المضغوطة (للشبكات) - Material Design 3
   Widget _buildCompactCard(BuildContext context) {
@@ -195,10 +74,42 @@ class ProductCard extends StatelessWidget {
                           )
                         : _buildPlaceholderImage(null, colorScheme),
                   ),
-                  // أيقونة المفضلة
+                  // غطاء رمادي عند نفاد المخزون
+                  if (!product.inStock || product.stockQuantity <= 0)
+                    Positioned.fill(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(12),
+                        ),
+                        child: Container(
+                          color: Colors.black.withValues(alpha: 0.5),
+                          child: Center(
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.red,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'غير متوفر',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  // أيقونة المفضلة - يسار
                   Positioned(
                     top: 6,
-                    right: 6,
+                    left: 6,
                     child: Material(
                       color: Colors.transparent,
                       child: InkWell(
@@ -226,71 +137,139 @@ class ProductCard extends StatelessWidget {
                       ),
                     ),
                   ),
+                  // تنبيه آخر قطع - يمين (فقط عند وجود مخزون قليل)
+                  if (product.inStock &&
+                      product.stockQuantity > 0 &&
+                      product.stockQuantity < 10)
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withValues(alpha: 0.9),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          'آخر ${product.stockQuantity}',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
 
             // معلومات المنتج - ارتفاع محدد لمنع overflow
             SizedBox(
-              height: 68, // ارتفاع ثابت لمنع overflow
+              height: 96, // زيادة الارتفاع
               child: Padding(
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Expanded(
-                      child: Text(
-                        product.name,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
-                          color: colorScheme.onSurface,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                    Text(
+                      product.name,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        color: colorScheme.onSurface,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                    const SizedBox(height: 4),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Expanded(
-                          child: Text(
-                            '${product.price.toStringAsFixed(0)} ج.م',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.primary,
-                              fontSize: 14,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '${product.price.toStringAsFixed(0)} ج.م',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: colorScheme.primary,
+                                  fontSize: 14,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (product.comparePrice != null &&
+                                  product.comparePrice! > product.price)
+                                Text(
+                                  '${product.comparePrice!.toStringAsFixed(0)} ج.م',
+                                  style: TextStyle(
+                                    decoration: TextDecoration.lineThrough,
+                                    fontSize: 10,
+                                    color: colorScheme.outline,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                            ],
                           ),
                         ),
-                        if (onBuyPressed != null)
-                          Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              onTap: () {
-                                HapticFeedback.lightImpact();
-                                onBuyPressed?.call();
-                              },
-                              borderRadius: BorderRadius.circular(20),
-                              child: Container(
-                                padding: EdgeInsets.all(6),
-                                decoration: BoxDecoration(
-                                  color: colorScheme.primaryContainer,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(
-                                  Icons.add_rounded,
-                                  size: 18,
-                                  color: colorScheme.onPrimaryContainer,
+                      ],
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        children: [
+                          RatingBar(
+                            rating: product.rating,
+                            totalReviews: product.reviewCount,
+                            showReviewsCount: product.reviewCount > 0,
+                          ),
+                          const Spacer(),
+                          if (onBuyPressed != null)
+                            Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap:
+                                    (product.inStock &&
+                                        product.stockQuantity > 0)
+                                    ? () {
+                                        HapticFeedback.lightImpact();
+                                        onBuyPressed?.call();
+                                      }
+                                    : null,
+                                borderRadius: BorderRadius.circular(20),
+                                child: Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        (product.inStock &&
+                                            product.stockQuantity > 0)
+                                        ? colorScheme.primaryContainer
+                                        : colorScheme.surfaceContainerHighest,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    Icons.add_rounded,
+                                    size: 18,
+                                    color:
+                                        (product.inStock &&
+                                            product.stockQuantity > 0)
+                                        ? colorScheme.onPrimaryContainer
+                                        : colorScheme.outline,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ),

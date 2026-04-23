@@ -3,12 +3,13 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
-import 'package:ell_tall_market/providers/settings_provider.dart';
+import 'package:ell_tall_market/providers/app_settings_provider.dart';
 import 'package:ell_tall_market/models/financial_model.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:syncfusion_flutter_charts/charts.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:shimmer/shimmer.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class MerchantWalletScreen extends StatefulWidget {
   const MerchantWalletScreen({super.key});
@@ -30,7 +31,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
   String _selectedTransactionType = 'all';
   String _selectedStatusFilter = 'all';
   final List<FlSpot> _transactionTrend = [];
-  late SettingsProvider _settingsProvider;
+  late AppSettingsProvider _settingsProvider;
   Map<String, double> _summary = {
     'total_collected': 0,
     'total_transferred': 0,
@@ -44,8 +45,14 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
-    _loadData();
+    _settingsProvider = Provider.of<AppSettingsProvider>(
+      context,
+      listen: false,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadData();
+    });
   }
 
   @override
@@ -192,9 +199,6 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
       appBar: AppBar(
         title: const Text('المحفظة'),
         centerTitle: true,
-        actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadData),
-        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
@@ -204,18 +208,21 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
           ],
         ),
       ),
-      body: _isLoading
-          ? _buildShimmerBody()
-          : (_errorMessage != null
-                ? _buildErrorState(_errorMessage!)
-                : TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildTransactionsTab(),
-                      _buildAnalyticsTab(),
-                      _buildChartsTab(),
-                    ],
-                  )),
+      body: ResponsiveCenter(
+        maxWidth: 800,
+        child: _isLoading
+            ? _buildShimmerBody()
+            : (_errorMessage != null
+                  ? _buildErrorState(_errorMessage!)
+                  : TabBarView(
+                      controller: _tabController,
+                      children: [
+                        _buildTransactionsTab(),
+                        _buildAnalyticsTab(),
+                        _buildChartsTab(),
+                      ],
+                    )),
+      ),
     );
   }
 
@@ -241,15 +248,13 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
   }
 
   Widget _buildShimmerCard({double height = 120}) {
-    return Shimmer.fromColors(
-      baseColor: Colors.grey.shade300,
-      highlightColor: Colors.grey.shade100,
-      child: Container(
+    return AppShimmer.wrap(
+      context,
+      child: AppShimmer.box(
+        context,
+        width: double.infinity,
         height: height,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-        ),
+        borderRadius: BorderRadius.circular(12),
       ),
     );
   }

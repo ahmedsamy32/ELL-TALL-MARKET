@@ -13,7 +13,7 @@ class Env {
       dotenv.env['GOOGLE_CLIENT_ID'] ??
       '941471556278-7hngn6n5kqno7of3bu3hgplmibh16dce.apps.googleusercontent.com';
   static String get facebookClientId =>
-      dotenv.env['FACEBOOK_CLIENT_ID'] ?? 'your_facebook_client_id_here';
+      dotenv.env['FACEBOOK_CLIENT_ID'] ?? '1282194797038347';
 
   // إعدادات Google Maps و Places
   static String get googleMapsApiKey =>

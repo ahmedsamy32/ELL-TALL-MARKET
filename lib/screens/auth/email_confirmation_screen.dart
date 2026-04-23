@@ -5,6 +5,8 @@ import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/utils/snackbar_helper.dart';
 import 'package:ell_tall_market/core/logger.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class EmailConfirmationScreen extends StatefulWidget {
   final String email;
@@ -373,392 +375,407 @@ class _EmailConfirmationScreenState extends State<EmailConfirmationScreen>
     }
 
     return Scaffold(
-      body: Stack(
-        children: [
-          // الخلفية المتدرجة
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  const Color(0xFFE3F2FD),
-                  const Color(0xFFBBDEFB),
-                  Colors.white,
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                stops: const [0.0, 0.4, 1.0],
-              ),
-            ),
-          ),
-
-          // أشكال ديكورية
-          Positioned(
-            top: -50,
-            right: -50,
-            child: Container(
-              width: 200,
-              height: 200,
+      body: ResponsiveCenter(
+        maxWidth: 600,
+        child: Stack(
+          children: [
+            // الخلفية المتدرجة
+            Container(
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.blue.withValues(alpha: 0.1),
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFFE3F2FD),
+                    const Color(0xFFBBDEFB),
+                    Colors.white,
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  stops: const [0.0, 0.4, 1.0],
+                ),
               ),
             ),
-          ),
-          Positioned(
-            bottom: -100,
-            left: -100,
-            child: Container(
-              width: 250,
-              height: 250,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.purple.withValues(alpha: 0.05),
-              ),
-            ),
-          ),
 
-          // المحتوى الرئيسي
-          SafeArea(
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              child: FadeTransition(
-                opacity: _fadeAnimation,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    minHeight:
-                        MediaQuery.of(context).size.height -
-                        MediaQuery.of(context).padding.top -
-                        MediaQuery.of(context).padding.bottom -
-                        24,
-                  ),
-                  child: IntrinsicHeight(
-                    child: Container(
-                      width: double.infinity,
-                      constraints: const BoxConstraints(maxWidth: 400),
-                      margin: const EdgeInsets.symmetric(horizontal: 0),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(28),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.1),
-                            blurRadius: 30,
-                            offset: const Offset(0, 15),
-                            spreadRadius: -5,
-                          ),
-                          BoxShadow(
-                            color: Colors.blue.withValues(alpha: 0.1),
-                            blurRadius: 20,
-                            offset: const Offset(0, 5),
-                            spreadRadius: -10,
-                          ),
-                        ],
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            // أيقونة البريد المتحركة
-                            ScaleTransition(
-                              scale: _iconAnimation,
-                              child: Container(
-                                padding: const EdgeInsets.all(20),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      theme.colorScheme.primary,
-                                      theme.colorScheme.primary.withValues(
-                                        alpha: 0.8,
+            // أشكال ديكورية
+            Positioned(
+              top: -50,
+              right: -50,
+              child: Container(
+                width: 200,
+                height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.blue.withValues(alpha: 0.1),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -100,
+              left: -100,
+              child: Container(
+                width: 250,
+                height: 250,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.purple.withValues(alpha: 0.05),
+                ),
+              ),
+            ),
+
+            // المحتوى الرئيسي
+            SafeArea(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                child: FadeTransition(
+                  opacity: _fadeAnimation,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight:
+                          MediaQuery.of(context).size.height -
+                          MediaQuery.of(context).padding.top -
+                          MediaQuery.of(context).padding.bottom -
+                          24,
+                    ),
+                    child: IntrinsicHeight(
+                      child: Container(
+                        width: double.infinity,
+                        constraints: const BoxConstraints(maxWidth: 400),
+                        margin: const EdgeInsets.symmetric(horizontal: 0),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(28),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.1),
+                              blurRadius: 30,
+                              offset: const Offset(0, 15),
+                              spreadRadius: -5,
+                            ),
+                            BoxShadow(
+                              color: Colors.blue.withValues(alpha: 0.1),
+                              blurRadius: 20,
+                              offset: const Offset(0, 5),
+                              spreadRadius: -10,
+                            ),
+                          ],
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              // أيقونة البريد المتحركة
+                              ScaleTransition(
+                                scale: _iconAnimation,
+                                child: Container(
+                                  padding: const EdgeInsets.all(20),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        theme.colorScheme.primary,
+                                        theme.colorScheme.primary.withValues(
+                                          alpha: 0.8,
+                                        ),
+                                      ],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
+                                    shape: BoxShape.circle,
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: theme.colorScheme.primary
+                                            .withValues(alpha: 0.3),
+                                        blurRadius: 20,
+                                        offset: const Offset(0, 8),
                                       ),
                                     ],
-                                    begin: Alignment.topLeft,
-                                    end: Alignment.bottomRight,
                                   ),
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: theme.colorScheme.primary
-                                          .withValues(alpha: 0.3),
-                                      blurRadius: 20,
-                                      offset: const Offset(0, 8),
-                                    ),
-                                  ],
-                                ),
-                                child: const Icon(
-                                  Icons.mail_outline_rounded,
-                                  size: 40,
-                                  color: Colors.white,
+                                  child: const Icon(
+                                    Icons.mail_outline_rounded,
+                                    size: 40,
+                                    color: Colors.white,
+                                  ),
                                 ),
                               ),
-                            ),
 
-                            const SizedBox(height: 24),
+                              const SizedBox(height: 24),
 
-                            // العنوان الرئيسي
-                            Text(
-                              "📧 تأكيد البريد الإلكتروني",
-                              style: theme.textTheme.headlineMedium?.copyWith(
-                                color: const Color(0xFF1A237E),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 24,
+                              // العنوان الرئيسي
+                              Text(
+                                "📧 تأكيد البريد الإلكتروني",
+                                style: theme.textTheme.headlineMedium?.copyWith(
+                                  color: const Color(0xFF1A237E),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 24,
+                                ),
+                                textAlign: TextAlign.center,
                               ),
-                              textAlign: TextAlign.center,
-                            ),
 
-                            const SizedBox(height: 12),
+                              const SizedBox(height: 12),
 
-                            // الرسالة التوضيحية
-                            Text(
-                              "تم إنشاء حسابك بنجاح! ✨",
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                color: Colors.green[700],
-                                fontWeight: FontWeight.w600,
-                                fontSize: 16,
+                              // الرسالة التوضيحية
+                              Text(
+                                "تم إنشاء حسابك بنجاح! ✨",
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  color: Colors.green[700],
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 16,
+                                ),
+                                textAlign: TextAlign.center,
                               ),
-                              textAlign: TextAlign.center,
-                            ),
 
-                            const SizedBox(height: 10),
+                              const SizedBox(height: 10),
 
-                            // تفاصيل التأكيد
-                            Container(
-                              padding: const EdgeInsets.all(20),
-                              decoration: BoxDecoration(
-                                color: Colors.blue.shade50,
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: Colors.blue.shade200),
-                              ),
-                              child: Column(
-                                children: [
-                                  Text(
-                                    "تم إرسال رابط تأكيد إلى:",
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      color: Colors.grey[700],
-                                      fontSize: 16,
-                                    ),
-                                    textAlign: TextAlign.center,
+                              // تفاصيل التأكيد
+                              Container(
+                                padding: const EdgeInsets.all(20),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.shade50,
+                                  borderRadius: BorderRadius.circular(16),
+                                  border: Border.all(
+                                    color: Colors.blue.shade200,
                                   ),
-                                  const SizedBox(height: 8),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 8,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(
-                                        color: Colors.blue.shade300,
-                                      ),
-                                    ),
-                                    child: Text(
-                                      emailToDisplay.isNotEmpty
-                                          ? emailToDisplay
-                                          : "البريد الإلكتروني غير محدد",
+                                ),
+                                child: Column(
+                                  children: [
+                                    Text(
+                                      "تم إرسال رابط تأكيد إلى:",
                                       style: theme.textTheme.bodyMedium
                                           ?.copyWith(
-                                            color: emailToDisplay.isNotEmpty
-                                                ? theme.colorScheme.primary
-                                                : Colors.red,
-                                            fontWeight: FontWeight.bold,
+                                            color: Colors.grey[700],
                                             fontSize: 16,
                                           ),
                                       textAlign: TextAlign.center,
                                     ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            const SizedBox(height: 24),
-
-                            // التعليمات
-                            Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: Colors.amber.shade50,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(
-                                  color: Colors.amber.shade200,
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.info_outline,
-                                    color: Colors.amber[700],
-                                    size: 24,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
-                                      "اضغط على الرابط في بريدك الإلكتروني لتأكيد حسابك والبدء في التسوق",
-                                      style: theme.textTheme.bodyMedium
-                                          ?.copyWith(
-                                            color: Colors.amber[800],
-                                            fontSize: 14,
-                                            height: 1.4,
-                                          ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-
-                            const SizedBox(height: 20),
-
-                            // زر إعادة الإرسال
-                            SizedBox(
-                              width: double.infinity,
-                              height: 44,
-                              child: OutlinedButton.icon(
-                                onPressed: _isResending
-                                    ? null
-                                    : _resendConfirmationEmail,
-                                icon: _isResending
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      )
-                                    : const Icon(Icons.refresh_rounded),
-                                label: Text(
-                                  _isResending
-                                      ? "جاري الإرسال..."
-                                      : "إعادة إرسال رسالة التأكيد",
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                style: OutlinedButton.styleFrom(
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  side: BorderSide(
-                                    color: theme.colorScheme.primary,
-                                    width: 2,
-                                  ),
-                                ),
-                              ),
-                            ),
-
-                            const SizedBox(height: 12),
-
-                            // زر "لقد أكدت البريد"
-                            SizedBox(
-                              width: double.infinity,
-                              height: 44,
-                              child: ElevatedButton.icon(
-                                onPressed: _checkConfirmationAndLogin,
-                                icon: const Icon(
-                                  Icons.check_circle_outline,
-                                  color: Colors.white,
-                                ),
-                                label: const Text(
-                                  "لقد أكدت البريد - تحقق وادخل",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.green.shade600,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  elevation: 3,
-                                ),
-                              ),
-                            ),
-
-                            const SizedBox(height: 12),
-
-                            // زر الذهاب لتسجيل الدخول
-                            SizedBox(
-                              width: double.infinity,
-                              height: 44,
-                              child: OutlinedButton.icon(
-                                onPressed: _goToLogin,
-                                icon: Icon(
-                                  Icons.login_rounded,
-                                  color: theme.colorScheme.primary,
-                                ),
-                                label: Text(
-                                  "لدي حساب مؤكد - تسجيل الدخول",
-                                  style: TextStyle(
-                                    color: theme.colorScheme.primary,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                style: OutlinedButton.styleFrom(
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  side: BorderSide(
-                                    color: theme.colorScheme.primary,
-                                    width: 2,
-                                  ),
-                                ),
-                              ),
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            // نصائح إضافية
-                            Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: Colors.grey.shade50,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: Colors.grey.shade200),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Icon(
-                                        Icons.lightbulb_outline,
-                                        color: Colors.grey[600],
-                                        size: 18,
+                                    const SizedBox(height: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 8,
                                       ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        "نصائح مفيدة:",
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(8),
+                                        border: Border.all(
+                                          color: Colors.blue.shade300,
+                                        ),
+                                      ),
+                                      child: Text(
+                                        emailToDisplay.isNotEmpty
+                                            ? emailToDisplay
+                                            : "البريد الإلكتروني غير محدد",
                                         style: theme.textTheme.bodyMedium
                                             ?.copyWith(
+                                              color: emailToDisplay.isNotEmpty
+                                                  ? theme.colorScheme.primary
+                                                  : Colors.red,
                                               fontWeight: FontWeight.bold,
-                                              color: Colors.grey[700],
-                                              fontSize: 12,
+                                              fontSize: 16,
+                                            ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              const SizedBox(height: 24),
+
+                              // التعليمات
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.shade50,
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.amber.shade200,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.info_outline,
+                                      color: Colors.amber[700],
+                                      size: 24,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Text(
+                                        "اضغط على الرابط في بريدك الإلكتروني لتأكيد حسابك والبدء في التسوق",
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                              color: Colors.amber[800],
+                                              fontSize: 14,
+                                              height: 1.4,
                                             ),
                                       ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  _buildTip(
-                                    "• تحقق من مجلد الرسائل غير المرغوب فيها (Spam)",
-                                  ),
-                                  _buildTip(
-                                    "• قد يستغرق وصول الإيميل بضع دقائق",
-                                  ),
-                                  _buildTip(
-                                    "• تأكد من كتابة البريد الإلكتروني بشكل صحيح",
-                                  ),
-                                  _buildTip(
-                                    "• صلاحية رابط التأكيد محدودة - اطلب رابط جديد إذا انتهت",
-                                  ),
-                                ],
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
+
+                              const SizedBox(height: 20),
+
+                              // زر إعادة الإرسال
+                              SizedBox(
+                                width: double.infinity,
+                                height: 44,
+                                child: OutlinedButton.icon(
+                                  onPressed: _isResending
+                                      ? null
+                                      : _resendConfirmationEmail,
+                                  icon: _isResending
+                                      ? SizedBox(
+                                          width: 20,
+                                          height: 20,
+                                          child: AppShimmer.wrap(
+                                            context,
+                                            child: AppShimmer.circle(
+                                              context,
+                                              size: 20,
+                                            ),
+                                          ),
+                                        )
+                                      : const Icon(Icons.refresh_rounded),
+                                  label: Text(
+                                    _isResending
+                                        ? "جاري الإرسال..."
+                                        : "إعادة إرسال رسالة التأكيد",
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    side: BorderSide(
+                                      color: theme.colorScheme.primary,
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 12),
+
+                              // زر "لقد أكدت البريد"
+                              SizedBox(
+                                width: double.infinity,
+                                height: 44,
+                                child: ElevatedButton.icon(
+                                  onPressed: _checkConfirmationAndLogin,
+                                  icon: const Icon(
+                                    Icons.check_circle_outline,
+                                    color: Colors.white,
+                                  ),
+                                  label: const Text(
+                                    "لقد أكدت البريد - تحقق وادخل",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green.shade600,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    elevation: 3,
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 12),
+
+                              // زر الذهاب لتسجيل الدخول
+                              SizedBox(
+                                width: double.infinity,
+                                height: 44,
+                                child: OutlinedButton.icon(
+                                  onPressed: _goToLogin,
+                                  icon: Icon(
+                                    Icons.login_rounded,
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                  label: Text(
+                                    "لدي حساب مؤكد - تسجيل الدخول",
+                                    style: TextStyle(
+                                      color: theme.colorScheme.primary,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    side: BorderSide(
+                                      color: theme.colorScheme.primary,
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 16),
+
+                              // نصائح إضافية
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade50,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: Colors.grey.shade200,
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.lightbulb_outline,
+                                          color: Colors.grey[600],
+                                          size: 18,
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          "نصائح مفيدة:",
+                                          style: theme.textTheme.bodyMedium
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.grey[700],
+                                                fontSize: 12,
+                                              ),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                    _buildTip(
+                                      "• تحقق من مجلد الرسائل غير المرغوب فيها (Spam)",
+                                    ),
+                                    _buildTip(
+                                      "• قد يستغرق وصول الإيميل بضع دقائق",
+                                    ),
+                                    _buildTip(
+                                      "• تأكد من كتابة البريد الإلكتروني بشكل صحيح",
+                                    ),
+                                    _buildTip(
+                                      "• صلاحية رابط التأكيد محدودة - اطلب رابط جديد إذا انتهت",
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -766,8 +783,8 @@ class _EmailConfirmationScreenState extends State<EmailConfirmationScreen>
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

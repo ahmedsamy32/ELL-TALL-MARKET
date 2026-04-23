@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
@@ -8,9 +9,15 @@ import 'package:ell_tall_market/providers/banner_provider.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/models/banner_model.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
+import 'package:ell_tall_market/widgets/user_coupons_sheet.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
 
   static const Color primary = Color(0xFF6A5AE0);
   static const Color accent = Color(0xFFFF9E80);
@@ -19,6 +26,45 @@ class ProfileScreen extends StatelessWidget {
     end: Alignment.bottomCenter,
     colors: [Color(0xFFEEF1FF), Color(0xFFFFFFFF)],
   );
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  // ===========================================================================
+  // 1. State & Lifecycle
+  // ===========================================================================
+  bool _didRequestProfileOnce = false;
+  bool _didHandleMissingProfileOnce = false;
+  String _appVersion = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _initPackageInfo();
+
+    // Trigger a single profile fetch when the screen first opens.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _didRequestProfileOnce) return;
+      _didRequestProfileOnce = true;
+
+      final authProvider = Provider.of<SupabaseProvider>(
+        context,
+        listen: false,
+      );
+      if (authProvider.currentUser != null &&
+          authProvider.currentUserProfile == null) {
+        authProvider.refreshCurrentProfile();
+      }
+    });
+  }
+
+  Future<void> _initPackageInfo() async {
+    final info = await PackageInfo.fromPlatform();
+    if (mounted) {
+      setState(() {
+        _appVersion = info.version; // عرض رقم الإصدار الكامل مثل 1.0.1
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,56 +73,132 @@ class ProfileScreen extends StatelessWidget {
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      body: Column(
-        children: [
-          Expanded(
-            child: Consumer<SupabaseProvider>(
-              builder: (context, authProvider, child) {
-                final user = authProvider.currentUser;
+      body: ResponsiveCenter(
+        maxWidth: 700,
+        child: Column(
+          children: [
+            Expanded(
+              child: Consumer<SupabaseProvider>(
+                builder: (consumerContext, authProvider, child) {
+                  final user = authProvider.currentUser;
 
-                // إذا لم يكن المستخدم مسجل دخوله
-                if (user == null) {
-                  return _buildGuestContent(context);
-                }
+                  // إذا لم يكن المستخدم مسجل دخوله
+                  if (user == null) {
+                    return _buildGuestContent(consumerContext);
+                  }
 
-                // إذا كان المستخدم مسجل دخوله
-                // نعرض الواجهة فوراً حتى لو لم يُحمل Profile كاملاً
-                final profile = authProvider.currentUserProfile;
+                  // إذا كان المستخدم مسجل دخوله
+                  // نعرض الواجهة فوراً حتى لو لم يُحمل Profile كاملاً
+                  final profile = authProvider.currentUserProfile;
 
-                // إذا لم يُحمل Profile بعد، نستخدم بيانات User الأساسية
-                if (profile == null) {
-                  // إنشاء Profile مؤقت من بيانات User
-                  final tempProfile = ProfileModel(
-                    id: user.id,
-                    email: user.email,
-                    fullName:
-                        user.userMetadata?['full_name'] ??
-                        user.email?.split('@')[0] ??
-                        'مستخدم',
-                    phone: user.phone,
-                    role: UserRole.client,
-                    createdAt:
-                        DateTime.tryParse(user.createdAt) ?? DateTime.now(),
-                  );
+                  // إذا لم يُحمل Profile بعد، لا نعرض بيانات من Auth.
+                  // ننتظر بيانات جدول profiles.
+                  if (profile == null) {
+                    // لو البروفايل مش موجود (اتمسح/لم يتم إنشاؤه) نرجع لواجهة الزائر
+                    // وننهي الجلسة لتفادي حالة معلّقة.
+                    if (authProvider.isProfileMissing &&
+                        !_didHandleMissingProfileOnce) {
+                      _didHandleMissingProfileOnce = true;
 
+                      WidgetsBinding.instance.addPostFrameCallback((_) async {
+                        final localContext = context;
+                        if (!mounted) return;
+
+                        final merchantProvider = Provider.of<MerchantProvider>(
+                          localContext,
+                          listen: false,
+                        );
+                        final productProvider = Provider.of<ProductProvider>(
+                          localContext,
+                          listen: false,
+                        );
+                        final orderProvider = Provider.of<OrderProvider>(
+                          localContext,
+                          listen: false,
+                        );
+
+                        await authProvider.signOut(
+                          merchantProvider: merchantProvider,
+                          productProvider: productProvider,
+                          orderProvider: orderProvider,
+                        );
+
+                        if (!localContext.mounted) return;
+                        ScaffoldMessenger.of(localContext).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'لم يتم العثور على بيانات الحساب. يرجى تسجيل الدخول مرة أخرى.',
+                            ),
+                          ),
+                        );
+                      });
+
+                      return _buildGuestContent(consumerContext);
+                    }
+
+                    return _buildProfileLoading(consumerContext, authProvider);
+                  }
+
+                  // إذا كان كل شيء محمل بنجاح
                   return _buildProfileContent(
-                    context,
-                    tempProfile,
+                    consumerContext,
+                    profile,
                     authProvider,
                   );
-                }
-
-                // إذا كان كل شيء محمل بنجاح
-                return _buildProfileContent(context, profile, authProvider);
-              },
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  // ---------------- Guest View ---------------- //
+  // ===========================================================================
+  // 3. Loading State UI
+  // ===========================================================================
+  Widget _buildProfileLoading(
+    BuildContext context,
+    SupabaseProvider authProvider,
+  ) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AppShimmer.wrap(
+              context,
+              child: AppShimmer.circle(context, size: 44),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'جاري تحميل بيانات حسابك...',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: authProvider.isProfileLoading
+                  ? null
+                  : () => authProvider.refreshCurrentProfile(),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('إعادة المحاولة'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // 4. Guest View UI
+  // ===========================================================================
   Widget _buildGuestContent(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
@@ -91,20 +213,10 @@ class ProfileScreen extends StatelessWidget {
             const SizedBox(height: 24),
             _buildGuestInfoCard(colorScheme),
             const SizedBox(height: 24),
-            _DashboardGrid(
-              colorScheme: colorScheme,
-              items: [
-                _DashboardItemData(
-                  icon: Icons.store,
-                  label: 'بع معنا',
-                  color: Colors.green,
-                  onTap: () =>
-                      Navigator.pushNamed(context, AppRoutes.registerMerchant),
-                ),
-              ],
-            ),
-            const SizedBox(height: 40),
             _buildLoginCallToAction(context),
+            const SizedBox(height: 12),
+            _buildSellWithUsCallToAction(context),
+            const SizedBox(height: 32),
           ],
         ),
       ),
@@ -118,19 +230,19 @@ class ProfileScreen extends StatelessWidget {
       color: colorScheme.secondaryContainer,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
             Icon(
               Icons.info_outline_rounded,
-              size: 48,
+              size: 40,
               color: colorScheme.onSecondaryContainer,
             ),
             const SizedBox(height: 16),
             Text(
               'نصيحة مهمة',
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
                 color: colorScheme.onSecondaryContainer,
               ),
@@ -164,6 +276,23 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
+  Widget _buildSellWithUsCallToAction(BuildContext context) {
+    return FilledButton.icon(
+      onPressed: () => Navigator.pushNamed(context, AppRoutes.registerMerchant),
+      icon: const Icon(Icons.store_outlined),
+      label: const Text('بع معنا'),
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(double.infinity, 56),
+        backgroundColor: Colors.green,
+        foregroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // 5. Authenticated Profile UI
+  // ===========================================================================
   Widget _buildProfileContent(
     BuildContext context,
     ProfileModel user,
@@ -171,138 +300,13 @@ class ProfileScreen extends StatelessWidget {
   ) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final isRTL = Directionality.of(context) == TextDirection.rtl;
 
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       child: Column(
         children: [
           // Header Section
-          Container(
-            color: colorScheme.surface,
-            padding: const EdgeInsets.all(20),
-            child: Row(
-              children: isRTL
-                  ? [
-                      // RTL: Avatar, Name, Spacer, Settings
-                      CircleAvatar(
-                        radius: 28,
-                        backgroundColor: colorScheme.primary,
-                        foregroundColor: colorScheme.onPrimary,
-                        backgroundImage: user.avatarUrl != null
-                            ? NetworkImage(user.avatarUrl!)
-                            : null,
-                        child: user.avatarUrl == null
-                            ? Text(
-                                (user.fullName ?? 'م')
-                                    .substring(0, 1)
-                                    .toUpperCase(),
-                                style: const TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              )
-                            : null,
-                      ),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            user.fullName ?? 'مستخدم',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'مصر',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Spacer(),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: IconButton(
-                          icon: Icon(
-                            Icons.settings_outlined,
-                            color: colorScheme.onSurface,
-                          ),
-                          onPressed: () =>
-                              Navigator.pushNamed(context, AppRoutes.settings),
-                        ),
-                      ),
-                    ]
-                  : [
-                      // LTR: settings icon left, then user info + avatar
-                      Container(
-                        decoration: BoxDecoration(
-                          color: colorScheme.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: IconButton(
-                          icon: Icon(
-                            Icons.settings_outlined,
-                            color: colorScheme.onSurface,
-                          ),
-                          onPressed: () =>
-                              Navigator.pushNamed(context, AppRoutes.settings),
-                        ),
-                      ),
-                      const Spacer(),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            user.fullName ?? 'مستخدم',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'مصر',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(width: 12),
-                      CircleAvatar(
-                        radius: 28,
-                        backgroundColor: colorScheme.primary,
-                        foregroundColor: colorScheme.onPrimary,
-                        backgroundImage: user.avatarUrl != null
-                            ? NetworkImage(user.avatarUrl!)
-                            : null,
-                        child: user.avatarUrl == null
-                            ? Text(
-                                (user.fullName ?? 'م')
-                                    .substring(0, 1)
-                                    .toUpperCase(),
-                                style: const TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              )
-                            : null,
-                      ),
-                    ],
-            ),
-          ),
+          _buildProfileHeader(context, user, colorScheme),
 
           // Promotional Banner (Dynamic)
           Consumer<BannerProvider>(
@@ -517,62 +521,183 @@ class ProfileScreen extends StatelessWidget {
           ),
 
           // Menu Items
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              children: [
-                _buildMenuItem(
-                  context,
-                  icon: Icons.card_giftcard_rounded,
-                  title: 'مكافآت',
-                  trailing: '0 نقاط',
-                  onTap: () {},
-                ),
-                _buildMenuItem(
-                  context,
-                  icon: Icons.receipt_long_rounded,
-                  title: 'طلباتي السابقة',
-                  onTap: () =>
-                      Navigator.pushNamed(context, AppRoutes.orderHistory),
-                ),
-                _buildMenuItem(
-                  context,
-                  icon: Icons.bookmark_border_rounded,
-                  title: 'القسائم',
-                  trailing: '1',
-                  onTap: () {},
-                ),
-                _buildMenuItem(
-                  context,
-                  icon: Icons.help_outline_rounded,
-                  title: 'احصل على المساعدة',
-                  onTap: () {},
-                ),
-                _buildMenuItem(
-                  context,
-                  icon: Icons.info_outline_rounded,
-                  title: 'حول التطبيق',
-                  onTap: () {},
-                ),
-                const SizedBox(height: 8),
-                _buildMenuItem(
-                  context,
-                  icon: Icons.store_outlined,
-                  title: 'بع معنا',
-                  onTap: () =>
-                      Navigator.pushNamed(context, AppRoutes.registerMerchant),
-                ),
-                _buildMenuItem(
-                  context,
-                  icon: Icons.logout_rounded,
-                  title: 'تسجيل الخروج',
-                  titleColor: Colors.red,
-                  onTap: () => _showLogoutDialog(context, authProvider),
-                ),
-                const SizedBox(height: 32),
+          _buildMenuSection(context, authProvider),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProfileHeader(
+    BuildContext context,
+    ProfileModel user,
+    ColorScheme colorScheme,
+  ) {
+    final isRTL = Directionality.of(context) == TextDirection.rtl;
+
+    return Container(
+      color: colorScheme.surface,
+      padding: const EdgeInsets.all(20),
+      child: Row(
+        children: isRTL
+            ? [
+                // RTL Layout
+                _buildUserAvatar(user, colorScheme),
+                const SizedBox(width: 12),
+                _buildUserInfo(user, colorScheme, isRTL),
+                const SizedBox(width: 12),
+                _buildSettingsButton(context, colorScheme),
+              ]
+            : [
+                // LTR Layout
+                _buildSettingsButton(context, colorScheme),
+                const SizedBox(width: 12),
+                _buildUserInfo(user, colorScheme, isRTL),
+                const SizedBox(width: 12),
+                _buildUserAvatar(user, colorScheme),
               ],
+      ),
+    );
+  }
+
+  Widget _buildUserAvatar(ProfileModel user, ColorScheme colorScheme) {
+    return CircleAvatar(
+      radius: 28,
+      backgroundColor: colorScheme.primary,
+      foregroundColor: colorScheme.onPrimary,
+      backgroundImage: user.avatarUrl != null
+          ? NetworkImage(user.avatarUrl!)
+          : null,
+      child: user.avatarUrl == null
+          ? Text(
+              (user.fullName ?? 'م').substring(0, 1).toUpperCase(),
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            )
+          : null,
+    );
+  }
+
+  Widget _buildUserInfo(
+    ProfileModel user,
+    ColorScheme colorScheme,
+    bool isRTL,
+  ) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: isRTL
+            ? CrossAxisAlignment.start
+            : CrossAxisAlignment.end,
+        children: [
+          Text(
+            user.fullName ?? 'مستخدم',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: colorScheme.onSurface,
             ),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
           ),
+          const SizedBox(height: 4),
+          Text(
+            'مصر',
+            style: TextStyle(fontSize: 14, color: colorScheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSettingsButton(BuildContext context, ColorScheme colorScheme) {
+    return Container(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: IconButton(
+        icon: Icon(Icons.settings_outlined, color: colorScheme.onSurface),
+        onPressed: () => Navigator.pushNamed(context, AppRoutes.settings),
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // 6. Menu Items & Navigation
+  // ===========================================================================
+  Widget _buildMenuSection(
+    BuildContext context,
+    SupabaseProvider authProvider,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        children: [
+          _buildMenuItem(
+            context,
+            icon: Icons.card_giftcard_rounded,
+            title: 'مكافآت',
+            trailing: '0 نقاط',
+            onTap: () {},
+          ),
+          _buildMenuItem(
+            context,
+            icon: Icons.receipt_long_rounded,
+            title: 'طلباتي السابقة',
+            onTap: () => Navigator.pushNamed(context, AppRoutes.orderHistory),
+          ),
+          _buildMenuItem(
+            context,
+            icon: Icons.bookmark_border_rounded,
+            title: 'القسائم',
+            onTap: () => UserCouponsSheet.show(context),
+          ),
+          _buildMenuItem(
+            context,
+            icon: Icons.info_outline_rounded,
+            title: 'حول التطبيق',
+            onTap: () => Navigator.pushNamed(context, AppRoutes.aboutApp),
+          ),
+          _buildMenuItem(
+            context,
+            icon: Icons.privacy_tip_outlined,
+            title: 'سياسة الخصوصية والاسترجاع',
+            onTap: () => Navigator.pushNamed(context, AppRoutes.privacyPolicy),
+          ),
+          _buildMenuItem(
+            context,
+            icon: Icons.description_outlined,
+            title: 'الشروط والأحكام',
+            onTap: () =>
+                Navigator.pushNamed(context, AppRoutes.termsConditions),
+          ),
+          const SizedBox(height: 8),
+          _buildMenuItem(
+            context,
+            icon: Icons.store_outlined,
+            title: 'بع معنا',
+            onTap: () =>
+                Navigator.pushNamed(context, AppRoutes.registerMerchant),
+          ),
+          _buildMenuItem(
+            context,
+            icon: Icons.logout_rounded,
+            title: 'تسجيل الخروج',
+            titleColor: Colors.red,
+            onTap: () => _showLogoutDialog(context, authProvider),
+          ),
+          if (_appVersion.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Center(
+              child: Text(
+                'إصدار $_appVersion',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[400],
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 32),
         ],
       ),
     );
@@ -703,8 +828,9 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  // ---------------- Helper UI ---------------- //
-
+  // ===========================================================================
+  // 7. Action Dialogs & Sheets
+  // ===========================================================================
   void _showLogoutDialog(BuildContext context, SupabaseProvider authProvider) {
     bool isLoading = false;
     showDialog(
@@ -737,14 +863,17 @@ class ProfileScreen extends StatelessWidget {
               ],
             ),
             content: isLoading
-                ? const Padding(
-                    padding: EdgeInsets.all(20),
+                ? Padding(
+                    padding: const EdgeInsets.all(20),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        CircularProgressIndicator(),
-                        SizedBox(width: 16),
-                        Text('جاري تسجيل الخروج...'),
+                        AppShimmer.wrap(
+                          context,
+                          child: AppShimmer.circle(context, size: 28),
+                        ),
+                        const SizedBox(width: 16),
+                        const Text('جاري تسجيل الخروج...'),
                       ],
                     ),
                   )
@@ -823,99 +952,6 @@ class ProfileScreen extends StatelessWidget {
   }
 }
 
-// ================= Outside Helper Classes ================= //
-
-// ---------------- Data Model for Dashboard Items ---------------- //
-class _DashboardItemData {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final VoidCallback onTap;
-  const _DashboardItemData({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
-  });
-}
-
-// ---------------- Dashboard Grid ---------------- //
-class _DashboardGrid extends StatelessWidget {
-  final List<_DashboardItemData> items;
-  final ColorScheme colorScheme;
-  const _DashboardGrid({required this.items, required this.colorScheme});
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.builder(
-      physics: const NeverScrollableScrollPhysics(),
-      shrinkWrap: true,
-      itemCount: items.length,
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 0.95,
-      ),
-      itemBuilder: (context, index) {
-        final item = items[index];
-        return _DashboardTile(
-          data: item,
-          index: index,
-          colorScheme: colorScheme,
-        );
-      },
-    );
-  }
-}
-
-class _DashboardTile extends StatelessWidget {
-  final _DashboardItemData data;
-  final int index;
-  final ColorScheme colorScheme;
-
-  const _DashboardTile({
-    required this.data,
-    required this.index,
-    required this.colorScheme,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      color: colorScheme.surfaceContainerHighest,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: InkWell(
-        onTap: data.onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(data.icon, color: data.color, size: 32),
-              const SizedBox(height: 8),
-              Text(
-                data.label,
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: colorScheme.onSurface,
-                  height: 1.2,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 // ---------------- Guest Header ---------------- //
 class _GuestHeader extends StatelessWidget {
   final ColorScheme colorScheme;
@@ -928,21 +964,21 @@ class _GuestHeader extends StatelessWidget {
       color: colorScheme.primaryContainer,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(24),
         child: Column(
           children: [
             CircleAvatar(
-              radius: 48,
+              radius: 42,
               backgroundColor: colorScheme.primary,
               foregroundColor: colorScheme.onPrimary,
-              child: const Icon(Icons.person_outline_rounded, size: 48),
+              child: const Icon(Icons.person_outline_rounded, size: 42),
             ),
             const SizedBox(height: 16),
             Text(
               'أهلاً بك في سوق التل',
               style: TextStyle(
                 color: colorScheme.onPrimaryContainer,
-                fontSize: 22,
+                fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
               textAlign: TextAlign.center,
@@ -952,7 +988,7 @@ class _GuestHeader extends StatelessWidget {
               'تسوق كل شيء من مكان واحد',
               style: TextStyle(
                 color: colorScheme.onPrimaryContainer,
-                fontSize: 15,
+                fontSize: 14,
               ),
               textAlign: TextAlign.center,
             ),

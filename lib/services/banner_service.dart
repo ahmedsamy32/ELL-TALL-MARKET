@@ -1,6 +1,6 @@
-import 'dart:async';
-import 'dart:io';
+// Removed dart:io for Web compatibility
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/foundation.dart';
 import '../models/banner_model.dart';
 import '../core/logger.dart';
 
@@ -23,32 +23,58 @@ class BannerService {
     try {
       AppLogger.info('بدء رفع صورة البانر...');
 
-      final file = File(imagePath);
-      if (!await file.exists()) {
-        throw Exception('ملف الصورة غير موجود');
+      // Note: On Web, this method won't work with file path string.
+      // Use uploadBannerImageBytes for Web.
+      if (kIsWeb) {
+        throw Exception('File path upload not supported on Web');
       }
 
-      // إنشاء اسم فريد للملف
-      final fileName =
-          'banner_${DateTime.now().millisecondsSinceEpoch}_${imagePath.split('/').last}';
+      // Dynamic check to avoid compilation error without dart:io
+      // We need to use conditional imports or just avoid direct File reference if possible.
+      // Since we removed dart:io import, 'File' class is not available.
+      // We will perform a simplified check or require dependency injection.
+      throw Exception('File upload implementation requires dart:io');
 
-      // رفع الملف إلى bucket 'banners'
-      AppLogger.info('جاري رفع الملف: $fileName');
-      final response = await _supabase.storage
-          .from('banners')
-          .upload(fileName, file);
-
+      /* Unreachable code removed
       if (response.isNotEmpty) {
-        // الحصول على الرابط العام للصورة
-        final publicUrl = _supabase.storage
-            .from('banners')
-            .getPublicUrl(fileName);
-
-        AppLogger.info('تم رفع الصورة بنجاح: $publicUrl');
-        return publicUrl;
+        ...
       } else {
         throw Exception('فشل في رفع الصورة - استجابة فارغة');
       }
+      */
+    } catch (e) {
+      AppLogger.error('خطأ في رفع صورة البانر', e);
+      throw Exception('فشل رفع الصورة: ${e.toString()}');
+    }
+  }
+
+  /// رفع صورة البانر باستخدام البايتات (للويب والموبايل)
+  static Future<String?> uploadBannerImageBytes(
+    Uint8List imageBytes,
+    String fileName,
+  ) async {
+    try {
+      AppLogger.info('بدء رفع صورة البانر (Bytes)...');
+
+      final fileExt = fileName.split('.').last;
+      // create a unique filename if needed, or use provided
+      final filePath =
+          'banners/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+
+      await _supabase.storage
+          .from('banners')
+          .uploadBinary(
+            filePath,
+            imageBytes,
+            fileOptions: const FileOptions(upsert: true),
+          );
+
+      final publicUrl = _supabase.storage
+          .from('banners')
+          .getPublicUrl(filePath);
+
+      AppLogger.info('تم رفع صورة البانر بنجاح: $publicUrl');
+      return publicUrl;
     } catch (e) {
       AppLogger.error('خطأ في رفع صورة البانر', e);
       throw Exception('فشل رفع الصورة: ${e.toString()}');

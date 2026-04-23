@@ -63,7 +63,7 @@ enum TransactionType {
 }
 
 /// Currency support
-enum Currency { egp, usd, eur, sar, aed }
+enum Currency { egp, usd }
 
 /// Enhanced PaymentService with comprehensive financial management
 class PaymentServiceEnhanced {
@@ -81,9 +81,6 @@ class PaymentServiceEnhanced {
   final Map<Currency, Map<String, dynamic>> _currencyConfig = {
     Currency.egp: {'symbol': 'ج.م', 'code': 'EGP', 'decimal_places': 2},
     Currency.usd: {'symbol': '\$', 'code': 'USD', 'decimal_places': 2},
-    Currency.eur: {'symbol': '€', 'code': 'EUR', 'decimal_places': 2},
-    Currency.sar: {'symbol': 'ر.س', 'code': 'SAR', 'decimal_places': 2},
-    Currency.aed: {'symbol': 'د.إ', 'code': 'AED', 'decimal_places': 2},
   };
 
   // ===== Payment Processing =====

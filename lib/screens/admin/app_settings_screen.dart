@@ -1,7 +1,10 @@
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/settings_provider.dart';
+import 'package:ell_tall_market/providers/app_settings_provider.dart';
 import 'package:ell_tall_market/models/settings_model.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:ell_tall_market/utils/app_routes.dart';
 
 class AppSettingsScreen extends StatefulWidget {
   const AppSettingsScreen({super.key});
@@ -19,33 +22,35 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     super.initState();
     _currentSettings = AppSettingsModel.empty();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<SettingsProvider>(context, listen: false).loadSettings();
+      Provider.of<AppSettingsProvider>(context, listen: false).loadSettings();
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final settingsProvider = Provider.of<SettingsProvider>(context);
+    final settingsProvider = Provider.of<AppSettingsProvider>(context);
     _currentSettings = settingsProvider.appSettings;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('⚙️ إعدادات التطبيق'),
         centerTitle: true,
-        backgroundColor: Theme.of(context).primaryColor,
         actions: [
           IconButton(icon: const Icon(Icons.save), onPressed: _saveSettings),
         ],
       ),
-      body: SafeArea(
-        child: settingsProvider.isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : _buildSettingsForm(settingsProvider),
+      body: ResponsiveCenter(
+        maxWidth: 700,
+        child: SafeArea(
+          child: settingsProvider.isLoading
+              ? AppShimmer.centeredLines(context)
+              : _buildSettingsForm(settingsProvider),
+        ),
       ),
     );
   }
 
-  Widget _buildSettingsForm(SettingsProvider provider) {
+  Widget _buildSettingsForm(AppSettingsProvider provider) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Form(
@@ -159,6 +164,16 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               title: "🚚 إعدادات التوصيل",
               children: [
                 _buildDeliveryInfoBanner(),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.of(
+                      context,
+                    ).pushNamed(AppRoutes.deliveryZonePricing);
+                  },
+                  icon: const Icon(Icons.map_rounded),
+                  label: const Text('إدارة تسعير المناطق (Owner فقط)'),
+                ),
                 const SizedBox(height: 12),
                 _buildTextFieldSetting(
                   "💰 رسوم التوصيل الأساسية (ج.م)",
@@ -350,7 +365,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     );
   }
 
-  Widget _buildActionButtons(SettingsProvider provider) {
+  Widget _buildActionButtons(AppSettingsProvider provider) {
     return Row(
       children: [
         Expanded(
@@ -447,7 +462,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
 
   void _saveSettings() async {
     try {
-      await Provider.of<SettingsProvider>(
+      await Provider.of<AppSettingsProvider>(
         context,
         listen: false,
       ).updateAppSettings(_currentSettings);
@@ -485,7 +500,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             onPressed: () async {
               Navigator.pop(context);
               try {
-                await Provider.of<SettingsProvider>(
+                await Provider.of<AppSettingsProvider>(
                   context,
                   listen: false,
                 ).resetSettings();

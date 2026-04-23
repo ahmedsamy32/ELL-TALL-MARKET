@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/utils/ant_design_theme.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class ManageUsersScreen extends StatefulWidget {
   const ManageUsersScreen({super.key});
@@ -38,97 +40,109 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: Consumer<SupabaseProvider>(
-          builder: (context, provider, _) {
-            final totalUsers = provider.allUsers.length;
-            final activeUsers = provider.allUsers
-                .where((u) => u.isActive)
-                .length;
-            final clients = provider.allUsers
-                .where((u) => u.role == UserRole.client)
-                .length;
-            final merchants = provider.allUsers
-                .where((u) => u.role == UserRole.merchant)
-                .length;
-            final captains = provider.allUsers
-                .where((u) => u.role == UserRole.captain)
-                .length;
-            final admins = provider.allUsers
-                .where((u) => u.role == UserRole.admin)
-                .length;
+      body: ResponsiveCenter(
+        maxWidth: 1000,
+        child: SafeArea(
+          child: Consumer<SupabaseProvider>(
+            builder: (context, provider, _) {
+              final totalUsers = provider.allUsers.length;
+              final activeUsers = provider.allUsers
+                  .where((u) => u.isActive)
+                  .length;
+              final clients = provider.allUsers
+                  .where((u) => u.role == UserRole.client)
+                  .length;
+              final merchants = provider.allUsers
+                  .where((u) => u.role == UserRole.merchant)
+                  .length;
+              final captains = provider.allUsers
+                  .where((u) => u.role == UserRole.captain)
+                  .length;
+              final admins = provider.allUsers
+                  .where((u) => u.role == UserRole.admin)
+                  .length;
+              final deliveryAdmins = provider.allUsers
+                  .where((u) => u.role == UserRole.deliveryCompanyAdmin)
+                  .length;
 
-            return RefreshIndicator(
-              onRefresh: () => provider.fetchAllUsers(),
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const SizedBox(height: 16),
-                    // Statistics Cards
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Row(
-                        children: [
-                          _buildStatCard(
-                            'إجمالي المستخدمين',
-                            totalUsers,
-                            AntColors.primary,
-                            Icons.people,
-                          ),
-                          _buildStatCard(
-                            'نشط',
-                            activeUsers,
-                            AntColors.success,
-                            Icons.check_circle,
-                          ),
-                        ],
+              return RefreshIndicator(
+                onRefresh: () => provider.fetchAllUsers(),
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const SizedBox(height: 16),
+                      // Statistics Cards
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Row(
+                          children: [
+                            _buildStatCard(
+                              'إجمالي المستخدمين',
+                              totalUsers,
+                              AntColors.primary,
+                              Icons.people,
+                            ),
+                            _buildStatCard(
+                              'نشط',
+                              activeUsers,
+                              AntColors.success,
+                              Icons.check_circle,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Row(
-                        children: [
-                          _buildStatCard(
-                            'عملاء',
-                            clients,
-                            AntColors.primary,
-                            Icons.person,
-                          ),
-                          _buildStatCard(
-                            'تجار',
-                            merchants,
-                            AntColors.success,
-                            Icons.store,
-                          ),
-                          _buildStatCard(
-                            'كباتن',
-                            captains,
-                            AntColors.warning,
-                            Icons.delivery_dining,
-                          ),
-                          _buildStatCard(
-                            'مدراء',
-                            admins,
-                            AntColors.error,
-                            Icons.admin_panel_settings,
-                          ),
-                        ],
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        child: Row(
+                          children: [
+                            _buildStatCard(
+                              'عملاء',
+                              clients,
+                              AntColors.primary,
+                              Icons.person,
+                            ),
+                            _buildStatCard(
+                              'تجار',
+                              merchants,
+                              AntColors.success,
+                              Icons.store,
+                            ),
+                            _buildStatCard(
+                              'كباتن',
+                              captains,
+                              AntColors.warning,
+                              Icons.delivery_dining,
+                            ),
+                            _buildStatCard(
+                              'مدراء',
+                              admins,
+                              AntColors.error,
+                              Icons.admin_panel_settings,
+                            ),
+                            _buildStatCard(
+                              'إدارة دليفري',
+                              deliveryAdmins,
+                              Colors.indigo,
+                              Icons.local_shipping,
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 20),
-                    // Search and Filter
-                    _buildSearchAndFilterBar(provider),
-                    const SizedBox(height: 8),
-                    // Users List
-                    _buildUsersList(provider),
-                  ],
+                      const SizedBox(height: 20),
+                      // Search and Filter
+                      _buildSearchAndFilterBar(provider),
+                      const SizedBox(height: 8),
+                      // Users List
+                      _buildUsersList(provider),
+                    ],
+                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );
@@ -287,6 +301,8 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                 _buildFilterChip('كباتن', 'captain'),
                 const SizedBox(width: 6),
                 _buildFilterChip('مدراء', 'admin'),
+                const SizedBox(width: 6),
+                _buildFilterChip('إدارة دليفري', 'delivery_admin'),
               ],
             ),
           ),
@@ -383,50 +399,49 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
   }
 
   Widget _buildLoadingState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(24),
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: ListView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: 5,
+        itemBuilder: (context, index) {
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.1),
-                  blurRadius: 20,
-                  offset: const Offset(0, 10),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: Theme.of(
+                  context,
+                ).colorScheme.outline.withValues(alpha: 0.08),
+              ),
             ),
-            child: Column(
-              children: [
-                SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      AntColors.primary,
+            child: AppShimmer.wrap(
+              context,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    AppShimmer.circle(context, size: 44),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          AppShimmer.box(context, width: 120, height: 16),
+                          const SizedBox(height: 8),
+                          AppShimmer.box(context, width: 200, height: 14),
+                        ],
+                      ),
                     ),
-                  ),
+                    AppShimmer.box(context, width: 30, height: 30),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                Text(
-                  'جاري تحميل المستخدمين...',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withValues(alpha: 0.8),
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
@@ -671,6 +686,8 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
           return user.role == UserRole.captain;
         case 'admin':
           return user.role == UserRole.admin;
+        case 'delivery_admin':
+          return user.role == UserRole.deliveryCompanyAdmin;
         default:
           return true;
       }
@@ -937,6 +954,8 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
         return 'كابتن';
       case UserRole.admin:
         return 'مدير';
+      case UserRole.deliveryCompanyAdmin:
+        return 'مسؤول شركة توصيل';
     }
   }
 
@@ -950,6 +969,8 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
         return AntColors.warning;
       case UserRole.admin:
         return AntColors.error;
+      case UserRole.deliveryCompanyAdmin:
+        return Colors.indigo;
     }
   }
 
@@ -963,6 +984,8 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
         return Icons.delivery_dining_outlined;
       case UserRole.admin:
         return Icons.admin_panel_settings_outlined;
+      case UserRole.deliveryCompanyAdmin:
+        return Icons.local_shipping_outlined;
     }
   }
 
@@ -1179,6 +1202,20 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                           ],
                         ),
                       ),
+                      DropdownMenuItem(
+                        value: UserRole.deliveryCompanyAdmin,
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.local_shipping_outlined,
+                              color: Colors.indigo,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            const Text('مسؤول شركة توصيل'),
+                          ],
+                        ),
+                      ),
                     ],
                     onChanged: (UserRole? newRole) {
                       if (newRole != null) {
@@ -1297,10 +1334,11 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                                   SizedBox(
                                     width: 20,
                                     height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        AntColors.primary,
+                                    child: AppShimmer.wrap(
+                                      context,
+                                      child: AppShimmer.circle(
+                                        context,
+                                        size: 20,
                                       ),
                                     ),
                                   ),
@@ -1568,11 +1606,9 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                                 SizedBox(
                                   width: 20,
                                   height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      isActivating ? Colors.green : Colors.red,
-                                    ),
+                                  child: AppShimmer.wrap(
+                                    context,
+                                    child: AppShimmer.circle(context, size: 20),
                                   ),
                                 ),
                                 const SizedBox(width: 12),
@@ -1944,11 +1980,9 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                                 SizedBox(
                                   width: 20,
                                   height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.redAccent.shade700,
-                                    ),
+                                  child: AppShimmer.wrap(
+                                    context,
+                                    child: AppShimmer.circle(context, size: 20),
                                   ),
                                 ),
                                 const SizedBox(width: 12),
@@ -3064,10 +3098,11 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                                   SizedBox(
                                     width: 20,
                                     height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        AntColors.primary,
+                                    child: AppShimmer.wrap(
+                                      context,
+                                      child: AppShimmer.circle(
+                                        context,
+                                        size: 20,
                                       ),
                                     ),
                                   ),

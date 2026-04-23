@@ -1,5 +1,5 @@
-import Flutter
 import UIKit
+import GoogleMaps
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -10,6 +10,7 @@ import UIKit
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    GMSServices.provideAPIKey("AIzaSyA5q1yifwlqadIZPs4KttQgSH8-ow2G1js")
     GeneratedPluginRegistrant.register(with: self)
     
     // إعداد Method Channel للتواصل مع Flutter

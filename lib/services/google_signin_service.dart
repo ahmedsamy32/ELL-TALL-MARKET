@@ -5,6 +5,7 @@
 /// دمج خدمتي Google Sign-In العادية والمتكاملة مع Supabase
 library;
 
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/logger.dart';
@@ -27,11 +28,16 @@ class GoogleSignInService {
   static const String _androidClientId =
       '941471556278-g0d409tmu6qv6oskauhkgbu04ko9faci.apps.googleusercontent.com';
 
+  // Web Client ID من Google Console
+  static const String _webClientId =
+      '337870521468-kjf5h0aqjgs9aiv5jn67csdtptj8afja.apps.googleusercontent.com';
+
   /// تهيئة Google Sign-In مع Client ID
   Future<void> initialize({String? clientId}) async {
     if (!_isInitialized) {
-      // استخدام Android Client ID أو المخصص
-      final configClientId = clientId ?? _androidClientId;
+      // ✅ استخدام Web Client ID على الويب، وAndroid Client ID على الموبايل
+      final configClientId =
+          clientId ?? (kIsWeb ? _webClientId : _androidClientId);
       await _googleSignIn.initialize(clientId: configClientId);
       _isInitialized = true;
       AppLogger.info(
@@ -45,9 +51,9 @@ class GoogleSignInService {
     try {
       AppLogger.info('🚀 بدء تسجيل الدخول مع Google');
 
-      // التأكد من التهيئة مع Android Client ID
+      // ✅ التأكد من التهيئة مع Client ID المناسب للمنصة
       if (!_isInitialized) {
-        await initialize(clientId: _androidClientId);
+        await initialize(clientId: kIsWeb ? _webClientId : _androidClientId);
       }
 
       // الخطوة 1: تسجيل الدخول مع Google (استخدام authenticate في الإصدار الجديد)
@@ -56,8 +62,7 @@ class GoogleSignInService {
       AppLogger.info('✅ تم الحصول على بيانات Google: ${googleUser.email}');
 
       // الخطوة 2: الحصول على Google ID Token
-      final GoogleSignInAuthentication googleAuth =
-          googleUser.authentication;
+      final GoogleSignInAuthentication googleAuth = googleUser.authentication;
 
       if (googleAuth.idToken == null) {
         AppLogger.error('❌ فشل في الحصول على Google ID Token');

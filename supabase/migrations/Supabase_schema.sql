@@ -1,7 +1,7 @@
 -- ==========================================
 -- 📦 ELL TALL MARKET - Complete Database Schema
 -- ==========================================
--- Version: 2.0 (Updated: 2025-11-02)
+-- Version: 3.0 (Consolidated & Migrated: 2026-01-29)
 -- 
 -- 🎯 ONE FILE - COMPLETE SETUP
 -- This single file contains EVERYTHING needed:
@@ -66,12 +66,19 @@ CREATE TABLE public.profiles (
   phone TEXT,
   password TEXT,
   avatar_url TEXT,
-  role TEXT CHECK (role IN ('client', 'merchant', 'captain', 'admin')) DEFAULT 'client',
+  role TEXT CHECK (role IN ('client', 'merchant', 'captain', 'admin', 'delivery_company_admin')) DEFAULT 'client',
   fcm_token TEXT,
+  birth_date DATE,
+  gender TEXT CHECK (gender IN ('male', 'female')),
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_profiles_gender ON public.profiles(gender);
+
+COMMENT ON COLUMN public.profiles.birth_date IS 'تاريخ ميلاد المستخدم';
+COMMENT ON COLUMN public.profiles.gender IS 'جنس المستخدم: male (ذكر) أو female (أنثى)';
 
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 
@@ -132,6 +139,7 @@ CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER
 SECURITY DEFINER
 SET search_path = public
+LANGUAGE plpgsql
 AS $$
 DECLARE
   v_user_role TEXT;
@@ -139,31 +147,60 @@ DECLARE
   v_full_name TEXT;
   v_phone TEXT;
   v_store_description TEXT;
+  v_governorate TEXT;
+  v_city TEXT;
+  v_area TEXT;
+  v_street TEXT;
+  v_landmark TEXT;
   v_address TEXT;
+  v_latitude DOUBLE PRECISION;
+  v_longitude DOUBLE PRECISION;
   v_category TEXT;
-  v_merchant_id UUID;
+  v_user_id UUID;
 BEGIN
-  -- استخراج البيانات من metadata
+  -- Ensure this trigger can write to RLS-protected tables during signup.
+  PERFORM set_config('row_security', 'off', true);
+
+  v_user_id := NEW.id;
+
+  RAISE LOG '[handle_new_user] start user_id=%, email=%', v_user_id, NEW.email;
+
   v_user_role := COALESCE(NEW.raw_user_meta_data->>'role', 'client');
   v_full_name := COALESCE(
-    NEW.raw_user_meta_data->>'full_name', 
-    NEW.raw_user_meta_data->>'name', 
+    NEW.raw_user_meta_data->>'full_name',
+    NEW.raw_user_meta_data->>'name',
     'User'
   );
   v_phone := NEW.raw_user_meta_data->>'phone';
   v_store_name := NEW.raw_user_meta_data->>'store_name';
   v_store_description := NEW.raw_user_meta_data->>'store_description';
+  v_governorate := NEW.raw_user_meta_data->>'store_governorate';
+  v_city := NEW.raw_user_meta_data->>'store_city';
+  v_area := NEW.raw_user_meta_data->>'store_area';
+  v_street := NEW.raw_user_meta_data->>'store_street';
+  v_landmark := NEW.raw_user_meta_data->>'store_landmark';
+  v_latitude := NULLIF(NEW.raw_user_meta_data->>'store_latitude', '')::double precision;
+  v_longitude := NULLIF(NEW.raw_user_meta_data->>'store_longitude', '')::double precision;
   v_address := COALESCE(
-    NEW.raw_user_meta_data->>'store_address',
-    NEW.raw_user_meta_data->>'address'
+    NULLIF(NEW.raw_user_meta_data->>'store_address', ''),
+    NULLIF(NEW.raw_user_meta_data->>'address', ''),
+    concat_ws('، ', NULLIF(v_governorate,''), NULLIF(v_city,''), NULLIF(v_area,''), NULLIF(v_street,''), NULLIF(v_landmark,''))
   );
   v_category := NEW.raw_user_meta_data->>'category';
-  v_merchant_id := NEW.id;
 
-  -- 1. إنشاء profile أولاً
+  -- STRICT validation for merchants
+  IF v_user_role = 'merchant' THEN
+    IF COALESCE(NULLIF(v_store_name, ''), '') = '' THEN
+      RAISE EXCEPTION 'merchant_store_name_required';
+    END IF;
+    -- Note: Address fields are optional during initial signup in some flows, 
+    -- but if required, we can add more EXCEPTIONs here.
+  END IF;
+
+  -- Create profile
   INSERT INTO public.profiles (id, full_name, email, phone, role, avatar_url)
   VALUES (
-    v_merchant_id,
+    v_user_id,
     v_full_name,
     NEW.email,
     v_phone,
@@ -171,54 +208,65 @@ BEGIN
     NEW.raw_user_meta_data->>'avatar_url'
   );
 
-  -- 2. إذا كان المستخدم تاجراً، إنشاء سجل في merchants و stores تلقائياً
+  -- For merchants: create merchant + store.
   IF v_user_role = 'merchant' THEN
-    -- أولاً: إنشاء التاجر في جدول merchants
     INSERT INTO public.merchants (
-      id, 
-      store_name, 
-      store_description, 
+      id,
+      store_name,
+      store_description,
       address,
+      latitude,
+      longitude,
       is_verified
     )
     VALUES (
-      v_merchant_id,
+      v_user_id,
       v_store_name,
       v_store_description,
       v_address,
+      v_latitude,
+      v_longitude,
       FALSE
     );
-    
-    -- ثانياً: إنشاء المتجر في جدول stores باستخدام بيانات التاجر فقط
+
     INSERT INTO public.stores (
       merchant_id,
       name,
       description,
       phone,
+      governorate,
+      city,
+      area,
+      street,
+      landmark,
       address,
+      latitude,
+      longitude,
       category
     )
     VALUES (
-      v_merchant_id,
+      v_user_id,
       v_store_name,
       v_store_description,
       v_phone,
+      v_governorate,
+      v_city,
+      v_area,
+      v_street,
+      v_landmark,
       v_address,
+      v_latitude,
+      v_longitude,
       v_category
     );
-    
-    RAISE NOTICE '✅ تم إنشاء تاجر ومتجر جديد: %, المتجر: %', 
-      v_merchant_id, v_store_name;
-  ELSE
-    RAISE NOTICE '✅ تم إنشاء مستخدم عادي: %, الاسم: %', v_merchant_id, v_full_name;
   END IF;
 
   RETURN NEW;
-  
+
 EXCEPTION
   WHEN others THEN
-    RAISE WARNING '❌ خطأ في handle_new_user للمستخدم %: %', NEW.id, SQLERRM;
-    RETURN NEW;
+    RAISE LOG '[handle_new_user] FAILED user_id=%, email=%, err=%', NEW.id, NEW.email, SQLERRM;
+    RAISE;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -338,9 +386,16 @@ CREATE TABLE public.stores (
   description TEXT,
   phone TEXT,
   email TEXT,
-  address TEXT NOT NULL,
-  latitude DECIMAL(10, 8),
-  longitude DECIMAL(11, 8),
+  governorate TEXT,
+  city TEXT,
+  area TEXT,
+  street TEXT,
+  landmark TEXT,
+  address TEXT,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION,
+  location GEOGRAPHY(POINT, 4326),
+  delivery_radius_km NUMERIC DEFAULT 7,
   delivery_time INT DEFAULT 30,
   is_open BOOLEAN DEFAULT TRUE,
   delivery_fee DECIMAL(10,2) DEFAULT 0,
@@ -383,7 +438,39 @@ CREATE POLICY "stores_delete_policy" ON public.stores
   USING (auth.uid() = merchant_id);
 
 -- ==========================================
--- 👥 CLIENTS & CAPTAINS
+-- � STORE SECTIONS
+-- ==========================================
+-- Menu sections created by merchants for their stores
+CREATE TABLE IF NOT EXISTS public.store_sections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  store_id UUID NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  image_url TEXT,
+  display_order INT NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_store_sections_store_id ON public.store_sections(store_id);
+CREATE INDEX IF NOT EXISTS idx_store_sections_display_order ON public.store_sections(store_id, display_order);
+
+ALTER TABLE public.store_sections ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Store sections public read" ON public.store_sections
+  FOR SELECT USING (
+    is_active = TRUE
+    OR EXISTS (SELECT 1 FROM public.stores s WHERE s.id = store_sections.store_id AND s.merchant_id = auth.uid())
+  );
+
+CREATE POLICY "Store sections owner manage" ON public.store_sections
+  FOR ALL TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.stores s WHERE s.id = store_sections.store_id AND s.merchant_id = auth.uid()))
+  WITH CHECK (EXISTS (SELECT 1 FROM public.stores s WHERE s.id = store_sections.store_id AND s.merchant_id = auth.uid()));
+
+-- ==========================================
+-- �👥 CLIENTS & CAPTAINS
 -- ==========================================
 CREATE TABLE public.clients (
   id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -399,25 +486,138 @@ ALTER TABLE public.clients ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Clients manage their data" ON public.clients 
 FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 
+-- ==========================================
+-- ⚙️ CLIENT SETTINGS
+-- ==========================================
+CREATE TABLE IF NOT EXISTS public.client_settings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+
+  notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  email_notifications BOOLEAN NOT NULL DEFAULT TRUE,
+  sms_notifications BOOLEAN NOT NULL DEFAULT FALSE,
+  dark_mode BOOLEAN NOT NULL DEFAULT FALSE,
+  language TEXT NOT NULL DEFAULT 'ar',
+  currency TEXT NOT NULL DEFAULT 'EGP',
+  biometric_auth BOOLEAN NOT NULL DEFAULT FALSE,
+  save_payment_methods BOOLEAN NOT NULL DEFAULT TRUE,
+  auto_update BOOLEAN NOT NULL DEFAULT TRUE,
+  data_saver BOOLEAN NOT NULL DEFAULT FALSE,
+  cache_duration INT NOT NULL DEFAULT 7,
+  analytics_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  crash_reports BOOLEAN NOT NULL DEFAULT TRUE,
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  CONSTRAINT client_settings_client_id_unique UNIQUE (client_id)
+);
+
+ALTER TABLE public.client_settings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "client_settings_select_own" ON public.client_settings
+  FOR SELECT TO authenticated USING (auth.uid() = client_id);
+
+CREATE POLICY "client_settings_insert_own" ON public.client_settings
+  FOR INSERT TO authenticated WITH CHECK (auth.uid() = client_id);
+
+CREATE POLICY "client_settings_update_own" ON public.client_settings
+  FOR UPDATE TO authenticated USING (auth.uid() = client_id) WITH CHECK (auth.uid() = client_id);
+
+CREATE TRIGGER update_client_settings_updated_at
+  BEFORE UPDATE ON public.client_settings
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
 CREATE TABLE public.captains (
   id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
-  vehicle_type TEXT CHECK (vehicle_type IN ('motorcycle', 'car', 'bicycle')),
+  
+  -- معلومات المركبة
+  vehicle_type TEXT CHECK (vehicle_type IN ('motorcycle', 'car', 'bicycle', 'truck')),
   vehicle_number TEXT,
   license_number TEXT UNIQUE,
+  national_id TEXT,
+  
+  -- الحالة
   status TEXT CHECK (status IN ('online', 'offline', 'busy')) DEFAULT 'offline',
+  is_verified BOOLEAN DEFAULT FALSE,
+  is_active BOOLEAN DEFAULT TRUE,
+  is_available BOOLEAN DEFAULT TRUE,
+  is_online BOOLEAN DEFAULT FALSE,
+  verification_status TEXT CHECK (verification_status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
+  
+  -- الموقع
   latitude DECIMAL(10, 8),
   longitude DECIMAL(11, 8),
+  
+  -- التقييم والإحصائيات
   rating DECIMAL(2,1) DEFAULT 0,
+  rating_count INT DEFAULT 0,
   total_deliveries INT DEFAULT 0,
-  is_verified BOOLEAN DEFAULT FALSE,
+  total_earnings DECIMAL(10,2) DEFAULT 0,
   earnings_today DECIMAL(10,2) DEFAULT 0,
+  
+  -- الصور والمستندات
+  profile_image_url TEXT,
+  license_image_url TEXT,
+  vehicle_image_url TEXT,
+  
+  -- أوقات العمل والمناطق
+  working_hours JSONB DEFAULT '{}',
+  working_areas JSONB DEFAULT '[]',
+  contact_phone TEXT,
+  
+  -- بيانات إضافية
+  additional_data JSONB DEFAULT '{}',
+  last_available_at TIMESTAMPTZ,
+  
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 ALTER TABLE public.captains ENABLE ROW LEVEL SECURITY;
+
+-- الكابتن يدير بياناته
 CREATE POLICY "Captains manage their data" ON public.captains 
-FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+  FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
+
+-- المدير يرى كل الكباتن
+CREATE POLICY "Admins can manage all captains" ON public.captains
+  FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
+
+-- عرض الكباتن المتاحين (للتعيين)
+CREATE POLICY "Authenticated can view active captains" ON public.captains
+  FOR SELECT TO authenticated USING (is_active = TRUE);
+
+-- ==========================================
+-- 💰 CAPTAIN EARNINGS
+-- ==========================================
+CREATE TABLE IF NOT EXISTS public.captain_earnings (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  captain_id UUID NOT NULL REFERENCES public.captains(id) ON DELETE CASCADE,
+  order_id UUID REFERENCES public.orders(id) ON DELETE SET NULL,
+  delivery_id UUID REFERENCES public.deliveries(id) ON DELETE SET NULL,
+  amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+  commission_rate DECIMAL(5,2) NOT NULL DEFAULT 10.00,
+  commission_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+  net_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+  payment_status TEXT CHECK (payment_status IN ('pending', 'paid', 'cancelled')) DEFAULT 'pending',
+  paid_at TIMESTAMPTZ,
+  notes TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_captain_earnings_captain_id ON public.captain_earnings(captain_id);
+CREATE INDEX IF NOT EXISTS idx_captain_earnings_order_id ON public.captain_earnings(order_id);
+CREATE INDEX IF NOT EXISTS idx_captain_earnings_created_at ON public.captain_earnings(created_at);
+CREATE INDEX IF NOT EXISTS idx_captain_earnings_status ON public.captain_earnings(payment_status);
+
+ALTER TABLE public.captain_earnings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Captains view own earnings" ON public.captain_earnings
+  FOR SELECT USING (auth.uid() = captain_id);
+
+CREATE POLICY "Admins manage all earnings" ON public.captain_earnings
+  FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
 
 -- ==========================================
 -- 📦 PRODUCTS & CATEGORIES
@@ -504,7 +704,12 @@ CREATE TABLE public.products (
   in_stock BOOLEAN DEFAULT TRUE,
   stock_quantity INT DEFAULT 0,
   is_active BOOLEAN DEFAULT TRUE,
+  rating DECIMAL(2,1) DEFAULT 0, -- ⭐ تقييم المنتج
+  review_count INT DEFAULT 0,   -- 💬 عدد المراجعات
   tags TEXT[],
+  variant_groups JSONB DEFAULT '[]', -- 🏷️ مجموعات المتغيرات (مثال: لون، مقاس)
+  variants JSONB DEFAULT '[]',       -- 🎨 المتغيرات المتاحة (تركيبات محددة)
+  custom_fields JSONB DEFAULT '{}', -- 🧩 بيانات ديناميكية إضافية
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -539,6 +744,38 @@ CREATE POLICY "products_delete_policy" ON public.products
   USING (
     auth.uid() = (SELECT merchant_id FROM public.stores WHERE stores.id = products.store_id)
   );
+
+-- ==========================================
+-- 📋 PRODUCT TEMPLATES
+-- ==========================================
+CREATE TABLE IF NOT EXISTS public.product_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  store_id UUID NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
+  template_name TEXT NOT NULL,
+  category_id UUID REFERENCES public.categories(id) ON DELETE SET NULL,
+  description TEXT,
+  custom_fields JSONB DEFAULT '{}',
+  variant_groups JSONB DEFAULT '[]',
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT unique_template_name_per_store UNIQUE(store_id, template_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_templates_store_id ON public.product_templates(store_id);
+
+ALTER TABLE public.product_templates ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Merchants can view their store templates" ON public.product_templates
+  FOR SELECT USING (store_id IN (SELECT id FROM public.stores WHERE merchant_id = auth.uid()));
+
+CREATE POLICY "Merchants can create templates" ON public.product_templates
+  FOR INSERT WITH CHECK (store_id IN (SELECT id FROM public.stores WHERE merchant_id = auth.uid()));
+
+CREATE POLICY "Merchants can update their templates" ON public.product_templates
+  FOR UPDATE USING (store_id IN (SELECT id FROM public.stores WHERE merchant_id = auth.uid()));
+
+CREATE POLICY "Merchants can delete their templates" ON public.product_templates
+  FOR DELETE USING (store_id IN (SELECT id FROM public.stores WHERE merchant_id = auth.uid()));
 
 -- ==========================================
 -- 🏪 STORE SETTINGS & EXTENSIONS
@@ -576,7 +813,8 @@ CREATE POLICY "Branches owner manage" ON public.store_branches
 CREATE TABLE IF NOT EXISTS public.store_delivery_areas (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   store_id uuid NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
-  area_name text NOT NULL,
+  area_name text,
+  delivery_radius_km numeric DEFAULT 7,
   fee numeric(10,2) NOT NULL DEFAULT 0,
   min_order numeric(10,2) NOT NULL DEFAULT 0,
   is_active boolean NOT NULL DEFAULT true,
@@ -679,34 +917,6 @@ CREATE POLICY "Store categories owner manage" ON public.store_categories
   USING (EXISTS (SELECT 1 FROM public.stores s WHERE s.id = store_categories.store_id AND s.merchant_id = auth.uid()))
   WITH CHECK (EXISTS (SELECT 1 FROM public.stores s WHERE s.id = store_categories.store_id AND s.merchant_id = auth.uid()));
 
--- 6) Store Sections (merchant-specific menu sections)
-CREATE TABLE IF NOT EXISTS public.store_sections (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  store_id uuid NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
-  name text NOT NULL,
-  description text,
-  image_url text,
-  display_order int NOT NULL DEFAULT 0,
-  is_active boolean NOT NULL DEFAULT true,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz
-);
-CREATE INDEX IF NOT EXISTS idx_store_sections_store_id ON public.store_sections(store_id);
-CREATE INDEX IF NOT EXISTS idx_store_sections_display_order ON public.store_sections(store_id, display_order);
-
-ALTER TABLE public.store_sections ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "Store sections public read" ON public.store_sections
-  FOR SELECT USING (
-    is_active = true
-    OR EXISTS (SELECT 1 FROM public.stores s WHERE s.id = store_sections.store_id AND s.merchant_id = auth.uid())
-  );
-
-CREATE POLICY "Store sections owner manage" ON public.store_sections
-  FOR ALL TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.stores s WHERE s.id = store_sections.store_id AND s.merchant_id = auth.uid()))
-  WITH CHECK (EXISTS (SELECT 1 FROM public.stores s WHERE s.id = store_sections.store_id AND s.merchant_id = auth.uid()));
-
 -- ==========================================
 -- 🛒 CART SYSTEM (سلة متعددة المتاجر)
 -- ==========================================
@@ -755,6 +965,7 @@ CREATE TABLE public.cart_items (
   -- خيارات إضافية
   special_instructions TEXT,
   selected_options JSONB DEFAULT '{}',
+  options_hash TEXT DEFAULT '' NOT NULL,
   
   -- معلومات التوصيل الخاصة بكل متجر
   store_delivery_fee DECIMAL(10,2) DEFAULT 0,
@@ -762,8 +973,8 @@ CREATE TABLE public.cart_items (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   
-  -- منع تكرار المنتج في نفس السلة
-  UNIQUE(cart_id, product_id)
+  -- منع تكرار المنتج بنفس الخيارات في نفس السلة
+  UNIQUE(cart_id, product_id, options_hash)
 );
 
 ALTER TABLE public.carts ENABLE ROW LEVEL SECURITY;
@@ -796,6 +1007,7 @@ CREATE TABLE public.orders (
   client_id UUID REFERENCES auth.users(id) ON DELETE CASCADE NOT NULL,
   store_id UUID REFERENCES public.stores(id) ON DELETE CASCADE NOT NULL,
   captain_id UUID REFERENCES public.captains(id),
+  order_group_id UUID, -- 🔗 لربط الطلبات المتعددة من نفس السلة
   
   -- معلومات الطلب
   order_number TEXT UNIQUE,
@@ -811,6 +1023,8 @@ CREATE TABLE public.orders (
   
   -- حالة الطلب
   status order_status_enum DEFAULT 'pending',
+  cancellation_reason TEXT,
+  cancelled_at TIMESTAMPTZ,
   
   -- الدفع
   payment_method TEXT CHECK (payment_method IN ('cash', 'card', 'wallet')) DEFAULT 'cash',
@@ -821,6 +1035,13 @@ CREATE TABLE public.orders (
   prepared_at TIMESTAMPTZ,
   picked_up_at TIMESTAMPTZ,
   delivered_at TIMESTAMPTZ,
+  
+  -- التوصيل المتقدم (PostGIS)
+  client_phone TEXT,
+  pickup_position GEOGRAPHY(POINT, 4326),
+  dropoff_position GEOGRAPHY(POINT, 4326),
+  eta_seconds INTEGER,
+  distance_meters INTEGER,
   
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -842,7 +1063,6 @@ FOR SELECT USING (auth.uid() = captain_id);
 CREATE POLICY "Clients can create orders" ON public.orders
 FOR INSERT WITH CHECK (auth.uid() = client_id);
 
--- ✏️ UPDATE Policies: Allow status updates by relevant parties
 CREATE POLICY "Merchants can update store orders" ON public.orders
 FOR UPDATE 
 USING (
@@ -857,15 +1077,28 @@ FOR UPDATE
 USING (auth.uid() = captain_id)
 WITH CHECK (auth.uid() = captain_id);
 
+CREATE POLICY "Clients can cancel their orders" ON public.orders
+FOR UPDATE
+USING (
+  auth.uid() = client_id 
+  AND status IN ('pending', 'confirmed')
+)
+WITH CHECK (
+  auth.uid() = client_id 
+  AND status = 'cancelled'
+);
+
 CREATE TABLE public.order_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id UUID REFERENCES public.orders(id) ON DELETE CASCADE NOT NULL,
+  order_number TEXT, -- 🏷️ يحمل رقم الطلب الموحد للتتبع
   product_id UUID REFERENCES public.products(id),
   product_name TEXT NOT NULL,
   product_price DECIMAL(10,2) NOT NULL,
   quantity INT NOT NULL CHECK (quantity > 0),
   total_price DECIMAL(10,2) NOT NULL,
   special_instructions TEXT,
+  selected_options JSONB DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -898,8 +1131,17 @@ CREATE TABLE public.order_status_logs (
   order_id UUID REFERENCES public.orders(id) ON DELETE CASCADE,
   old_status TEXT,
   new_status TEXT,
+  changed_by UUID REFERENCES auth.users(id),
+  notes TEXT,
   changed_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_orders_captain_id ON public.orders(captain_id);
+
+COMMENT ON COLUMN public.orders.client_phone IS 'رقم هاتف العميل للتواصل';
+COMMENT ON COLUMN public.orders.cancellation_reason IS 'سبب إلغاء الطلب';
+COMMENT ON COLUMN public.order_status_logs.changed_by IS 'معرف المستخدم الذي قام بتغيير الحالة';
+COMMENT ON COLUMN public.order_status_logs.notes IS 'ملاحظات على تغيير الحالة';
 
 ALTER TABLE public.order_status_logs ENABLE ROW LEVEL SECURITY;
 
@@ -1005,7 +1247,8 @@ CREATE POLICY "Captains can view assigned deliveries" ON public.deliveries
   FOR SELECT USING (auth.uid() = captain_id);
 
 CREATE POLICY "Captains can update assigned deliveries" ON public.deliveries
-  FOR UPDATE USING (auth.uid() = captain_id);
+  FOR UPDATE USING (auth.uid() = captain_id)
+  WITH CHECK (auth.uid() = captain_id);
 
 CREATE POLICY "Merchants can view store deliveries" ON public.deliveries
   FOR SELECT USING (
@@ -1016,6 +1259,21 @@ CREATE POLICY "Merchants can view store deliveries" ON public.deliveries
       )
     )
   );
+
+-- التاجر يمكنه إنشاء توصيلة لطلبات متجره
+CREATE POLICY "Merchants can create deliveries for their orders" ON public.deliveries
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.orders o 
+      WHERE o.id = deliveries.order_id AND o.store_id IN (
+        SELECT id FROM public.stores WHERE merchant_id = auth.uid()
+      )
+    )
+  );
+
+-- المدير يدير كل التوصيلات
+CREATE POLICY "Admins can manage all deliveries" ON public.deliveries
+  FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
 
 -- ==========================================
 -- 📍 DELIVERY TRACKING
@@ -1056,7 +1314,22 @@ CREATE POLICY "Clients can view delivery tracking" ON public.delivery_tracking
   );
 
 CREATE POLICY "Captains can manage delivery tracking" ON public.delivery_tracking
-  FOR ALL USING (auth.uid() = captain_id);
+  FOR ALL USING (auth.uid() = captain_id) WITH CHECK (auth.uid() = captain_id);
+
+-- التاجر يشاهد تتبع توصيلات طلبات متجره
+CREATE POLICY "Merchants can view delivery tracking" ON public.delivery_tracking
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.deliveries d
+      JOIN public.orders o ON o.id = d.order_id
+      WHERE d.id = delivery_tracking.delivery_id
+      AND o.store_id IN (SELECT id FROM public.stores WHERE merchant_id = auth.uid())
+    )
+  );
+
+-- المدير يدير كل التتبع
+CREATE POLICY "Admins can manage all delivery tracking" ON public.delivery_tracking
+  FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
 
 -- ==========================================
 -- 💰 DELIVERY PRICING
@@ -1077,6 +1350,10 @@ ALTER TABLE public.delivery_pricing ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Anyone can view active delivery pricing" ON public.delivery_pricing
   FOR SELECT USING (is_active = TRUE);
+
+-- المدير يدير أسعار التوصيل
+CREATE POLICY "Admins can manage delivery pricing" ON public.delivery_pricing
+  FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
 
 -- ==========================================
 -- ❤️ FAVORITES SYSTEM
@@ -1144,9 +1421,23 @@ CREATE TABLE public.coupons (
   valid_until TIMESTAMPTZ,
   is_active BOOLEAN DEFAULT TRUE,
   
+  -- أنواع الكوبونات المتقدمة
+  product_ids JSONB DEFAULT '[]'::jsonb,
+  quantity_tiers JSONB DEFAULT '[]'::jsonb,
+  active_hours_start SMALLINT,
+  active_hours_end SMALLINT,
+  
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  
+  CONSTRAINT chk_active_hours_start CHECK (active_hours_start IS NULL OR (active_hours_start >= 0 AND active_hours_start <= 23)),
+  CONSTRAINT chk_active_hours_end CHECK (active_hours_end IS NULL OR (active_hours_end >= 0 AND active_hours_end <= 23))
 );
+
+COMMENT ON COLUMN public.coupons.product_ids IS 'قائمة معرفات المنتجات المستهدفة بالكوبون (JSON array)';
+COMMENT ON COLUMN public.coupons.quantity_tiers IS 'شرائح الخصم حسب الكمية [{min_quantity, discount_percent}]';
+COMMENT ON COLUMN public.coupons.active_hours_start IS 'ساعة بداية التفعيل (0-23) لعروض الساعات السعيدة';
+COMMENT ON COLUMN public.coupons.active_hours_end IS 'ساعة نهاية التفعيل (0-23) لعروض الساعات السعيدة';
 
 CREATE INDEX IF NOT EXISTS idx_coupons_store_id ON public.coupons(store_id);
 CREATE INDEX IF NOT EXISTS idx_coupons_merchant_id ON public.coupons(merchant_id);
@@ -1214,13 +1505,12 @@ FOR SELECT USING (auth.uid() = user_id);
 -- ==========================================
 CREATE TABLE public.reviews (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  order_id UUID REFERENCES public.orders(id) ON DELETE CASCADE UNIQUE,
-  client_id UUID REFERENCES public.clients(id) NOT NULL,
-  target_type TEXT CHECK (target_type IN ('store', 'captain', 'product')) NOT NULL,
-  target_id UUID NOT NULL,
+  order_id UUID REFERENCES public.orders(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  product_id UUID REFERENCES public.products(id) ON DELETE SET NULL,
+  store_id UUID REFERENCES public.stores(id) ON DELETE SET NULL,
   rating INT CHECK (rating BETWEEN 1 AND 5) NOT NULL,
   comment TEXT,
-  is_verified BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -1229,8 +1519,14 @@ ALTER TABLE public.reviews ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Anyone can view reviews" ON public.reviews FOR SELECT USING (true);
 
-CREATE POLICY "Clients can create reviews for their orders" ON public.reviews
-  FOR INSERT WITH CHECK (auth.uid() = client_id);
+CREATE POLICY "Users can create reviews for their orders" ON public.reviews
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can update their own reviews" ON public.reviews
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own reviews" ON public.reviews
+  FOR DELETE USING (auth.uid() = user_id);
 
 -- ==========================================
 -- 🔔 BANNERS & NOTIFICATIONS
@@ -1304,37 +1600,137 @@ FOR SELECT USING (
 CREATE TABLE public.notifications (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  store_id UUID REFERENCES public.stores(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   body TEXT NOT NULL,
   type TEXT CHECK (type IN ('order', 'promotion', 'system')),
+  target_role TEXT DEFAULT 'client',
   data JSONB DEFAULT '{}',
   is_read BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+
+-- SELECT: Users see their own notifications + store owners see store notifications
 CREATE POLICY "Users can view their notifications" ON public.notifications
-FOR ALL USING (auth.uid() = user_id);
+  FOR SELECT USING (
+    auth.uid() = user_id 
+    OR auth.uid() IN (SELECT merchant_id FROM public.stores WHERE id = store_id)
+  );
+
+-- INSERT: Any authenticated user can create notifications
+CREATE POLICY "Authenticated users can create notifications" ON public.notifications
+  FOR INSERT TO authenticated
+  WITH CHECK (true);
+
+-- UPDATE: Users can update their own notifications (mark as read)
+CREATE POLICY "Users can update their notifications" ON public.notifications
+  FOR UPDATE USING (
+    auth.uid() = user_id 
+    OR auth.uid() IN (SELECT merchant_id FROM public.stores WHERE id = store_id)
+  );
+
+-- DELETE: Users can delete their own notifications
+CREATE POLICY "Users can delete their notifications" ON public.notifications
+  FOR DELETE USING (
+    auth.uid() = user_id 
+    OR auth.uid() IN (SELECT merchant_id FROM public.stores WHERE id = store_id)
+  );
 
 -- ==========================================
--- � ADDRESSES SYSTEM
+-- 📱 DEVICE TOKENS
+-- ==========================================
+CREATE TABLE IF NOT EXISTS public.device_tokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  store_id UUID REFERENCES public.stores(id) ON DELETE CASCADE,
+  token TEXT NOT NULL,
+  platform TEXT,
+  app_version TEXT,
+  role TEXT DEFAULT 'client',
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(client_id, token, role),
+  UNIQUE(store_id, token)
+);
+
+ALTER TABLE public.device_tokens ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage their own tokens" ON public.device_tokens
+  FOR ALL TO authenticated
+  USING (
+    auth.uid() = client_id 
+    OR auth.uid() IN (SELECT merchant_id FROM public.stores WHERE id = store_id)
+  )
+  WITH CHECK (
+    auth.uid() = client_id 
+    OR auth.uid() IN (SELECT merchant_id FROM public.stores WHERE id = store_id)
+  );
+
+-- ==========================================
+-- 📊 NOTIFICATION ANALYTICS
+-- ==========================================
+CREATE TABLE IF NOT EXISTS public.notification_analytics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  notification_id UUID REFERENCES public.notifications(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  campaign_id TEXT,
+  device_type TEXT,
+  action TEXT, -- 'sent', 'opened', 'clicked', 'dismissed'
+  timestamp TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  additional_data JSONB DEFAULT '{}',
+  metadata JSONB DEFAULT '{}'
+);
+
+ALTER TABLE public.notification_analytics ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Authenticated can insert analytics" ON public.notification_analytics
+  FOR INSERT TO authenticated
+  WITH CHECK (true);
+
+CREATE POLICY "Authenticated can view analytics" ON public.notification_analytics
+  FOR SELECT TO authenticated
+  USING (true);
+
+-- ==========================================
+-- 🔔 CLIENT NOTIFICATION PREFERENCES
+-- ==========================================
+CREATE TABLE IF NOT EXISTS public.client_notification_preferences (
+  client_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+  preferences JSONB DEFAULT '{"enabled": true, "types": {"order": true, "promotion": true, "system": true}, "channels": {"push": true, "local": true, "in_app": true}, "quiet_hours": {"enabled": false, "start": "22:00", "end": "08:00"}, "frequency_limits": {"daily_max": 10, "weekly_max": 50}}',
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.client_notification_preferences ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage their own preferences" ON public.client_notification_preferences
+  FOR ALL TO authenticated
+  USING (auth.uid() = client_id)
+  WITH CHECK (auth.uid() = client_id);
+
+-- ==========================================
+-- 📍 ADDRESSES SYSTEM
 -- ==========================================
 CREATE TABLE public.addresses (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     client_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     label VARCHAR(100) DEFAULT 'المنزل',
-    city VARCHAR(100) NOT NULL,
-    street VARCHAR(200) NOT NULL,
-    area VARCHAR(100),
-    building_number VARCHAR(50),
-    floor_number VARCHAR(50),
-    apartment_number VARCHAR(50),
+    address TEXT, -- العنوان المجمع
+    governorate TEXT,
+    city TEXT NOT NULL,
+    area TEXT,
+    street TEXT NOT NULL,
+    building_number TEXT,
+    floor_number TEXT,
+    apartment_number TEXT,
     latitude DOUBLE PRECISION,
     longitude DOUBLE PRECISION,
-    notes TEXT,
+    location GEOGRAPHY(POINT, 4326), -- الموقع الجغرافي PostGIS
+    landmark TEXT,
     is_default BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Create index on client_id for faster queries
@@ -1383,15 +1779,18 @@ CREATE POLICY "Admins can view all addresses"
         )
     );
 
--- Policy: Captains can view addresses for their assigned orders
+-- Policy: Captains can view addresses for their assigned orders only
 CREATE POLICY "Captains can view delivery addresses"
     ON public.addresses
     FOR SELECT
     USING (
         EXISTS (
-            SELECT 1 FROM public.profiles
-            WHERE profiles.id = auth.uid()
-            AND profiles.role = 'captain'
+            SELECT 1 FROM public.orders o
+            WHERE o.captain_id = auth.uid()
+            AND (
+              addresses.client_id = o.client_id
+              OR addresses.id::text = (o.delivery_address)
+            )
         )
     );
 
@@ -1460,6 +1859,34 @@ BEGIN
 END;
 $$;
 
+-- تحريك التريجر لإنتاج رقم الطلب
+DROP TRIGGER IF EXISTS trigger_generate_order_number ON public.orders;
+CREATE TRIGGER trigger_generate_order_number
+BEFORE INSERT ON public.orders
+FOR EACH ROW
+EXECUTE FUNCTION public.generate_order_number();
+
+-- دالة لمزامنة رقم الطلب في عناصر الطلب
+CREATE OR REPLACE FUNCTION public.sync_order_item_number()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.order_number IS NULL THEN
+    SELECT order_number INTO NEW.order_number
+    FROM public.orders
+    WHERE id = NEW.order_id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trigger_sync_order_item_number ON public.order_items;
+CREATE TRIGGER trigger_sync_order_item_number
+BEFORE INSERT ON public.order_items
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_order_item_number();
+
 -- دالة لحساب سعر العنصر في السلة
 CREATE OR REPLACE FUNCTION public.calculate_cart_item_total()
 RETURNS TRIGGER
@@ -1524,12 +1951,13 @@ BEGIN
 END;
 $$;
 
--- دالة لإضافة منتج إلى السلة
+-- دالة لإضافة منتج إلى السلة (تدعم نفس المنتج بخيارات مختلفة)
 CREATE OR REPLACE FUNCTION public.add_to_cart(
   p_user_id UUID,
   p_product_id UUID,
   p_quantity INT DEFAULT 1,
-  p_special_instructions TEXT DEFAULT NULL
+  p_special_instructions TEXT DEFAULT NULL,
+  p_selected_options JSONB DEFAULT '{}'
 )
 RETURNS UUID
 LANGUAGE plpgsql
@@ -1542,7 +1970,14 @@ DECLARE
   product_image TEXT;
   existing_cart_item_id UUID;
   store_delivery_fee DECIMAL(10,2);
+  v_options_hash TEXT;
 BEGIN
+  -- حساب hash الخيارات
+  v_options_hash := CASE
+    WHEN p_selected_options IS NULL OR p_selected_options = '{}'::jsonb THEN ''
+    ELSE MD5(p_selected_options::text)
+  END;
+
   SELECT p.store_id, p.name, p.price, p.image_url, s.delivery_fee
   INTO product_store_id, product_name, product_price, product_image, store_delivery_fee
   FROM public.products p
@@ -1563,9 +1998,12 @@ BEGIN
     RETURNING id INTO user_cart_id;
   END IF;
   
+  -- البحث بالمنتج + hash الخيارات
   SELECT id INTO existing_cart_item_id 
   FROM public.cart_items 
-  WHERE cart_id = user_cart_id AND product_id = p_product_id;
+  WHERE cart_id = user_cart_id 
+    AND product_id = p_product_id
+    AND options_hash = v_options_hash;
   
   IF existing_cart_item_id IS NOT NULL THEN
     UPDATE public.cart_items 
@@ -1576,10 +2014,12 @@ BEGIN
   ELSE
     INSERT INTO public.cart_items (
       cart_id, product_id, store_id, product_name, product_price, 
-      product_image, quantity, special_instructions, store_delivery_fee
+      product_image, quantity, special_instructions, selected_options,
+      options_hash, store_delivery_fee
     ) VALUES (
       user_cart_id, p_product_id, product_store_id, product_name, product_price,
-      product_image, p_quantity, p_special_instructions, store_delivery_fee
+      product_image, p_quantity, p_special_instructions, p_selected_options,
+      v_options_hash, store_delivery_fee
     );
   END IF;
   
@@ -1610,7 +2050,15 @@ DECLARE
   store_items_total DECIMAL(10,2);
   total_stores INT;
   discount_per_store DECIMAL(10,2);
+  
+  v_order_group_id UUID := gen_random_uuid();
+  v_base_order_number TEXT;
+  v_order_counter INT := 0;
+  v_current_order_number TEXT;
 BEGIN
+  -- توليد رقم طلب أساسي للمجموعة
+  v_base_order_number := 'ORD-' || to_char(NOW(), 'YYYYMMDD') || '-' || lpad((floor(random() * 1000000))::text, 6, '0');
+
   SELECT * INTO cart_record
   FROM public.carts 
   WHERE user_id = p_user_id AND is_active = TRUE AND items_count > 0;
@@ -1634,6 +2082,10 @@ BEGIN
     FROM public.cart_items 
     WHERE cart_id = cart_record.id
   LOOP
+    v_order_counter := v_order_counter + 1;
+    -- رقم الطلب الفرعي يكون: الأساسي-رقم_المتجر
+    v_current_order_number := v_base_order_number || '-' || v_order_counter;
+
     SELECT 
       COUNT(*),
       COALESCE(SUM(total_price), 0)
@@ -1650,10 +2102,12 @@ BEGIN
     IF order_total < 0 THEN order_total := 0; END IF;
     
     INSERT INTO public.orders (
-      client_id, store_id, total_amount, delivery_fee, delivery_address,
-      delivery_latitude, delivery_longitude, payment_method
+      client_id, store_id, order_group_id, order_number, total_amount, 
+      delivery_fee, delivery_address, delivery_latitude, delivery_longitude, 
+      payment_method
     ) VALUES (
-      p_user_id, store_record.store_id, order_total, delivery_fee,
+      p_user_id, store_record.store_id, v_order_group_id, v_current_order_number, 
+      order_total, delivery_fee,
       COALESCE(p_delivery_address, cart_record.delivery_address),
       COALESCE(p_delivery_lat, cart_record.delivery_latitude),
       COALESCE(p_delivery_lng, cart_record.delivery_longitude),
@@ -1663,11 +2117,11 @@ BEGIN
     order_ids := array_append(order_ids, new_order_id);
     
     INSERT INTO public.order_items (
-      order_id, product_id, product_name, product_price, quantity,
+      order_id, order_number, product_id, product_name, product_price, quantity,
       total_price, special_instructions
     ) SELECT 
-      new_order_id, product_id, product_name, product_price, quantity,
-      total_price, special_instructions
+      new_order_id, v_base_order_number, product_id, product_name, product_price, 
+      quantity, total_price, special_instructions
     FROM public.cart_items 
     WHERE cart_id = cart_record.id AND store_id = store_record.store_id;
     
@@ -1692,6 +2146,372 @@ END;
 $$;
 
 -- ==========================================
+-- 🚴 CAPTAIN FUNCTIONS
+-- ==========================================
+
+-- دالة البحث عن أقرب كابتن متاح
+CREATE OR REPLACE FUNCTION public.get_nearby_captains(
+  p_lat DOUBLE PRECISION,
+  p_lng DOUBLE PRECISION,
+  p_radius_km DOUBLE PRECISION DEFAULT 10.0,
+  p_limit INT DEFAULT 10
+)
+RETURNS TABLE (
+  captain_id UUID,
+  full_name TEXT,
+  phone TEXT,
+  vehicle_type TEXT,
+  rating DECIMAL,
+  total_deliveries INT,
+  distance_km DOUBLE PRECISION,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    c.id AS captain_id,
+    p.full_name,
+    p.phone,
+    c.vehicle_type,
+    c.rating,
+    c.total_deliveries,
+    ROUND((ST_Distance(
+      dl.position,
+      ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography
+    ) / 1000.0)::numeric, 2)::double precision AS distance_km,
+    ST_Y(dl.position::geometry) AS latitude,
+    ST_X(dl.position::geometry) AS longitude
+  FROM public.driver_locations dl
+  JOIN public.captains c ON c.id = dl.driver_id
+  JOIN public.profiles p ON p.id = c.id
+  WHERE dl.is_available = TRUE
+    AND c.is_active = TRUE
+    AND c.is_verified = TRUE
+    AND c.status = 'online'
+    AND ST_DWithin(
+      dl.position,
+      ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography,
+      p_radius_km * 1000
+    )
+  ORDER BY ST_Distance(
+    dl.position,
+    ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography
+  ) ASC
+  LIMIT p_limit;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_nearby_captains TO authenticated;
+
+-- دالة تعيين كابتن لطلب وإنشاء توصيلة
+CREATE OR REPLACE FUNCTION public.assign_captain_to_order(
+  p_order_id UUID,
+  p_captain_id UUID,
+  p_delivery_fee DECIMAL DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_order RECORD;
+  v_store RECORD;
+  v_delivery_id UUID;
+  v_tracking_number TEXT;
+BEGIN
+  -- التحقق من الطلب
+  SELECT * INTO v_order FROM public.orders WHERE id = p_order_id;
+  IF NOT FOUND THEN
+    RETURN json_build_object('success', false, 'error', 'الطلب غير موجود');
+  END IF;
+
+  -- التحقق من الكابتن
+  IF NOT EXISTS (SELECT 1 FROM public.captains WHERE id = p_captain_id AND is_active = TRUE AND is_verified = TRUE) THEN
+    RETURN json_build_object('success', false, 'error', 'الكابتن غير متاح أو غير موثق');
+  END IF;
+
+  -- جلب بيانات المتجر
+  SELECT * INTO v_store FROM public.stores WHERE id = v_order.store_id;
+
+  -- تحديث الطلب
+  UPDATE public.orders
+  SET captain_id = p_captain_id, updated_at = NOW()
+  WHERE id = p_order_id;
+
+  -- تحديث حالة الكابتن
+  UPDATE public.captains
+  SET status = 'busy', is_available = FALSE, last_available_at = NOW()
+  WHERE id = p_captain_id;
+
+  -- تحديث driver_locations
+  UPDATE public.driver_locations
+  SET is_available = FALSE, current_order_id = p_order_id
+  WHERE driver_id = p_captain_id;
+
+  -- إنشاء رقم تتبع
+  v_tracking_number := 'DLV-' || TO_CHAR(NOW(), 'YYMMDD') || '-' || SUBSTR(gen_random_uuid()::text, 1, 6);
+
+  -- إنشاء التوصيلة
+  INSERT INTO public.deliveries (
+    order_id, captain_id, tracking_number, status,
+    pickup_address, pickup_latitude, pickup_longitude,
+    delivery_address, delivery_latitude, delivery_longitude,
+    delivery_fee, assigned_at
+  ) VALUES (
+    p_order_id, p_captain_id, v_tracking_number, 'assigned',
+    v_store.address, v_store.latitude, v_store.longitude,
+    v_order.delivery_address, v_order.delivery_latitude, v_order.delivery_longitude,
+    COALESCE(p_delivery_fee, v_order.delivery_fee), NOW()
+  )
+  RETURNING id INTO v_delivery_id;
+
+  RETURN json_build_object(
+    'success', true,
+    'delivery_id', v_delivery_id,
+    'tracking_number', v_tracking_number,
+    'captain_id', p_captain_id
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.assign_captain_to_order TO authenticated;
+
+-- دالة تحديث حالة التوصيل (مع تحديث الكابتن والطلب تلقائياً)
+CREATE OR REPLACE FUNCTION public.update_delivery_status(
+  p_delivery_id UUID,
+  p_new_status TEXT,
+  p_notes TEXT DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_delivery RECORD;
+  v_captain_id UUID;
+  v_order_id UUID;
+BEGIN
+  -- جلب التوصيلة
+  SELECT * INTO v_delivery FROM public.deliveries WHERE id = p_delivery_id;
+  IF NOT FOUND THEN
+    RETURN json_build_object('success', false, 'error', 'التوصيلة غير موجودة');
+  END IF;
+
+  v_captain_id := v_delivery.captain_id;
+  v_order_id := v_delivery.order_id;
+
+  -- التحقق من الصلاحية (الكابتن المعين أو المدير فقط)
+  IF auth.uid() != v_captain_id AND NOT public.is_admin() THEN
+    RETURN json_build_object('success', false, 'error', 'ليس لديك صلاحية');
+  END IF;
+
+  -- تحديث التوصيلة
+  UPDATE public.deliveries
+  SET 
+    status = p_new_status::delivery_status_enum,
+    captain_notes = COALESCE(p_notes, captain_notes),
+    picked_up_at = CASE WHEN p_new_status = 'picked_up' AND picked_up_at IS NULL THEN NOW() ELSE picked_up_at END,
+    in_transit_at = CASE WHEN p_new_status = 'in_transit' AND in_transit_at IS NULL THEN NOW() ELSE in_transit_at END,
+    arrived_at = CASE WHEN p_new_status = 'arrived' AND arrived_at IS NULL THEN NOW() ELSE arrived_at END,
+    delivered_at = CASE WHEN p_new_status = 'delivered' AND delivered_at IS NULL THEN NOW() ELSE delivered_at END,
+    cancelled_at = CASE WHEN p_new_status IN ('cancelled', 'failed') AND cancelled_at IS NULL THEN NOW() ELSE cancelled_at END,
+    updated_at = NOW()
+  WHERE id = p_delivery_id;
+
+  -- تحديث حالة الطلب بناءً على حالة التوصيلة
+  IF p_new_status = 'picked_up' THEN
+    UPDATE public.orders SET status = 'picked_up', picked_up_at = NOW(), updated_at = NOW() WHERE id = v_order_id;
+  ELSIF p_new_status = 'in_transit' THEN
+    UPDATE public.orders SET status = 'in_transit', updated_at = NOW() WHERE id = v_order_id;
+  ELSIF p_new_status = 'delivered' THEN
+    UPDATE public.orders SET status = 'delivered', delivered_at = NOW(), updated_at = NOW() WHERE id = v_order_id;
+    -- تحرير الكابتن
+    UPDATE public.captains SET status = 'online', is_available = TRUE, total_deliveries = total_deliveries + 1, last_available_at = NOW() WHERE id = v_captain_id;
+    UPDATE public.driver_locations SET is_available = TRUE, current_order_id = NULL WHERE driver_id = v_captain_id;
+    -- تسجيل الأرباح
+    INSERT INTO public.captain_earnings (captain_id, order_id, delivery_id, amount, commission_rate, commission_amount, net_amount)
+    SELECT v_captain_id, v_order_id, p_delivery_id, v_delivery.delivery_fee, 10.00, 
+      ROUND(v_delivery.delivery_fee * 0.10, 2),
+      ROUND(v_delivery.delivery_fee * 0.90, 2);
+  ELSIF p_new_status IN ('cancelled', 'failed') THEN
+    -- تحرير الكابتن عند الإلغاء
+    UPDATE public.captains SET status = 'online', is_available = TRUE, last_available_at = NOW() WHERE id = v_captain_id;
+    UPDATE public.driver_locations SET is_available = TRUE, current_order_id = NULL WHERE driver_id = v_captain_id;
+    IF p_new_status = 'cancelled' THEN
+      UPDATE public.orders SET status = 'cancelled', cancellation_reason = p_notes, cancelled_at = NOW(), updated_at = NOW() WHERE id = v_order_id;
+    END IF;
+  END IF;
+
+  -- تسجيل في سجل الحالات
+  INSERT INTO public.order_status_logs (order_id, old_status, new_status, changed_by, notes)
+  VALUES (v_order_id, v_delivery.status::text, p_new_status, auth.uid(), p_notes);
+
+  RETURN json_build_object(
+    'success', true,
+    'delivery_id', p_delivery_id,
+    'new_status', p_new_status
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.update_delivery_status TO authenticated;
+
+-- دالة تحديث موقع الكابتن (تحدث captains و driver_locations معاً)
+CREATE OR REPLACE FUNCTION public.update_captain_location(
+  p_captain_id UUID,
+  p_lat DOUBLE PRECISION,
+  p_lng DOUBLE PRECISION,
+  p_heading DOUBLE PRECISION DEFAULT NULL,
+  p_speed DOUBLE PRECISION DEFAULT NULL,
+  p_accuracy DOUBLE PRECISION DEFAULT NULL
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- التحقق من الصلاحية
+  IF auth.uid() != p_captain_id AND NOT public.is_admin() THEN
+    RETURN FALSE;
+  END IF;
+
+  -- تحديث captains table
+  UPDATE public.captains 
+  SET latitude = p_lat, longitude = p_lng, updated_at = NOW()
+  WHERE id = p_captain_id;
+
+  -- تحديث أو إدراج driver_locations (PostGIS)
+  INSERT INTO public.driver_locations (driver_id, position, heading, speed_mps, accuracy_m, updated_at)
+  VALUES (
+    p_captain_id,
+    ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography,
+    p_heading, p_speed, p_accuracy, NOW()
+  )
+  ON CONFLICT (driver_id) DO UPDATE SET
+    position = ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography,
+    heading = COALESCE(EXCLUDED.heading, driver_locations.heading),
+    speed_mps = COALESCE(EXCLUDED.speed_mps, driver_locations.speed_mps),
+    accuracy_m = COALESCE(EXCLUDED.accuracy_m, driver_locations.accuracy_m),
+    updated_at = NOW();
+
+  RETURN TRUE;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.update_captain_location TO authenticated;
+
+-- ==========================================
+-- ⭐ RATING FUNCTIONS
+-- ==========================================
+
+-- دالة تحديث تقييم المنتج تلقائياً
+CREATE OR REPLACE FUNCTION public.update_product_rating()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_product_id UUID;
+  v_avg_rating NUMERIC;
+  v_review_count INT;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    v_product_id := OLD.product_id;
+  ELSE
+    v_product_id := NEW.product_id;
+  END IF;
+
+  IF v_product_id IS NULL THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
+  SELECT 
+    COALESCE(AVG(rating), 0.0),
+    COUNT(*)
+  INTO v_avg_rating, v_review_count
+  FROM public.reviews
+  WHERE product_id = v_product_id;
+
+  UPDATE public.products
+  SET 
+    rating = ROUND(v_avg_rating::numeric, 1),
+    review_count = v_review_count,
+    updated_at = NOW()
+  WHERE id = v_product_id;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+-- دالة تحديث تقييم المتجر تلقائياً
+CREATE OR REPLACE FUNCTION public.update_store_rating()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_store_id UUID;
+  v_avg_rating NUMERIC;
+  v_review_count INT;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.product_id IS NOT NULL THEN
+      SELECT store_id INTO v_store_id FROM public.products WHERE id = OLD.product_id;
+    ELSE
+      v_store_id := OLD.store_id;
+    END IF;
+  ELSE
+    IF NEW.product_id IS NOT NULL THEN
+      SELECT store_id INTO v_store_id FROM public.products WHERE id = NEW.product_id;
+    ELSE
+      v_store_id := NEW.store_id;
+    END IF;
+  END IF;
+
+  IF v_store_id IS NULL THEN
+    RETURN COALESCE(NEW, OLD);
+  END IF;
+
+  SELECT 
+    COALESCE(AVG(r.rating), 0.0),
+    COUNT(*)
+  INTO v_avg_rating, v_review_count
+  FROM public.reviews r
+  INNER JOIN public.products p ON r.product_id = p.id
+  WHERE p.store_id = v_store_id;
+
+  UPDATE public.stores
+  SET 
+    rating = ROUND(v_avg_rating::numeric, 1),
+    review_count = v_review_count,
+    updated_at = NOW()
+  WHERE id = v_store_id;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$$;
+
+-- دالة تحديث وقت قالب المنتج
+CREATE OR REPLACE FUNCTION update_product_template_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ==========================================
 -- 🔄 TRIGGERS
 -- ==========================================
 
@@ -1708,6 +2528,8 @@ CREATE TRIGGER update_captains_updated_at BEFORE UPDATE ON public.captains FOR E
 CREATE TRIGGER update_clients_updated_at BEFORE UPDATE ON public.clients FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 CREATE TRIGGER update_reviews_updated_at BEFORE UPDATE ON public.reviews FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 CREATE TRIGGER update_deliveries_updated_at BEFORE UPDATE ON public.deliveries FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+CREATE TRIGGER update_delivery_pricing_updated_at BEFORE UPDATE ON public.delivery_pricing FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+CREATE TRIGGER update_captain_earnings_updated_at BEFORE UPDATE ON public.captain_earnings FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 CREATE TRIGGER update_coupons_updated_at BEFORE UPDATE ON public.coupons FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 CREATE TRIGGER update_addresses_updated_at BEFORE UPDATE ON public.addresses FOR EACH ROW EXECUTE FUNCTION public.update_addresses_updated_at();
 CREATE TRIGGER update_app_settings_updated_at BEFORE UPDATE ON public.app_settings FOR EACH ROW EXECUTE FUNCTION public.update_app_settings_updated_at();
@@ -1716,7 +2538,34 @@ CREATE TRIGGER update_app_settings_updated_at BEFORE UPDATE ON public.app_settin
 CREATE TRIGGER generate_order_number_trigger BEFORE INSERT ON public.orders FOR EACH ROW EXECUTE FUNCTION public.generate_order_number();
 CREATE TRIGGER calculate_cart_item_total_trigger BEFORE INSERT OR UPDATE ON public.cart_items FOR EACH ROW EXECUTE FUNCTION public.calculate_cart_item_total();
 CREATE TRIGGER update_cart_totals_trigger AFTER INSERT OR UPDATE OR DELETE ON public.cart_items FOR EACH ROW EXECUTE FUNCTION public.update_cart_totals();
+
+-- تحديث hash الخيارات تلقائياً
+CREATE OR REPLACE FUNCTION public.calculate_options_hash()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.options_hash := CASE
+    WHEN NEW.selected_options IS NULL OR NEW.selected_options = '{}'::jsonb THEN ''
+    ELSE MD5(NEW.selected_options::text)
+  END;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER calculate_options_hash_trigger BEFORE INSERT OR UPDATE OF selected_options ON public.cart_items FOR EACH ROW EXECUTE FUNCTION public.calculate_options_hash();
 CREATE TRIGGER trigger_ensure_single_default_address BEFORE INSERT OR UPDATE ON public.addresses FOR EACH ROW EXECUTE FUNCTION ensure_single_default_address();
+
+-- Triggers: Product Templates
+CREATE TRIGGER product_template_updated_at BEFORE UPDATE ON public.product_templates FOR EACH ROW EXECUTE FUNCTION update_product_template_timestamp();
+
+-- Triggers: Rating (تحديث التقييمات تلقائياً عند إضافة/تعديل/حذف مراجعة)
+CREATE TRIGGER trigger_update_product_rating_on_review_insert AFTER INSERT ON public.reviews FOR EACH ROW EXECUTE FUNCTION public.update_product_rating();
+CREATE TRIGGER trigger_update_product_rating_on_review_update AFTER UPDATE ON public.reviews FOR EACH ROW WHEN (OLD.rating IS DISTINCT FROM NEW.rating OR OLD.product_id IS DISTINCT FROM NEW.product_id) EXECUTE FUNCTION public.update_product_rating();
+CREATE TRIGGER trigger_update_product_rating_on_review_delete AFTER DELETE ON public.reviews FOR EACH ROW EXECUTE FUNCTION public.update_product_rating();
+CREATE TRIGGER trigger_update_store_rating_on_review_insert AFTER INSERT ON public.reviews FOR EACH ROW EXECUTE FUNCTION public.update_store_rating();
+CREATE TRIGGER trigger_update_store_rating_on_review_update AFTER UPDATE ON public.reviews FOR EACH ROW WHEN (OLD.rating IS DISTINCT FROM NEW.rating OR OLD.product_id IS DISTINCT FROM NEW.product_id OR OLD.store_id IS DISTINCT FROM NEW.store_id) EXECUTE FUNCTION public.update_store_rating();
+CREATE TRIGGER trigger_update_store_rating_on_review_delete AFTER DELETE ON public.reviews FOR EACH ROW EXECUTE FUNCTION public.update_store_rating();
 
 -- ==========================================
 -- 📊 INDEXES
@@ -1729,6 +2578,8 @@ CREATE INDEX idx_stores_merchant ON public.stores(merchant_id);
 CREATE INDEX idx_stores_active ON public.stores(is_active) WHERE is_active = true;
 CREATE INDEX idx_products_store ON public.products(store_id);
 CREATE INDEX idx_products_active ON public.products(is_active) WHERE is_active = true;
+CREATE INDEX IF NOT EXISTS idx_products_custom_fields ON products USING gin (custom_fields);
+COMMENT ON COLUMN products.custom_fields IS 'Category-specific dynamic fields stored as JSONB (e.g., meal size, toppings, warranty, etc.)';
 CREATE INDEX idx_orders_client ON public.orders(client_id);
 CREATE INDEX idx_orders_status ON public.orders(status);
 CREATE INDEX idx_captains_status ON public.captains(status);
@@ -1737,6 +2588,57 @@ CREATE INDEX idx_cart_items_cart ON public.cart_items(cart_id);
 CREATE INDEX idx_favorites_user ON public.favorites(user_id);
 CREATE INDEX idx_deliveries_order ON public.deliveries(order_id);
 CREATE INDEX idx_deliveries_captain ON public.deliveries(captain_id);
+CREATE INDEX IF NOT EXISTS idx_deliveries_status ON public.deliveries(status);
+CREATE INDEX IF NOT EXISTS idx_delivery_tracking_delivery_id ON public.delivery_tracking(delivery_id);
+CREATE INDEX IF NOT EXISTS idx_delivery_tracking_captain_id ON public.delivery_tracking(captain_id);
+CREATE INDEX IF NOT EXISTS idx_captains_is_verified ON public.captains(is_verified);
+CREATE INDEX IF NOT EXISTS idx_captains_is_active ON public.captains(is_active) WHERE is_active = TRUE;
+CREATE INDEX IF NOT EXISTS idx_captains_is_available ON public.captains(is_available) WHERE is_available = TRUE;
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON public.notifications(user_id);
+
+-- Notification Indexes
+CREATE INDEX idx_notifications_store_id ON public.notifications(store_id);
+CREATE INDEX idx_notifications_target_role ON public.notifications(target_role);
+CREATE INDEX idx_device_tokens_client_id ON public.device_tokens(client_id);
+CREATE INDEX idx_device_tokens_store_id ON public.device_tokens(store_id);
+CREATE INDEX idx_device_tokens_role ON public.device_tokens(role);
+CREATE INDEX idx_notification_analytics_notification_id ON public.notification_analytics(notification_id);
+CREATE INDEX idx_notification_analytics_user_id ON public.notification_analytics(user_id);
+CREATE INDEX idx_notification_analytics_timestamp ON public.notification_analytics(timestamp);
+
+-- Reviews Indexes
+CREATE INDEX reviews_user_id_idx ON public.reviews(user_id);
+CREATE INDEX reviews_order_id_idx ON public.reviews(order_id);
+CREATE INDEX reviews_product_id_idx ON public.reviews(product_id);
+CREATE INDEX reviews_store_id_idx ON public.reviews(store_id);
+
+-- Address Indexes
+CREATE INDEX IF NOT EXISTS idx_addresses_governorate ON addresses(governorate);
+CREATE INDEX IF NOT EXISTS idx_addresses_area ON addresses(area);
+
+-- Store Location Indexes
+CREATE INDEX IF NOT EXISTS idx_stores_city ON public.stores(city);
+CREATE INDEX IF NOT EXISTS idx_stores_governorate ON public.stores(governorate);
+CREATE INDEX IF NOT EXISTS idx_stores_city_governorate ON public.stores(city, governorate);
+CREATE INDEX IF NOT EXISTS idx_stores_area ON public.stores(area);
+
+-- Address Column Comments
+COMMENT ON COLUMN addresses.governorate IS 'المحافظة - Governorate/Province name';
+COMMENT ON COLUMN addresses.city IS 'المدينة';
+COMMENT ON COLUMN addresses.area IS 'المنطقة أو الحي';
+COMMENT ON COLUMN addresses.street IS 'اسم الشارع';
+COMMENT ON COLUMN addresses.building_number IS 'رقم المبنى';
+COMMENT ON COLUMN addresses.floor_number IS 'رقم الطابق';
+COMMENT ON COLUMN addresses.apartment_number IS 'رقم الشقة';
+COMMENT ON COLUMN addresses.landmark IS 'علامة مميزة قريبة من العنوان (مثل: بجوار المسجد، أمام الصيدلية، إلخ)';
+
+-- Store Column Comments
+COMMENT ON COLUMN public.stores.governorate IS 'المحافظة التي يقع فيها المتجر';
+COMMENT ON COLUMN public.stores.city IS 'المدينة التي يقع فيها المتجر';
+COMMENT ON COLUMN public.stores.area IS 'المنطقة أو الحي الذي يقع فيه المتجر';
+COMMENT ON COLUMN public.stores.street IS 'اسم الشارع';
+COMMENT ON COLUMN public.stores.landmark IS 'علامة مميزة قريبة من المتجر (مثل: بجوار البنك، أمام المسجد، إلخ)';
+COMMENT ON COLUMN public.stores.address IS 'العنوان الكامل (اختياري/للتوافق)';
 
 -- ==========================================
 -- ⚙️ APP SETTINGS TABLE
@@ -2224,71 +3126,178 @@ USING (bucket_id = 'categories');
 -- ============================================================================
 
 -- ============================================================================
--- 📦 ADDITIONAL MIGRATIONS - CONSOLIDATED
+-- 🚀 ELL TALL MARKET - CONSOLIDATED DATABASE SCHEMA
+-- Generated: 2026-01-28 (Consolidated from multiple migrations)
 -- ============================================================================
--- تم دمج جميع الـ migrations الإضافية هنا
 
--- ==========================================
--- 🔧 PROFILES: Add birth_date and gender columns
--- ==========================================
--- Migration: 20241212_add_birth_date_gender_to_profiles
+-- 1. Enable Required Extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_net";
+CREATE EXTENSION IF NOT EXISTS "postgis";
 
-ALTER TABLE public.profiles
-ADD COLUMN IF NOT EXISTS birth_date DATE;
+-- ============================================================================
+-- 📍 POSTGIS SPATIAL FUNCTIONS & SEARCH
+-- ============================================================================
 
-ALTER TABLE public.profiles
-ADD COLUMN IF NOT EXISTS gender TEXT CHECK (gender IN ('male', 'female'));
+-- Function: البحث عن المتاجر القريبة
+CREATE OR REPLACE FUNCTION get_nearby_stores(
+  customer_lat NUMERIC,
+  customer_lng NUMERIC,
+  max_distance_km NUMERIC DEFAULT 20,
+  category_filter TEXT DEFAULT NULL
+)
+RETURNS TABLE (
+  id UUID,
+  name TEXT,
+  description TEXT,
+  image_url TEXT,
+  rating NUMERIC,
+  total_reviews INTEGER,
+  delivery_fee NUMERIC,
+  min_order_amount NUMERIC,
+  distance_km NUMERIC,
+  estimated_delivery_time INTEGER,
+  is_open BOOLEAN,
+  latitude NUMERIC,
+  longitude NUMERIC
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    s.id,
+    s.name,
+    s.description,
+    s.image_url,
+    s.rating::NUMERIC,
+    s.review_count AS total_reviews,
+    s.delivery_fee,
+    s.min_order AS min_order_amount,
+    ROUND(
+      ST_Distance(
+        s.location,
+        ST_SetSRID(ST_MakePoint(customer_lng, customer_lat), 4326)::geography
+      )::NUMERIC / 1000,
+      2
+    ) AS distance_km,
+    ROUND(
+      (ST_Distance(
+        s.location,
+        ST_SetSRID(ST_MakePoint(customer_lng, customer_lat), 4326)::geography
+      ) / 1000 * 2) + 20
+    )::INTEGER AS estimated_delivery_time,
+    s.is_open,
+    s.latitude::NUMERIC,
+    s.longitude::NUMERIC
+  FROM stores s
+  WHERE s.is_active = true
+    AND ST_DWithin(
+      s.location,
+      ST_SetSRID(ST_MakePoint(customer_lng, customer_lat), 4326)::geography,
+      LEAST(s.delivery_radius_km, max_distance_km) * 1000
+    )
+    AND (category_filter IS NULL OR s.category = category_filter)
+  ORDER BY distance_km ASC;
+END;
+$$ LANGUAGE plpgsql STABLE;
 
-CREATE INDEX IF NOT EXISTS idx_profiles_gender ON public.profiles(gender);
+-- Function: التحقق من إمكانية التوصيل
+CREATE OR REPLACE FUNCTION can_deliver_to_location(
+  store_id_param UUID,
+  customer_lat NUMERIC,
+  customer_lng NUMERIC
+)
+RETURNS TABLE (
+  can_deliver BOOLEAN,
+  distance_km NUMERIC,
+  estimated_time INTEGER,
+  delivery_fee NUMERIC
+) AS $$
+DECLARE
+  v_store_location GEOGRAPHY;
+  v_store_radius NUMERIC;
+  v_store_fee NUMERIC;
+  v_calc_dist NUMERIC;
+BEGIN
+  SELECT s.location, s.delivery_radius_km, s.delivery_fee
+  INTO v_store_location, v_store_radius, v_store_fee
+  FROM public.stores s
+  WHERE s.id = store_id_param AND s.is_active = true;
 
-COMMENT ON COLUMN public.profiles.birth_date IS 'تاريخ ميلاد المستخدم';
-COMMENT ON COLUMN public.profiles.gender IS 'جنس المستخدم: male (ذكر) أو female (أنثى)';
+  IF NOT FOUND OR v_store_location IS NULL THEN
+    RETURN QUERY SELECT false, 0::NUMERIC, 0, 0::NUMERIC;
+    RETURN;
+  END IF;
 
--- ==========================================
--- 🔧 PRODUCTS: Add custom_fields column (JSONB)
--- ==========================================
--- Migration: 20241105000000_add_custom_fields_to_products
+  v_calc_dist := ST_Distance(
+    v_store_location,
+    ST_SetSRID(ST_MakePoint(customer_lng, customer_lat), 4326)::geography
+  ) / 1000;
 
-ALTER TABLE products 
-ADD COLUMN IF NOT EXISTS custom_fields JSONB DEFAULT '{}'::jsonb;
+  IF v_calc_dist <= v_store_radius THEN
+    RETURN QUERY SELECT 
+      true,
+      ROUND(v_calc_dist::NUMERIC, 2),
+      ROUND((v_calc_dist * 2) + 20)::INTEGER,
+      v_store_fee;
+  ELSE
+    RETURN QUERY SELECT 
+      false,
+      ROUND(v_calc_dist::NUMERIC, 2),
+      0,
+      0::NUMERIC;
+  END IF;
+END;
+$$ LANGUAGE plpgsql STABLE;
 
-CREATE INDEX IF NOT EXISTS idx_products_custom_fields 
-ON products USING gin (custom_fields);
+-- Function: تحديث موقع المتجر (sync)
+CREATE OR REPLACE FUNCTION sync_store_location(
+  store_id_param UUID,
+  lat DOUBLE PRECISION,
+  lng DOUBLE PRECISION
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+  UPDATE stores
+  SET 
+    latitude = lat,
+    longitude = lng,
+    location = ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography
+  WHERE id = store_id_param;
+  RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql;
 
-COMMENT ON COLUMN products.custom_fields IS 'Category-specific dynamic fields stored as JSONB (e.g., meal size, toppings, warranty, etc.)';
+-- Function: تحديث موقع العنوان (sync)
+CREATE OR REPLACE FUNCTION sync_address_location(
+  address_id_param UUID,
+  lat DOUBLE PRECISION,
+  lng DOUBLE PRECISION
+)
+RETURNS BOOLEAN AS $$
+BEGIN
+  UPDATE addresses
+  SET 
+    latitude = lat,
+    longitude = lng,
+    location = ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography
+  WHERE id = address_id_param;
+  RETURN FOUND;
+END;
+$$ LANGUAGE plpgsql;
 
--- ==========================================
--- 🔧 ADDRESSES: Add governorate column
--- ==========================================
--- Migration: 20241207_add_governorate_to_addresses
+-- Indexes for Spatial Performance
+CREATE INDEX IF NOT EXISTS idx_stores_location ON stores USING GIST(location);
+CREATE INDEX IF NOT EXISTS idx_addresses_location ON addresses USING GIST(location);
 
-ALTER TABLE addresses 
-ADD COLUMN IF NOT EXISTS governorate TEXT;
+GRANT EXECUTE ON FUNCTION get_nearby_stores TO authenticated, anon;
+GRANT EXECUTE ON FUNCTION can_deliver_to_location TO authenticated, anon;
+GRANT EXECUTE ON FUNCTION sync_store_location TO authenticated;
+GRANT EXECUTE ON FUNCTION sync_address_location TO authenticated;
 
-CREATE INDEX IF NOT EXISTS idx_addresses_governorate ON addresses(governorate);
 
-COMMENT ON COLUMN addresses.governorate IS 'المحافظة - Governorate/Province name';
-
--- ==========================================
--- 🔧 STORES: Add city and governorate columns
--- ==========================================
--- Migration: 20241211_add_city_governorate_to_stores
-
-ALTER TABLE public.stores
-ADD COLUMN IF NOT EXISTS city TEXT,
-ADD COLUMN IF NOT EXISTS governorate TEXT;
-
-CREATE INDEX IF NOT EXISTS idx_stores_city ON public.stores(city);
-CREATE INDEX IF NOT EXISTS idx_stores_governorate ON public.stores(governorate);
-CREATE INDEX IF NOT EXISTS idx_stores_city_governorate ON public.stores(city, governorate);
-
-COMMENT ON COLUMN public.stores.city IS 'المدينة التي يقع فيها المتجر';
-COMMENT ON COLUMN public.stores.governorate IS 'المحافظة التي يقع فيها المتجر';
-
--- ==========================================
+-- ============================================================================
 -- 🖼️ PROFILES STORAGE BUCKET
--- ==========================================
--- Migration: 20241212_create_profiles_storage
+-- ============================================================================
 
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
@@ -2341,10 +3350,9 @@ USING (
   AND (storage.foldername(name))[2] = 'user_' || auth.uid()::text
 );
 
--- ==========================================
+-- ============================================================================
 -- 🗺️ MAP SYSTEM (PostGIS)
--- ==========================================
--- Migration: 20251223_map_system
+-- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS postgis;
 
@@ -2381,15 +3389,15 @@ CREATE TRIGGER trg_store_delivery_zones_updated_at
 BEFORE UPDATE ON public.store_delivery_zones
 FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- Driver locations table
+-- Driver/Captain locations table (PostGIS)
 CREATE TABLE IF NOT EXISTS public.driver_locations (
-  driver_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+  driver_id UUID PRIMARY KEY REFERENCES public.captains(id) ON DELETE CASCADE,
   position geography(point, 4326) NOT NULL,
   heading DOUBLE PRECISION,
   speed_mps DOUBLE PRECISION,
   accuracy_m DOUBLE PRECISION,
   is_available BOOLEAN NOT NULL DEFAULT FALSE,
-  current_order_id UUID,
+  current_order_id UUID REFERENCES public.orders(id) ON DELETE SET NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -2398,17 +3406,6 @@ CREATE INDEX IF NOT EXISTS driver_locations_position_gix
 
 CREATE INDEX IF NOT EXISTS driver_locations_is_available_idx
   ON public.driver_locations(is_available);
-
--- Orders: tracking fields
-ALTER TABLE IF EXISTS public.orders
-  ADD COLUMN IF NOT EXISTS pickup_position geography(point, 4326),
-  ADD COLUMN IF NOT EXISTS dropoff_position geography(point, 4326),
-  ADD COLUMN IF NOT EXISTS assigned_driver_id UUID REFERENCES public.profiles(id),
-  ADD COLUMN IF NOT EXISTS eta_seconds INTEGER,
-  ADD COLUMN IF NOT EXISTS distance_meters INTEGER;
-
-CREATE INDEX IF NOT EXISTS orders_assigned_driver_id_idx
-  ON public.orders(assigned_driver_id);
 
 -- Point-in-zone validation function
 CREATE OR REPLACE FUNCTION public.is_point_in_store_zone(
@@ -2504,56 +3501,104 @@ CREATE POLICY "spatial_ref_sys_no_modifications" ON spatial_ref_sys
 
 COMMENT ON TABLE spatial_ref_sys IS 'PostGIS system table containing spatial reference systems (SRID) - Read-only for security';
 
--- ==========================================
+-- ============================================================================
 -- 📊 ORDER TRACKING SYSTEM
--- ==========================================
--- Migration: order_tracking_table
+-- ============================================================================
 
-ALTER TABLE public.orders 
-ADD COLUMN IF NOT EXISTS client_phone TEXT;
+-- Function to update order status with security checks and logging
+DROP FUNCTION IF EXISTS public.update_order_status(UUID, order_status_enum, UUID, TEXT, TEXT);
 
-ALTER TABLE public.order_status_logs 
-ADD COLUMN IF NOT EXISTS changed_by UUID REFERENCES auth.users(id);
-
-ALTER TABLE public.order_status_logs 
-ADD COLUMN IF NOT EXISTS notes TEXT;
-
-COMMENT ON COLUMN public.orders.client_phone IS 'رقم هاتف العميل للتواصل';
-COMMENT ON COLUMN public.order_status_logs.changed_by IS 'معرف المستخدم الذي قام بتغيير الحالة';
-COMMENT ON COLUMN public.order_status_logs.notes IS 'ملاحظات على تغيير الحالة';
-
--- Function to update order status with logging
 CREATE OR REPLACE FUNCTION public.update_order_status(
   p_order_id UUID,
-  p_new_status order_status_enum,
-  p_changed_by UUID,
+  p_new_status TEXT,
+  p_changed_by UUID DEFAULT NULL,
   p_notes TEXT DEFAULT NULL,
   p_cancellation_reason TEXT DEFAULT NULL
 )
-RETURNS VOID
+RETURNS JSON
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
-  v_old_status order_status_enum;
+  v_old_status TEXT;
+  v_user_id UUID;
+  v_is_authorized BOOLEAN := FALSE;
+  v_order RECORD;
 BEGIN
-  SELECT status INTO v_old_status
+  -- المدخلات الأساسية
+  IF p_order_id IS NULL OR p_new_status IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'معرف الطلب والحالة الجديدة مطلوبان');
+  END IF;
+
+  v_user_id := COALESCE(p_changed_by, auth.uid());
+  
+  -- جلب الطلب
+  SELECT id, status::text as status, client_id, store_id, captain_id 
+  INTO v_order
   FROM public.orders
   WHERE id = p_order_id;
 
+  IF NOT FOUND THEN
+    RETURN json_build_object('success', false, 'error', 'الطلب غير موجود');
+  END IF;
+
+  v_old_status := v_order.status;
+
+  -- التحقق من الصلاحيات
+  -- 1. العميل (إلغاء فقط)
+  IF v_user_id = v_order.client_id THEN
+    IF p_new_status = 'cancelled' AND v_old_status IN ('pending', 'confirmed') THEN
+      v_is_authorized := TRUE;
+    END IF;
+  END IF;
+
+  -- 2. التاجر (طلبات متجره)
+  IF NOT v_is_authorized THEN
+    IF EXISTS (SELECT 1 FROM public.stores WHERE id = v_order.store_id AND merchant_id = v_user_id) THEN
+      v_is_authorized := TRUE;
+    END IF;
+  END IF;
+
+  -- 3. الكابتن (طلباته)
+  IF NOT v_is_authorized AND v_user_id = v_order.captain_id THEN
+    v_is_authorized := TRUE;
+  END IF;
+
+  -- 4. المدير
+  IF NOT v_is_authorized THEN
+    IF EXISTS (SELECT 1 FROM public.profiles WHERE id = v_user_id AND role = 'admin') THEN
+      v_is_authorized := TRUE;
+    END IF;
+  END IF;
+
+  IF NOT v_is_authorized THEN
+    RETURN json_build_object('success', false, 'error', 'ليس لديك صلاحية لتعديل هذا الطلب');
+  END IF;
+
+  -- التحديث
   UPDATE public.orders
   SET 
-    status = p_new_status,
+    status = p_new_status::order_status_enum,
     cancellation_reason = COALESCE(p_cancellation_reason, cancellation_reason),
+    cancelled_at = CASE WHEN p_new_status = 'cancelled' AND cancelled_at IS NULL THEN NOW() ELSE cancelled_at END,
     accepted_at = CASE WHEN p_new_status = 'confirmed' AND accepted_at IS NULL THEN NOW() ELSE accepted_at END,
     prepared_at = CASE WHEN p_new_status = 'ready' AND prepared_at IS NULL THEN NOW() ELSE prepared_at END,
-    picked_up_at = CASE WHEN p_new_status = 'on_the_way' AND picked_up_at IS NULL THEN NOW() ELSE picked_up_at END,
+    picked_up_at = CASE WHEN p_new_status = 'picked_up' AND picked_up_at IS NULL THEN NOW() ELSE picked_up_at END,
     delivered_at = CASE WHEN p_new_status = 'delivered' AND delivered_at IS NULL THEN NOW() ELSE delivered_at END,
     updated_at = NOW()
   WHERE id = p_order_id;
 
+  -- التسجيل
   INSERT INTO public.order_status_logs (order_id, old_status, new_status, changed_by, notes)
-  VALUES (p_order_id, v_old_status, p_new_status, p_changed_by, p_notes);
+  VALUES (p_order_id, v_old_status, p_new_status, v_user_id, p_notes);
+
+  RETURN json_build_object(
+    'success', true,
+    'order_id', p_order_id,
+    'old_status', v_old_status,
+    'new_status', p_new_status
+  );
 END;
 $$;
 
@@ -2580,6 +3625,7 @@ SELECT
   o.payment_method,
   o.payment_status,
   o.cancellation_reason,
+  o.cancelled_at,
   o.created_at,
   o.accepted_at,
   o.prepared_at,
@@ -2633,10 +3679,9 @@ COMMENT ON VIEW public.order_details_view IS 'عرض تفاصيل الطلب ا�
 
 GRANT SELECT ON public.order_details_view TO authenticated;
 
--- ==========================================
+-- ============================================================================
 -- ⚙️ SETTINGS TABLE
--- ==========================================
--- Migration: insert_default_delivery_settings
+-- ============================================================================
 
 CREATE TABLE IF NOT EXISTS settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

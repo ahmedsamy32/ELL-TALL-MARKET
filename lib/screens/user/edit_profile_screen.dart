@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
+import 'package:ell_tall_market/services/permission_service.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/utils/validators.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -27,13 +30,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late TextEditingController _newPasswordController;
   late TextEditingController _confirmPasswordController;
 
-  File? _pickedImage;
+  XFile? _pickedImage;
+  Uint8List? _pickedImageBytes;
   bool _isSaving = false;
   bool _obscureCurrentPassword = true;
   bool _obscureNewPassword = true;
   bool _obscureConfirmPassword = true;
-  bool _canDeleteAccount = false; // منع الحذف السريع
-
   // متغيرات جديدة
   DateTime? _selectedBirthDate;
   String? _selectedGender;
@@ -185,6 +187,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (source == null) return;
 
     try {
+      // التحقق من الأذونات أولاً
+      final permissionService = PermissionService();
+      final result = await permissionService.requestImagePermissions(
+        useCamera: source == ImageSource.camera,
+        useGallery: source == ImageSource.gallery,
+      );
+
+      if (!result.granted) {
+        if (!mounted) return;
+        if (result.permanentlyDenied) {
+          _showPermissionDialog(result.message ?? 'يجب منح الأذونات المطلوبة');
+        } else {
+          _showErrorSnackBar(result.message ?? 'تم رفض الإذن');
+        }
+        return;
+      }
+
       final picker = ImagePicker();
       final pickedFile = await picker.pickImage(
         source: source,
@@ -194,8 +213,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       );
 
       if (pickedFile != null && mounted) {
+        final bytes = await pickedFile.readAsBytes();
+        if (!mounted) return;
         setState(() {
-          _pickedImage = File(pickedFile.path);
+          _pickedImage = pickedFile;
+          _pickedImageBytes = bytes;
           _hasUnsavedChanges = true;
         });
       }
@@ -245,6 +267,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         _hasUnsavedChanges = true;
       });
     }
+  }
+
+  void _showPermissionDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('إذن مطلوب'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await PermissionService().openAppSettings();
+            },
+            child: const Text('فتح الإعدادات'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<bool> _onWillPop() async {
@@ -439,8 +484,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     String? avatarUrl = currentUser.avatarUrl;
 
     // رفع الصورة إلى Supabase Storage إذا تم اختيار صورة جديدة
-    if (_pickedImage != null) {
-      final uploadedUrl = await authProvider.uploadAvatar(_pickedImage!);
+    if (_pickedImageBytes != null) {
+      final uploadedUrl = await authProvider.uploadAvatarBytes(
+        imageBytes: _pickedImageBytes!,
+        fileName: _pickedImage?.name ?? 'avatar.jpg',
+      );
       if (uploadedUrl != null) {
         avatarUrl = uploadedUrl;
       } else {
@@ -585,152 +633,177 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _deleteAccount() async {
-    // تفعيل الزر بعد 3 ثوانٍ لتجنب الضغط الخاطئ السريع
-    if (!_canDeleteAccount) {
-      _showWarningSnackBar(
-        '⏳ انتظر قليلاً قبل تأكيد حذف الحساب للتأكد من قرارك',
-      );
-      setState(() => _canDeleteAccount = true);
-      Future.delayed(const Duration(seconds: 5), () {
-        if (mounted) {
-          setState(() => _canDeleteAccount = false);
-        }
-      });
-      return;
-    }
-
+    // التقاط جميع الـ providers قبل أي async operations
     final authProvider = Provider.of<SupabaseProvider>(context, listen: false);
+    final merchantProvider = Provider.of<MerchantProvider>(
+      context,
+      listen: false,
+    );
+    final productProvider = Provider.of<ProductProvider>(
+      context,
+      listen: false,
+    );
+    final orderProvider = Provider.of<OrderProvider>(context, listen: false);
 
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showModalBottomSheet<bool>(
       context: context,
-      barrierDismissible: false, // منع الإغلاق بالنقر خارج الحوار
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Theme.of(context).colorScheme.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        icon: Icon(
-          Icons.warning_amber_rounded,
-          color: Colors.red[700],
-          size: 64,
-        ),
-        title: Text(
-          'تحذير: حذف الحساب نهائياً',
-          style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.bold),
-          textAlign: TextAlign.center,
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'هل أنت متأكد تماماً من رغبتك في حذف حسابك؟',
-              style: Theme.of(
-                context,
-              ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red[50],
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.red[200]!),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'سيتم حذف:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.red[900],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _buildDeleteItem('جميع بياناتك الشخصية'),
-                  _buildDeleteItem('سجل الطلبات'),
-                  _buildDeleteItem('العناوين المحفوظة'),
-                  _buildDeleteItem('المفضلة'),
-                  const SizedBox(height: 8),
-                  Text(
-                    '⚠️ لا يمكن التراجع عن هذا الإجراء',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.red[900],
-                      fontSize: 13,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          // زر الإلغاء - أكثر وضوحاً
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Theme.of(context).colorScheme.primary,
-                side: BorderSide(
-                  color: Theme.of(context).colorScheme.primary,
-                  width: 2,
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'إلغاء',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          // زر التأكيد - أحمر ومخيف
-          Expanded(
-            child: ElevatedButton(
-              onPressed: () => Navigator.of(ctx).pop(true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red[700],
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: const Text(
-                'نعم، احذف',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-            ),
-          ),
-        ],
-        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      ctx,
+                    ).colorScheme.onSurface.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Icon(
+                  Icons.warning_amber_rounded,
+                  color: Colors.red[700],
+                  size: 56,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'تحذير: حذف الحساب نهائياً',
+                  style: TextStyle(
+                    color: Colors.red[700],
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'هل أنت متأكد تماماً من رغبتك في حذف حسابك؟',
+                  style: Theme.of(
+                    ctx,
+                  ).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.red[200]!),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'سيتم حذف:',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red[900],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _buildDeleteItem('جميع بياناتك الشخصية'),
+                      _buildDeleteItem('سجل الطلبات'),
+                      _buildDeleteItem('العناوين المحفوظة'),
+                      _buildDeleteItem('المفضلة'),
+                      const SizedBox(height: 8),
+                      Text(
+                        '⚠️ لا يمكن التراجع عن هذا الإجراء',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red[900],
+                          fontSize: 13,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Theme.of(ctx).colorScheme.primary,
+                          side: BorderSide(
+                            color: Theme.of(ctx).colorScheme.primary,
+                            width: 2,
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'إلغاء',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red[700],
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'نعم، احذف',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
 
     if (!mounted) return;
 
     if (confirmed == true) {
       try {
-        // Get all providers to clear their data on sign out
-        final merchantProvider = Provider.of<MerchantProvider>(
-          context,
-          listen: false,
-        );
-        final productProvider = Provider.of<ProductProvider>(
-          context,
-          listen: false,
-        );
-        final orderProvider = Provider.of<OrderProvider>(
-          context,
-          listen: false,
-        );
+        final currentUser = authProvider.currentUserProfile;
+        if (currentUser == null) {
+          _showErrorSnackBar('لا يمكن العثور على بيانات المستخدم');
+          return;
+        }
 
-        // Sign out instead of delete (delete functionality needs to be implemented)
+        final deleteResult = await authProvider.deleteUser(currentUser.id);
+        if (!deleteResult.success) {
+          _showErrorSnackBar(
+            deleteResult.message ?? 'فشل حذف الحساب. حاول مرة أخرى',
+          );
+          return;
+        }
+
         await authProvider.signOut(
           merchantProvider: merchantProvider,
           productProvider: productProvider,
@@ -770,378 +843,597 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           title: const Text('تعديل الملف الشخصي'),
           centerTitle: true,
         ),
-        body: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // صورة الحساب - محسّنة
-                  Center(
-                    child: GestureDetector(
-                      onTap: _pickImage,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.1),
-                              blurRadius: 20,
-                              offset: const Offset(0, 5),
-                            ),
-                          ],
-                        ),
-                        child: Stack(
-                          children: [
-                            CircleAvatar(
-                              radius: 60,
-                              backgroundColor:
-                                  _pickedImage == null && user.avatarUrl == null
-                                  ? Theme.of(
-                                      context,
-                                    ).colorScheme.primaryContainer
-                                  : null,
-                              backgroundImage: _pickedImage != null
-                                  ? FileImage(_pickedImage!)
-                                  : (user.avatarUrl != null
-                                        ? NetworkImage(user.avatarUrl!)
-                                        : null),
-                              child:
-                                  _pickedImage == null && user.avatarUrl == null
-                                  ? Icon(
-                                      Icons.person_rounded,
+        body: ResponsiveCenter(
+          maxWidth: 600,
+          child: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // صورة الحساب - محسّنة
+                    Center(
+                      child: GestureDetector(
+                        onTap: _pickImage,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.1),
+                                blurRadius: 20,
+                                offset: const Offset(0, 5),
+                              ),
+                            ],
+                          ),
+                          child: Stack(
+                            children: [
+                              CircleAvatar(
+                                radius: 60,
+                                backgroundColor:
+                                    _pickedImageBytes == null &&
+                                        user.avatarUrl == null
+                                    ? Theme.of(
+                                        context,
+                                      ).colorScheme.primaryContainer
+                                    : null,
+                                backgroundImage: _pickedImageBytes != null
+                                    ? MemoryImage(_pickedImageBytes!)
+                                    : (user.avatarUrl != null
+                                          ? NetworkImage(user.avatarUrl!)
+                                          : null),
+                                child:
+                                    _pickedImageBytes == null &&
+                                        user.avatarUrl == null
+                                    ? Icon(
+                                        Icons.person_rounded,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                        size: 60,
+                                      )
+                                    : null,
+                              ),
+                              Positioned(
+                                bottom: 2,
+                                right: 2,
+                                child: Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        Theme.of(context).colorScheme.primary,
+                                        Theme.of(context).colorScheme.primary
+                                            .withValues(alpha: 0.8),
+                                      ],
+                                    ),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
                                       color: Theme.of(
                                         context,
-                                      ).colorScheme.primary,
-                                      size: 60,
-                                    )
-                                  : null,
-                            ),
-                            Positioned(
-                              bottom: 2,
-                              right: 2,
-                              child: Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  gradient: LinearGradient(
-                                    colors: [
-                                      Theme.of(context).colorScheme.primary,
-                                      Theme.of(context).colorScheme.primary
-                                          .withValues(alpha: 0.8),
+                                      ).colorScheme.surface,
+                                      width: 3,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary
+                                            .withValues(alpha: 0.3),
+                                        blurRadius: 8,
+                                        offset: const Offset(0, 2),
+                                      ),
                                     ],
                                   ),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
+                                  child: Icon(
+                                    Icons.camera_alt_rounded,
                                     color: Theme.of(
                                       context,
-                                    ).colorScheme.surface,
-                                    width: 3,
+                                    ).colorScheme.onPrimary,
+                                    size: 20,
                                   ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .primary
-                                          .withValues(alpha: 0.3),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
                                 ),
-                                child: Icon(
-                                  Icons.camera_alt_rounded,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // عنوان قسم المعلومات الشخصية
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.person_outline_rounded,
+                          color: Theme.of(context).colorScheme.primary,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'المعلومات الشخصية',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // الاسم الأول والثاني في صف واحد
+                    Row(
+                      children: [
+                        // الاسم الأول - محسّن
+                        Expanded(
+                          child: TextFormField(
+                            controller: _firstNameController,
+                            decoration: InputDecoration(
+                              labelText: 'الاسم الأول',
+                              prefixIcon: const Icon(Icons.badge_outlined),
+                              hintText: 'مثال: أحمد',
+                              hintStyle: TextStyle(color: Colors.grey.shade400),
+                              filled: true,
+                              fillColor: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest
+                                  .withValues(alpha: 0.3),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(
                                   color: Theme.of(
                                     context,
-                                  ).colorScheme.onPrimary,
-                                  size: 20,
+                                  ).colorScheme.outline.withValues(alpha: 0.2),
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  width: 2,
                                 ),
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-
-                  // عنوان قسم المعلومات الشخصية
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.person_outline_rounded,
-                        color: Theme.of(context).colorScheme.primary,
-                        size: 24,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'المعلومات الشخصية',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // الاسم الأول والثاني في صف واحد
-                  Row(
-                    children: [
-                      // الاسم الأول - محسّن
-                      Expanded(
-                        child: TextFormField(
-                          controller: _firstNameController,
-                          decoration: InputDecoration(
-                            labelText: 'الاسم الأول',
-                            prefixIcon: const Icon(Icons.badge_outlined),
-                            hintText: 'مثال: أحمد',
-                            filled: true,
-                            fillColor: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest
-                                .withValues(alpha: 0.3),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.outline.withValues(alpha: 0.2),
-                              ),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: Theme.of(context).colorScheme.primary,
-                                width: 2,
-                              ),
-                            ),
+                            textInputAction: TextInputAction.next,
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'مطلوب';
+                              }
+                              return null;
+                            },
+                            onChanged: (value) => _markAsChanged(),
                           ),
-                          textInputAction: TextInputAction.next,
-                          validator: (value) {
-                            if (value == null || value.trim().isEmpty) {
-                              return 'مطلوب';
-                            }
-                            return null;
-                          },
-                          onChanged: (value) => _markAsChanged(),
                         ),
-                      ),
-                      const SizedBox(width: 12),
+                        const SizedBox(width: 12),
 
-                      // الاسم الثاني - محسّن
-                      Expanded(
-                        child: TextFormField(
-                          controller: _middleNameController,
-                          decoration: InputDecoration(
-                            labelText: 'الاسم الثاني',
-                            prefixIcon: const Icon(Icons.badge_outlined),
-                            hintText: 'مثال: سامي',
-                            filled: true,
-                            fillColor: Theme.of(context)
-                                .colorScheme
-                                .surfaceContainerHighest
-                                .withValues(alpha: 0.3),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.outline.withValues(alpha: 0.2),
+                        // الاسم الثاني - محسّن
+                        Expanded(
+                          child: TextFormField(
+                            controller: _middleNameController,
+                            decoration: InputDecoration(
+                              labelText: 'الاسم الثاني',
+                              prefixIcon: const Icon(Icons.badge_outlined),
+                              hintText: 'مثال: سامي',
+                              hintStyle: TextStyle(color: Colors.grey.shade400),
+                              filled: true,
+                              fillColor: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest
+                                  .withValues(alpha: 0.3),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.outline.withValues(alpha: 0.2),
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  width: 2,
+                                ),
                               ),
                             ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide(
-                                color: Theme.of(context).colorScheme.primary,
-                                width: 2,
-                              ),
-                            ),
+                            textInputAction: TextInputAction.next,
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'مطلوب';
+                              }
+                              return null;
+                            },
+                            onChanged: (value) => _markAsChanged(),
                           ),
-                          textInputAction: TextInputAction.next,
-                          validator: (value) {
-                            if (value == null || value.trim().isEmpty) {
-                              return 'مطلوب';
-                            }
-                            return null;
-                          },
-                          onChanged: (value) => _markAsChanged(),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // اسم العائلة - محسّن
-                  TextFormField(
-                    controller: _lastNameController,
-                    decoration: InputDecoration(
-                      labelText: 'اسم العائلة',
-                      prefixIcon: const Icon(Icons.badge_outlined),
-                      hintText: 'مثال: عبد الهادي',
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.outline.withValues(alpha: 0.2),
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.primary,
-                          width: 2,
-                        ),
-                      ),
+                      ],
                     ),
-                    textInputAction: TextInputAction.next,
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'الرجاء إدخال اسم العائلة';
-                      }
-                      return null;
-                    },
-                    onChanged: (value) => _markAsChanged(),
-                  ),
-                  const SizedBox(height: 24),
+                    const SizedBox(height: 16),
 
-                  // عنوان قسم معلومات الاتصال
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.contact_page_outlined,
-                        color: Theme.of(context).colorScheme.primary,
-                        size: 24,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'معلومات الاتصال',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // البريد الإلكتروني (للقراءة فقط) - محسّن
-                  TextFormField(
-                    initialValue: authUser?.email ?? 'لا يوجد بريد إلكتروني',
-                    decoration: InputDecoration(
-                      labelText: 'البريد الإلكتروني',
-                      prefixIcon: const Icon(Icons.email_outlined),
-                      enabled: false,
-                      helperText: 'البريد الإلكتروني المسجل في الحساب',
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.1),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                    style: TextStyle(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.onSurface.withValues(alpha: 0.5),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // الهاتف - محسّن
-                  TextFormField(
-                    controller: _phoneController,
-                    decoration: InputDecoration(
-                      labelText: 'رقم الهاتف',
-                      prefixIcon: const Icon(Icons.phone_outlined),
-                      hintText: '*********01',
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.outline.withValues(alpha: 0.2),
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.primary,
-                          width: 2,
-                        ),
-                      ),
-                      counterText: '', // إخفاء العداد
-                    ),
-                    keyboardType: TextInputType.phone,
-                    textInputAction: TextInputAction.next,
-                    maxLength: 11,
-                    validator: Validators.validatePhone,
-                    onChanged: (value) => _markAsChanged(),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // عنوان قسم معلومات إضافية
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.info_outline_rounded,
-                        color: Theme.of(context).colorScheme.primary,
-                        size: 24,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'معلومات إضافية',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // تاريخ الميلاد - محسّن
-                  InkWell(
-                    onTap: _selectBirthDate,
-                    borderRadius: BorderRadius.circular(12),
-                    child: InputDecorator(
+                    // اسم العائلة - محسّن
+                    TextFormField(
+                      controller: _lastNameController,
                       decoration: InputDecoration(
-                        labelText: 'تاريخ الميلاد',
-                        prefixIcon: const Icon(Icons.cake_outlined),
-                        suffixIcon: Icon(
-                          Icons.calendar_month_outlined,
+                        labelText: 'اسم العائلة',
+                        prefixIcon: const Icon(Icons.badge_outlined),
+                        hintText: 'مثال: عبد الهادي',
+                        hintStyle: TextStyle(color: Colors.grey.shade400),
+                        filled: true,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.3),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outline.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      textInputAction: TextInputAction.next,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'الرجاء إدخال اسم العائلة';
+                        }
+                        return null;
+                      },
+                      onChanged: (value) => _markAsChanged(),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // عنوان قسم معلومات الاتصال
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.contact_page_outlined,
                           color: Theme.of(context).colorScheme.primary,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'معلومات الاتصال',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // البريد الإلكتروني (للقراءة فقط) - محسّن
+                    TextFormField(
+                      initialValue: authUser?.email ?? 'لا يوجد بريد إلكتروني',
+                      decoration: InputDecoration(
+                        labelText: 'البريد الإلكتروني',
+                        prefixIcon: const Icon(Icons.email_outlined),
+                        enabled: false,
+                        helperText: 'البريد الإلكتروني المسجل في الحساب',
+                        filled: true,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.1),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                      style: TextStyle(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 0.5),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // الهاتف - محسّن
+                    TextFormField(
+                      controller: _phoneController,
+                      decoration: InputDecoration(
+                        labelText: 'رقم الهاتف',
+                        prefixIcon: const Icon(Icons.phone_outlined),
+                        hintText: '*********01',
+                        hintStyle: TextStyle(color: Colors.grey.shade400),
+                        filled: true,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.3),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outline.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 2,
+                          ),
+                        ),
+                        counterText: '', // إخفاء العداد
+                      ),
+                      keyboardType: TextInputType.phone,
+                      textInputAction: TextInputAction.next,
+                      maxLength: 11,
+                      validator: Validators.validatePhone,
+                      onChanged: (value) => _markAsChanged(),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // عنوان قسم معلومات إضافية
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline_rounded,
+                          color: Theme.of(context).colorScheme.primary,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'معلومات إضافية',
+                          style: Theme.of(context).textTheme.titleLarge
+                              ?.copyWith(
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // تاريخ الميلاد - محسّن
+                    InkWell(
+                      onTap: _selectBirthDate,
+                      borderRadius: BorderRadius.circular(12),
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          labelText: 'تاريخ الميلاد',
+                          prefixIcon: const Icon(Icons.cake_outlined),
+                          suffixIcon: Icon(
+                            Icons.calendar_month_outlined,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          filled: true,
+                          fillColor: Theme.of(context)
+                              .colorScheme
+                              .surfaceContainerHighest
+                              .withValues(alpha: 0.3),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outline.withValues(alpha: 0.2),
+                            ),
+                          ),
+                        ),
+                        child: Text(
+                          _selectedBirthDate != null
+                              ? '${_selectedBirthDate!.year}-${_selectedBirthDate!.month.toString().padLeft(2, '0')}-${_selectedBirthDate!.day.toString().padLeft(2, '0')}'
+                              : 'اختر تاريخ الميلاد',
+                          style: TextStyle(
+                            color: _selectedBirthDate != null
+                                ? Theme.of(context).colorScheme.onSurface
+                                : Theme.of(context).colorScheme.onSurface
+                                      .withValues(alpha: 0.5),
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // الجنس - محسّن
+                    DropdownButtonFormField<String>(
+                      initialValue: _selectedGender,
+                      decoration: InputDecoration(
+                        labelText: 'الجنس',
+                        prefixIcon: const Icon(Icons.wc_outlined),
+                        filled: true,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.3),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outline.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'male',
+                          child: Row(
+                            children: [
+                              Icon(Icons.male, color: Colors.blue),
+                              SizedBox(width: 8),
+                              Text('ذكر'),
+                            ],
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: 'female',
+                          child: Row(
+                            children: [
+                              Icon(Icons.female, color: Colors.pink),
+                              SizedBox(width: 8),
+                              Text('أنثى'),
+                            ],
+                          ),
+                        ),
+                      ],
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'الرجاء اختيار الجنس';
+                        }
+                        return null;
+                      },
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedGender = value;
+                          _markAsChanged();
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 32),
+
+                    // فاصل مع عنوان قسم الأمان
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Divider(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outline.withValues(alpha: 0.3),
+                              thickness: 1,
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.lock_outline_rounded,
+                                  color: Theme.of(context).colorScheme.primary,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'الأمان',
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.primary,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: Divider(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.outline.withValues(alpha: 0.3),
+                              thickness: 1,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // رسالة توضيحية لتغيير كلمة المرور
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.info_outline,
+                            color: Theme.of(context).colorScheme.primary,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'اترك الحقول فارغة إذا كنت لا تريد تغيير كلمة المرور',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // كلمة المرور الحالية - محسّنة
+                    TextFormField(
+                      controller: _currentPasswordController,
+                      decoration: InputDecoration(
+                        labelText: 'كلمة المرور الحالية',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscureCurrentPassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _obscureCurrentPassword =
+                                  !_obscureCurrentPassword;
+                            });
+                          },
                         ),
                         filled: true,
                         fillColor: Theme.of(context)
@@ -1160,495 +1452,249 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             ).colorScheme.outline.withValues(alpha: 0.2),
                           ),
                         ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 2,
+                          ),
+                        ),
                       ),
-                      child: Text(
-                        _selectedBirthDate != null
-                            ? '${_selectedBirthDate!.year}-${_selectedBirthDate!.month.toString().padLeft(2, '0')}-${_selectedBirthDate!.day.toString().padLeft(2, '0')}'
-                            : 'اختر تاريخ الميلاد',
-                        style: TextStyle(
-                          color: _selectedBirthDate != null
-                              ? Theme.of(context).colorScheme.onSurface
-                              : Theme.of(
+                      obscureText: _obscureCurrentPassword,
+                      textInputAction: TextInputAction.next,
+                      onChanged: (value) => _markAsChanged(),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // كلمة المرور الجديدة - محسّنة
+                    TextFormField(
+                      controller: _newPasswordController,
+                      decoration: InputDecoration(
+                        labelText: 'كلمة المرور الجديدة',
+                        prefixIcon: const Icon(Icons.lock_reset_outlined),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscureNewPassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _obscureNewPassword = !_obscureNewPassword;
+                            });
+                          },
+                        ),
+                        filled: true,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.3),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outline.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      obscureText: _obscureNewPassword,
+                      textInputAction: TextInputAction.next,
+                      onChanged: (value) => _markAsChanged(),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // تأكيد كلمة المرور - محسّن
+                    TextFormField(
+                      controller: _confirmPasswordController,
+                      decoration: InputDecoration(
+                        labelText: 'تأكيد كلمة المرور الجديدة',
+                        prefixIcon: const Icon(Icons.check_circle_outline),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscureConfirmPassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _obscureConfirmPassword =
+                                  !_obscureConfirmPassword;
+                            });
+                          },
+                        ),
+                        filled: true,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.3),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide.none,
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outline.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                      obscureText: _obscureConfirmPassword,
+                      textInputAction: TextInputAction.done,
+                      onChanged: (value) => _markAsChanged(),
+                    ),
+
+                    const SizedBox(height: 40),
+
+                    // زر الحفظ - محسّن
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: ElevatedButton(
+                        onPressed: _isSaving ? null : _saveChanges,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Theme.of(
+                            context,
+                          ).colorScheme.primary,
+                          foregroundColor: Theme.of(
+                            context,
+                          ).colorScheme.onPrimary,
+                          elevation: 2,
+                          shadowColor: Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.3),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: _isSaving
+                            ? SizedBox(
+                                height: 24,
+                                width: 24,
+                                child: AppShimmer.wrap(
                                   context,
-                                ).colorScheme.onSurface.withValues(alpha: 0.5),
-                          fontSize: 16,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // الجنس - محسّن
-                  DropdownButtonFormField<String>(
-                    initialValue: _selectedGender,
-                    decoration: InputDecoration(
-                      labelText: 'الجنس',
-                      prefixIcon: const Icon(Icons.wc_outlined),
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.outline.withValues(alpha: 0.2),
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.primary,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'male',
-                        child: Row(
-                          children: [
-                            Icon(Icons.male, color: Colors.blue),
-                            SizedBox(width: 8),
-                            Text('ذكر'),
-                          ],
-                        ),
-                      ),
-                      DropdownMenuItem(
-                        value: 'female',
-                        child: Row(
-                          children: [
-                            Icon(Icons.female, color: Colors.pink),
-                            SizedBox(width: 8),
-                            Text('أنثى'),
-                          ],
-                        ),
-                      ),
-                    ],
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'الرجاء اختيار الجنس';
-                      }
-                      return null;
-                    },
-                    onChanged: (value) {
-                      setState(() {
-                        _selectedGender = value;
-                        _markAsChanged();
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 32),
-
-                  // فاصل مع عنوان قسم الأمان
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Divider(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.outline.withValues(alpha: 0.3),
-                            thickness: 1,
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.lock_outline_rounded,
-                                color: Theme.of(context).colorScheme.primary,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'الأمان',
-                                style: Theme.of(context).textTheme.titleMedium
-                                    ?.copyWith(
-                                      fontWeight: FontWeight.bold,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.primary,
-                                    ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: Divider(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.outline.withValues(alpha: 0.3),
-                            thickness: 1,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // رسالة توضيحية لتغيير كلمة المرور
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.primaryContainer.withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.info_outline,
-                          color: Theme.of(context).colorScheme.primary,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'اترك الحقول فارغة إذا كنت لا تريد تغيير كلمة المرور',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withValues(alpha: 0.7),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // كلمة المرور الحالية - محسّنة
-                  TextFormField(
-                    controller: _currentPasswordController,
-                    decoration: InputDecoration(
-                      labelText: 'كلمة المرور الحالية',
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscureCurrentPassword
-                              ? Icons.visibility_off_outlined
-                              : Icons.visibility_outlined,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _obscureCurrentPassword = !_obscureCurrentPassword;
-                          });
-                        },
-                      ),
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.outline.withValues(alpha: 0.2),
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.primary,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    obscureText: _obscureCurrentPassword,
-                    textInputAction: TextInputAction.next,
-                    onChanged: (value) => _markAsChanged(),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // كلمة المرور الجديدة - محسّنة
-                  TextFormField(
-                    controller: _newPasswordController,
-                    decoration: InputDecoration(
-                      labelText: 'كلمة المرور الجديدة',
-                      prefixIcon: const Icon(Icons.lock_reset_outlined),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscureNewPassword
-                              ? Icons.visibility_off_outlined
-                              : Icons.visibility_outlined,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _obscureNewPassword = !_obscureNewPassword;
-                          });
-                        },
-                      ),
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.outline.withValues(alpha: 0.2),
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.primary,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    obscureText: _obscureNewPassword,
-                    textInputAction: TextInputAction.next,
-                    onChanged: (value) => _markAsChanged(),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // تأكيد كلمة المرور - محسّن
-                  TextFormField(
-                    controller: _confirmPasswordController,
-                    decoration: InputDecoration(
-                      labelText: 'تأكيد كلمة المرور الجديدة',
-                      prefixIcon: const Icon(Icons.check_circle_outline),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscureConfirmPassword
-                              ? Icons.visibility_off_outlined
-                              : Icons.visibility_outlined,
-                          color: Theme.of(context).colorScheme.primary,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _obscureConfirmPassword = !_obscureConfirmPassword;
-                          });
-                        },
-                      ),
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.outline.withValues(alpha: 0.2),
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Theme.of(context).colorScheme.primary,
-                          width: 2,
-                        ),
-                      ),
-                    ),
-                    obscureText: _obscureConfirmPassword,
-                    textInputAction: TextInputAction.done,
-                    onChanged: (value) => _markAsChanged(),
-                  ),
-
-                  const SizedBox(height: 40),
-
-                  // زر الحفظ - محسّن
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      onPressed: _isSaving ? null : _saveChanges,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor: Theme.of(
-                          context,
-                        ).colorScheme.onPrimary,
-                        elevation: 2,
-                        shadowColor: Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.3),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: _isSaving
-                          ? SizedBox(
-                              height: 24,
-                              width: 24,
-                              child: CircularProgressIndicator(
-                                color: Theme.of(context).colorScheme.onPrimary,
-                                strokeWidth: 2.5,
-                              ),
-                            )
-                          : Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.save_rounded,
-                                  size: 24,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onPrimary,
+                                  child: AppShimmer.circle(context, size: 24),
                                 ),
-                                const SizedBox(width: 12),
-                                Text(
-                                  'حفظ التغييرات',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
+                              )
+                            : Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.save_rounded,
+                                    size: 24,
                                     color: Theme.of(
                                       context,
                                     ).colorScheme.onPrimary,
                                   ),
-                                ),
-                              ],
-                            ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 40),
-
-                  // فاصل تحذيري قبل المنطقة الخطرة
-                  Container(
-                    padding: const EdgeInsets.symmetric(vertical: 20),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Divider(
-                            color: Colors.red.withValues(alpha: 0.3),
-                            thickness: 1.5,
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.warning_amber_rounded,
-                                color: Colors.red[700],
-                                size: 20,
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    'حفظ التغييرات',
+                                    style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onPrimary,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(width: 8),
-                              Text(
-                                'منطقة خطرة',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.red[700],
-                                  fontSize: 14,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: Divider(
-                            color: Colors.red.withValues(alpha: 0.3),
-                            thickness: 1.5,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
 
-                  // بطاقة تحذيرية
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.red[50],
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.red[200]!, width: 1.5),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.info_outline,
-                          color: Colors.red[700],
-                          size: 24,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            'حذف الحساب إجراء نهائي ولا يمكن التراجع عنه',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.red[900],
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                    const SizedBox(height: 32),
 
-                  const SizedBox(height: 16),
-
-                  // زر حذف الحساب - محسّن ومُحذّر
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: OutlinedButton(
-                      onPressed: _deleteAccount,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red[700],
-                        side: BorderSide(color: Colors.red[700]!, width: 2),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
+                    // بطاقة تحذيرية
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.red[50],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.red[200]!, width: 1.5),
                       ),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            Icons.delete_forever_rounded,
-                            size: 24,
+                            Icons.info_outline,
                             color: Colors.red[700],
+                            size: 24,
                           ),
                           const SizedBox(width: 12),
-                          Text(
-                            'حذف الحساب نهائيًا',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.red[700],
+                          Expanded(
+                            child: Text(
+                              'حذف الحساب إجراء نهائي ولا يمكن التراجع عنه',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.red[900],
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                ],
+
+                    const SizedBox(height: 16),
+
+                    // زر حذف الحساب - محسّن ومُحذّر
+                    SizedBox(
+                      width: double.infinity,
+                      height: 56,
+                      child: OutlinedButton(
+                        onPressed: _deleteAccount,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red[700],
+                          side: BorderSide(color: Colors.red[700]!, width: 2),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.delete_forever_rounded,
+                              size: 24,
+                              color: Colors.red[700],
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              'حذف الحساب نهائيًا',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red[700],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                ),
               ),
             ),
           ),

@@ -1,3 +1,4 @@
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
@@ -10,7 +11,10 @@ import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/services/product_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:async';
-import 'package:shimmer/shimmer.dart';
+import 'package:ell_tall_market/screens/merchant/template_manager_screen.dart';
+import 'package:ell_tall_market/screens/merchant/add_edit_product_screen.dart';
+import 'package:ell_tall_market/screens/merchant/import_products_screen.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class MerchantProductsScreen extends StatefulWidget {
   const MerchantProductsScreen({super.key});
@@ -192,6 +196,80 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
     }
   }
 
+  Future<void> _duplicateProduct(ProductModel product) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.content_copy, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('نسخ المنتج'),
+          ],
+        ),
+        content: Text('هل تريد إنشاء نسخة من "${product.name}"؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('نسخ'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isLoadingStore = true);
+
+    try {
+      final duplicated = await ProductService.duplicateProduct(product);
+
+      if (duplicated != null && mounted) {
+        // Refresh the list
+        await _loadMerchantProducts(silent: true);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('تم نسخ المنتج: ${duplicated.name}'),
+              backgroundColor: Colors.green,
+              action: SnackBarAction(
+                label: 'تعديل',
+                textColor: Colors.white,
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          AddEditProductScreen(product: duplicated),
+                    ),
+                  ).then((_) => _loadMerchantProducts());
+                },
+              ),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('فشل نسخ المنتج: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingStore = false);
+      }
+    }
+  }
+
   // دوال مساعدة للإحصائيات
   int _getAvailableCount(List<ProductModel> products) {
     return products.where((p) => p.isAvailable).length;
@@ -369,7 +447,7 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
     if (_tabController == null) {
       return Scaffold(
         appBar: AppBar(title: Text('منتجاتي')),
-        body: Center(child: CircularProgressIndicator()),
+        body: AppShimmer.centeredLines(context),
       );
     }
 
@@ -378,10 +456,7 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              merchantProvider.selectedMerchant?.storeName ?? 'منتجاتي',
-              style: TextStyle(fontSize: 18),
-            ),
+            Text('منتجاتي', style: TextStyle(fontSize: 18)),
             if (_isInitialized)
               Text(
                 '${_getFilteredProducts(productProvider.products).length} منتج',
@@ -406,12 +481,6 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
             ),
             onPressed: _showStatsDialog,
             tooltip: 'الإحصائيات',
-          ),
-          // زر التحديث
-          IconButton(
-            icon: Icon(Icons.refresh),
-            onPressed: _loadMerchantProducts,
-            tooltip: 'تحديث',
           ),
         ],
         bottom: PreferredSize(
@@ -499,77 +568,145 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
           ),
         ),
       ),
-      body: RefreshIndicator(
-        onRefresh: _loadMerchantProducts,
-        child: _isLoadingStore
-            ? _buildShimmerList()
-            : _errorMessage != null
-            ? _buildErrorState()
-            : TabBarView(
-                controller: _tabController!,
-                children: [
-                  _buildProductsList(productProvider, 'all'),
-                  _buildProductsList(productProvider, 'available'),
-                  _buildProductsList(productProvider, 'outOfStock'),
-                ],
-              ),
+      body: ResponsiveCenter(
+        maxWidth: 900,
+        child: RefreshIndicator(
+          notificationPredicate: (notification) {
+            // TabBarView nests the vertical ListView(s), so the default
+            // depth==0 predicate can prevent refresh from triggering.
+            return notification.metrics.axis == Axis.vertical;
+          },
+          onRefresh: _loadMerchantProducts,
+          child: _isLoadingStore
+              ? _buildShimmerList()
+              : _errorMessage != null
+              ? _buildErrorState()
+              : TabBarView(
+                  controller: _tabController!,
+                  children: [
+                    _buildProductsList(productProvider, 'all'),
+                    _buildProductsList(productProvider, 'available'),
+                    _buildProductsList(productProvider, 'outOfStock'),
+                  ],
+                ),
+        ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          Navigator.pushNamed(
-            context,
-            AppRoutes.addEditProduct,
-          ).then((_) => _loadMerchantProducts());
-        },
-        icon: Icon(Icons.add),
-        label: Text('إضافة منتج'),
-      ),
-    );
-  }
-
-  Widget _buildErrorState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Icon(Icons.error_outline, size: 80, color: Colors.red),
-          SizedBox(height: 20),
-          Text(
-            'حدث خطأ',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 10),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: 32),
-            child: Text(
-              _errorMessage!,
-              style: TextStyle(color: Colors.grey),
-              textAlign: TextAlign.center,
+          // Manage Templates Button (Small FAB)
+          if (_isInitialized)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: FloatingActionButton.small(
+                heroTag: 'import_excel',
+                onPressed: () {
+                  if (_storeId != null) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            ImportProductsScreen(storeId: _storeId!),
+                      ),
+                    ).then((result) {
+                      if (result == true) _loadMerchantProducts();
+                    });
+                  }
+                },
+                backgroundColor: Colors.green.shade600,
+                foregroundColor: Colors.white,
+                tooltip: 'استيراد من Excel',
+                child: const Icon(Icons.table_view),
+              ),
             ),
-          ),
-          SizedBox(height: 20),
-          CustomButton(
-            text: 'إعادة المحاولة',
-            onPressed: _loadMerchantProducts,
+          // Manage Templates Button (Small FAB)
+          if (_isInitialized)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: FloatingActionButton.small(
+                heroTag: 'manage_templates',
+                onPressed: () {
+                  if (_storeId != null) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) =>
+                            TemplateManagerScreen(storeId: _storeId!),
+                      ),
+                    ).then((_) => _loadMerchantProducts());
+                  }
+                },
+                tooltip: 'إدارة القوالب',
+                child: const Icon(Icons.style),
+              ),
+            ),
+          // Main Add Product Button
+          FloatingActionButton.extended(
+            heroTag: 'add_product',
+            onPressed: () {
+              Navigator.pushNamed(
+                context,
+                AppRoutes.addEditProduct,
+              ).then((_) => _loadMerchantProducts());
+            },
+            icon: const Icon(Icons.add),
+            label: const Text('إضافة منتج'),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildShimmerList() {
-    return ListView.separated(
+  Widget _buildErrorState() {
+    return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(16),
-      itemCount: 6,
-      separatorBuilder: (_, index) => const SizedBox(height: 12),
-      itemBuilder: (_, index) => Shimmer.fromColors(
-        baseColor: Colors.grey.shade300,
-        highlightColor: Colors.grey.shade100,
-        child: Container(
+      child: SizedBox(
+        height: MediaQuery.of(context).size.height - 200,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 80, color: Colors.red),
+              SizedBox(height: 20),
+              Text(
+                'حدث خطأ',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 10),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  _errorMessage!,
+                  style: TextStyle(color: Colors.grey),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              SizedBox(height: 20),
+              CustomButton(
+                text: 'إعادة المحاولة',
+                onPressed: _loadMerchantProducts,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildShimmerList() {
+    final cs = Theme.of(context).colorScheme;
+    return AppShimmer.wrap(
+      context,
+      child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        itemCount: 6,
+        separatorBuilder: (_, index) => const SizedBox(height: 12),
+        itemBuilder: (_, index) => Container(
           height: 110,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: cs.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(12),
           ),
         ),
@@ -814,6 +951,20 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
                                         arguments: product,
                                       )
                                       .then((_) => _loadMerchantProducts());
+                                });
+                              },
+                            ),
+                            PopupMenuItem(
+                              child: const Row(
+                                children: [
+                                  Icon(Icons.content_copy, size: 18),
+                                  SizedBox(width: 8),
+                                  Text('نسخ المنتج'),
+                                ],
+                              ),
+                              onTap: () {
+                                Future.delayed(Duration.zero, () {
+                                  _duplicateProduct(product);
                                 });
                               },
                             ),

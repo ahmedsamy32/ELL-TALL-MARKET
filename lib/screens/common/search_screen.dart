@@ -9,6 +9,17 @@ import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/models/store_model.dart';
 import 'package:ell_tall_market/models/category_model.dart';
+import 'package:ell_tall_market/providers/store_provider.dart';
+import 'package:ell_tall_market/providers/category_provider.dart';
+import 'package:ell_tall_market/providers/location_provider.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:ell_tall_market/utils/location_ui_text.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/providers/favorites_provider.dart';
+import 'package:ell_tall_market/providers/cart_provider.dart';
+import 'package:ell_tall_market/utils/cart_helper.dart';
+import 'package:ell_tall_market/services/coupon_service.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -29,12 +40,25 @@ class _SearchScreenState extends State<SearchScreen> {
   String? _searchError;
   List<String> _suggestions = [];
   bool _showSuggestions = false;
+  Set<String> _storeIdsWithCoupons = {};
 
   @override
   void initState() {
     super.initState();
     _loadSearchHistory();
+    _loadStoresWithCoupons();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // تفعيل نطاق الفئات المتاحة مرة واحدة لتصفية الفئات الفارغة
+      final storeProvider = Provider.of<StoreProvider>(context, listen: false);
+      final categoryProvider = Provider.of<CategoryProvider>(
+        context,
+        listen: false,
+      );
+      final allowedStoreIds = storeProvider.nearbyStores
+          .map((s) => s.id)
+          .toList(growable: false);
+      categoryProvider.applyAvailabilityScope(allowedStoreIds: allowedStoreIds);
+
       // استقبال النص المُرسل من الصفحة الرئيسية
       final args = ModalRoute.of(context)?.settings.arguments;
       if (args is String && args.isNotEmpty) {
@@ -56,6 +80,17 @@ class _SearchScreenState extends State<SearchScreen> {
     setState(() {
       _searchHistory = history;
     });
+  }
+
+  Future<void> _loadStoresWithCoupons() async {
+    try {
+      final ids = await CouponService.fetchStoreIdsWithActiveCoupons();
+      if (mounted) {
+        setState(() => _storeIdsWithCoupons = ids);
+      }
+    } catch (_) {
+      // تجاهل — الشارة لن تظهر فقط
+    }
   }
 
   Future<void> _saveSearch(String query) async {
@@ -99,7 +134,28 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     try {
-      final result = await _universalSearchService.search(query);
+      final storeProvider = Provider.of<StoreProvider>(context, listen: false);
+      final categoryProvider = Provider.of<CategoryProvider>(
+        context,
+        listen: false,
+      );
+      final allowedStoreIds = storeProvider.nearbyStores
+          .map((s) => s.id)
+          .toList(growable: false);
+
+      final result = await _universalSearchService.search(
+        query,
+        allowedStoreIds: allowedStoreIds,
+      );
+
+      final availableCategoryIds = categoryProvider.availableCategoryIds;
+      final categories =
+          (categoryProvider.availabilityScopeActive &&
+              availableCategoryIds.isNotEmpty)
+          ? result.categories
+                .where((c) => availableCategoryIds.contains(c.id))
+                .toList(growable: false)
+          : result.categories;
       final suggestions = <String>[];
 
       // إضافة أسماء المنتجات
@@ -113,7 +169,7 @@ class _SearchScreenState extends State<SearchScreen> {
       }
 
       // إضافة أسماء الفئات
-      for (var category in result.categories.take(3)) {
+      for (var category in categories.take(3)) {
         suggestions.add('📂 ${category.name}');
       }
 
@@ -148,14 +204,40 @@ class _SearchScreenState extends State<SearchScreen> {
 
     try {
       _saveSearch(query);
-      final result = await _universalSearchService.search(query);
+      final storeProvider = Provider.of<StoreProvider>(context, listen: false);
+      final categoryProvider = Provider.of<CategoryProvider>(
+        context,
+        listen: false,
+      );
+      final allowedStoreIds = storeProvider.nearbyStores
+          .map((s) => s.id)
+          .toList(growable: false);
+
+      final result = await _universalSearchService.search(
+        query,
+        allowedStoreIds: allowedStoreIds,
+      );
+
+      final availableCategoryIds = categoryProvider.availableCategoryIds;
+      final filteredCategories =
+          (categoryProvider.availabilityScopeActive &&
+              availableCategoryIds.isNotEmpty)
+          ? result.categories
+                .where((c) => availableCategoryIds.contains(c.id))
+                .toList(growable: false)
+          : result.categories;
+
       AppLogger.info('انتهى البحث - النتائج:');
       AppLogger.info('   📦 منتجات: ${result.products.length}');
       AppLogger.info('   🏪 متاجر: ${result.stores.length}');
-      AppLogger.info('   📂 فئات: ${result.categories.length}');
+      AppLogger.info('   📂 فئات: ${filteredCategories.length}');
 
       setState(() {
-        _searchResult = result;
+        _searchResult = SearchResult(
+          products: result.products,
+          stores: result.stores,
+          categories: filteredCategories,
+        );
         _isSearching = false;
       });
     } catch (e) {
@@ -308,11 +390,7 @@ class _SearchScreenState extends State<SearchScreen> {
     }
 
     if (_isSearching) {
-      return Center(
-        child: CircularProgressIndicator(
-          color: Theme.of(context).colorScheme.primary,
-        ),
-      );
+      return _buildSearchShimmer();
     }
 
     if (_searchError != null) {
@@ -335,8 +413,8 @@ class _SearchScreenState extends State<SearchScreen> {
             GridView.builder(
               shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: context.responsiveCrossAxisCount,
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 12,
                 childAspectRatio: 0.7,
@@ -344,13 +422,64 @@ class _SearchScreenState extends State<SearchScreen> {
               itemCount: _searchResult!.products.length,
               itemBuilder: (context, index) {
                 final product = _searchResult!.products[index];
-                return ProductCard(
-                  product: product,
-                  onTap: () {
-                    Navigator.pushNamed(
-                      context,
-                      AppRoutes.productDetail,
-                      arguments: product,
+                return Consumer2<FavoritesProvider, CartProvider>(
+                  builder: (context, favProvider, cartProvider, _) {
+                    final isFavorite = favProvider.isFavoriteProduct(
+                      product.id,
+                    );
+                    return ProductCard(
+                      product: product,
+                      isFavorite: isFavorite,
+                      onBuyPressed: () {
+                        CartHelper.addToCart(context, product);
+                      },
+                      onFavoritePressed: () async {
+                        final authProvider = Provider.of<SupabaseProvider>(
+                          context,
+                          listen: false,
+                        );
+                        if (authProvider.isLoggedIn) {
+                          final wasFavorite = favProvider.isFavoriteProduct(
+                            product.id,
+                          );
+                          await favProvider.toggleFavoriteProduct(product);
+                          if (mounted && context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  wasFavorite
+                                      ? 'تمت الإزالة من المفضلة'
+                                      : 'تمت الإضافة للمفضلة',
+                                ),
+                                backgroundColor: wasFavorite
+                                    ? Colors.red
+                                    : Colors.green,
+                                duration: const Duration(seconds: 1),
+                              ),
+                            );
+                          }
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: const Text('يرجى تسجيل الدخول أولاً'),
+                              action: SnackBarAction(
+                                label: 'تسجيل الدخول',
+                                onPressed: () => Navigator.pushNamed(
+                                  context,
+                                  AppRoutes.login,
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+                      },
+                      onTap: () {
+                        Navigator.pushNamed(
+                          context,
+                          AppRoutes.productDetail,
+                          arguments: product,
+                        );
+                      },
                     );
                   },
                 );
@@ -392,6 +521,125 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
+  Widget _buildSearchShimmer() {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    Widget shimmerBox({
+      required double width,
+      required double height,
+      BorderRadiusGeometry? radius,
+    }) {
+      return Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest,
+          borderRadius: radius ?? BorderRadius.circular(12),
+        ),
+      );
+    }
+
+    return AppShimmer.wrap(
+      context,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            shimmerBox(
+              width: 160,
+              height: 16,
+              radius: BorderRadius.circular(8),
+            ),
+            const SizedBox(height: 12),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: context.responsiveCrossAxisCount,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                childAspectRatio: 0.7,
+              ),
+              itemCount: 4,
+              itemBuilder: (context, index) {
+                return shimmerBox(
+                  width: double.infinity,
+                  height: double.infinity,
+                  radius: BorderRadius.circular(16),
+                );
+              },
+            ),
+            const SizedBox(height: 24),
+            shimmerBox(
+              width: 140,
+              height: 16,
+              radius: BorderRadius.circular(8),
+            ),
+            const SizedBox(height: 12),
+            for (int i = 0; i < 3; i++) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    shimmerBox(
+                      width: 40,
+                      height: 40,
+                      radius: BorderRadius.circular(20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          shimmerBox(
+                            width: double.infinity,
+                            height: 12,
+                            radius: BorderRadius.circular(8),
+                          ),
+                          const SizedBox(height: 8),
+                          shimmerBox(
+                            width: 180,
+                            height: 10,
+                            radius: BorderRadius.circular(8),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            shimmerBox(
+              width: 120,
+              height: 16,
+              radius: BorderRadius.circular(8),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: List.generate(
+                6,
+                (_) => shimmerBox(
+                  width: 90,
+                  height: 32,
+                  radius: BorderRadius.circular(16),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSectionHeader(String title) {
     return Text(
       title,
@@ -404,16 +652,45 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildStoreCard(StoreModel store) {
+    final hasCoupon = _storeIdsWithCoupons.contains(store.id);
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
-        leading: CircleAvatar(
-          backgroundImage: store.logoUrl != null
-              ? NetworkImage(store.logoUrl!)
-              : null,
-          child: store.logoUrl == null
-              ? const Icon(Icons.store, size: 24)
-              : null,
+        leading: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            CircleAvatar(
+              backgroundImage: store.logoUrl != null
+                  ? NetworkImage(store.logoUrl!)
+                  : null,
+              child: store.logoUrl == null
+                  ? const Icon(Icons.store, size: 24)
+                  : null,
+            ),
+            if (hasCoupon)
+              Positioned(
+                top: -4,
+                right: -4,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.error,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    'كوبون',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onError,
+                      fontSize: 8,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
         title: Text(
           store.name,
@@ -548,6 +825,109 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   Widget _buildNoResults() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final locationProvider = Provider.of<LocationProvider>(context);
+
+    if (!locationProvider.hasLocation) {
+      final isDeniedForever = LocationUiText.isDeniedForever(locationProvider);
+      final isServiceOff = LocationUiText.isServiceOff(locationProvider);
+      final message = LocationUiText.message(locationProvider);
+
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.location_off_rounded,
+                size: 72,
+                color: colorScheme.outline,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                LocationUiText.title,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey[800],
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                message,
+                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 12,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: [
+                  FilledButton.icon(
+                    onPressed: () async {
+                      if (isDeniedForever) {
+                        await Geolocator.openAppSettings();
+                        return;
+                      }
+
+                      final got = await locationProvider.getCurrentLocation();
+                      if (!mounted) return;
+
+                      if (got && locationProvider.hasLocation) {
+                        final storeProvider = Provider.of<StoreProvider>(
+                          context,
+                          listen: false,
+                        );
+                        final categoryProvider = Provider.of<CategoryProvider>(
+                          context,
+                          listen: false,
+                        );
+
+                        await storeProvider.fetchNearbyStores(
+                          latitude: locationProvider.latitude!,
+                          longitude: locationProvider.longitude!,
+                          maxDistanceKm: 15,
+                        );
+
+                        final allowedStoreIds = storeProvider.nearbyStores
+                            .map((s) => s.id)
+                            .toList(growable: false);
+
+                        await categoryProvider.applyAvailabilityScope(
+                          allowedStoreIds: allowedStoreIds,
+                        );
+
+                        if (_searchController.text.isNotEmpty) {
+                          _performSearch(_searchController.text);
+                        }
+                      }
+                    },
+                    icon: Icon(
+                      isDeniedForever
+                          ? Icons.settings_rounded
+                          : Icons.my_location_rounded,
+                    ),
+                    label: Text(
+                      LocationUiText.primaryButtonLabel(locationProvider),
+                    ),
+                  ),
+                  if (isServiceOff)
+                    OutlinedButton.icon(
+                      onPressed: () => Geolocator.openLocationSettings(),
+                      icon: const Icon(Icons.location_on_outlined),
+                      label: const Text(LocationUiText.secondaryButtonLabel),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,

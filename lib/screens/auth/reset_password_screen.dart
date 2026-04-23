@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import '../../utils/app_colors.dart';
 import '../../utils/validators.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 /// 🔑 شاشة استعادة كلمة المرور مع دعم Supabase Auth
 /// تم تحديثها لاستخدام الوثائق الرسمية
@@ -209,30 +211,33 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         elevation: 0,
         foregroundColor: AppColors.primary,
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // الأيقونة والعنوان
-              _buildHeader(),
+      body: ResponsiveCenter(
+        maxWidth: 600,
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // الأيقونة والعنوان
+                _buildHeader(),
 
-              const SizedBox(height: 40),
+                const SizedBox(height: 40),
 
-              // النموذج
-              _isResetMode ? _buildPasswordResetForm() : _buildEmailForm(),
+                // النموذج
+                _isResetMode ? _buildPasswordResetForm() : _buildEmailForm(),
 
-              const SizedBox(height: 30),
+                const SizedBox(height: 30),
 
-              // زر الإجراء
-              _buildActionButton(),
+                // زر الإجراء
+                _buildActionButton(),
 
-              const SizedBox(height: 20),
+                const SizedBox(height: 20),
 
-              // رابط العودة لتسجيل الدخول
-              _buildBackToLoginLink(),
-            ],
+                // رابط العودة لتسجيل الدخول
+                _buildBackToLoginLink(),
+              ],
+            ),
           ),
         ),
       ),
@@ -405,12 +410,12 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
           elevation: 2,
         ),
         child: _isLoading
-            ? const SizedBox(
+            ? SizedBox(
                 width: 20,
                 height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                child: AppShimmer.wrap(
+                  context,
+                  child: AppShimmer.circle(context, size: 20),
                 ),
               )
             : Text(

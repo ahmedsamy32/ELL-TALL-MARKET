@@ -1,4 +1,5 @@
-import 'dart:io';
+// Removed dart:io for Web compatibility
+import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 
@@ -43,30 +44,56 @@ class SupabaseConfig {
     try {
       debugPrint('🔄 بدء تهيئة Supabase...');
 
-      await Supabase.initialize(
-        url: url,
-        anonKey: anonKey,
-        debug: kDebugMode,
+      // Add retry logic with timeout for DNS issues
+      int retryCount = 0;
+      const maxRetries = 3;
 
-        // خيارات Auth المتقدمة
-        authOptions: const FlutterAuthClientOptions(
-          authFlowType: AuthFlowType.pkce,
-          autoRefreshToken: true,
-          detectSessionInUri: true,
-        ),
+      while (retryCount < maxRetries) {
+        try {
+          await Supabase.initialize(
+            url: url,
+            anonKey: anonKey,
+            debug: kDebugMode,
 
-        // خيارات Realtime مع مهلة أطول
-        realtimeClientOptions: const RealtimeClientOptions(
-          logLevel: RealtimeLogLevel.info,
-          timeout: Duration(seconds: 30),
-        ),
+            // خيارات Auth المتقدمة
+            authOptions: const FlutterAuthClientOptions(
+              authFlowType: AuthFlowType.pkce,
+              autoRefreshToken: true,
+              detectSessionInUri: true,
+            ),
 
-        // خيارات Storage مع محاولات أكثر
-        storageOptions: const StorageClientOptions(retryAttempts: 5),
+            // خيارات Realtime مع مهلة أطول
+            realtimeClientOptions: const RealtimeClientOptions(
+              logLevel: RealtimeLogLevel.info,
+              timeout: Duration(seconds: 40),
+            ),
 
-        // خيارات PostgreSQL مع headers مخصصة للشبكة
-        postgrestOptions: const PostgrestClientOptions(schema: 'public'),
-      );
+            // خيارات Storage مع محاولات أكثر
+            storageOptions: const StorageClientOptions(retryAttempts: 5),
+
+            // خيارات PostgreSQL مع headers مخصصة للشبكة
+            postgrestOptions: const PostgrestClientOptions(schema: 'public'),
+          ).timeout(
+            const Duration(seconds: 45),
+            onTimeout: () {
+              throw TimeoutException('Supabase initialization timeout');
+            },
+          );
+
+          // Success - break the loop
+          break;
+        } catch (e) {
+          retryCount++;
+
+          if (retryCount < maxRetries) {
+            debugPrint('⚠️ محاولة $retryCount فشلت، إعادة المحاولة...');
+            await Future.delayed(Duration(seconds: retryCount * 2));
+          } else {
+            debugPrint('❌ فشلت جميع المحاولات ($maxRetries)');
+            rethrow;
+          }
+        }
+      }
 
       // تكوين Auth callbacks
       _setupAuthCallbacks();
@@ -151,11 +178,6 @@ class SupabaseConfig {
       final session = client.auth.currentSession;
       debugPrint('🔍 Session check: ${session != null ? 'valid' : 'null'}');
       return true;
-    } on SocketException catch (e) {
-      if (kDebugMode) {
-        debugPrint('🌐 Network connection failed: $e');
-      }
-      return false;
     } catch (e) {
       if (kDebugMode) {
         debugPrint('🔍 Connection check failed: $e');

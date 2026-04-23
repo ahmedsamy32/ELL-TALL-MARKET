@@ -1,4 +1,6 @@
-import 'package:flutter/foundation.dart';
+import 'dart:async';
+
+import 'package:flutter/material.dart';
 import '../core/logger.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/store_model.dart';
@@ -7,6 +9,7 @@ import 'package:ell_tall_market/providers/supabase_provider.dart';
 
 class FavoritesProvider with ChangeNotifier {
   final _supabase = Supabase.instance.client;
+  bool _disposed = false;
 
   final List<ProductModel> _favoriteProducts = [];
   final List<StoreModel> _favoriteStores = [];
@@ -40,22 +43,50 @@ class FavoritesProvider with ChangeNotifier {
     return _favoriteStoreIds.contains(storeId);
   }
 
+  /// Helper method to defer notifyListeners until after build phase
+  void _notifyListeners() {
+    if (_disposed) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_disposed) {
+        notifyListeners();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
   /// Load user favorites from Supabase using official methods
   Future<void> loadUserFavorites(String userId) async {
+    if (_isLoading || _disposed) return;
     _isLoading = true;
     _error = null;
-    notifyListeners();
+    _notifyListeners();
 
     try {
-      // Get user favorites with product and store details
-      final favoritesResponse = await _supabase
-          .from('favorites')
-          .select('''
-            *,
-            products(*),
-            stores(*)
-          ''')
-          .eq('user_id', userId);
+      if (_disposed) return;
+      Future<List<dynamic>> fetch() async {
+        // Get user favorites with product and store details
+        return await _supabase
+            .from('favorites')
+            .select('''
+              *,
+              products(*),
+              stores(*)
+            ''')
+            .eq('user_id', userId)
+            .timeout(const Duration(seconds: 12));
+      }
+
+      final favoritesResponse = await _retryOnNetwork<List<dynamic>>(
+        fetch,
+        attempts: 3,
+      );
+
+      if (_disposed) return;
 
       _favoriteProducts.clear();
       _favoriteStores.clear();
@@ -86,14 +117,73 @@ class FavoritesProvider with ChangeNotifier {
         }
       }
 
+      if (_disposed) return;
       _error = null;
+    } on PostgrestException catch (e) {
+      // Server-side or query errors
+      if (!_disposed) {
+        _error = 'خطأ في تحميل المفضلة: ${e.message}';
+      }
+      AppLogger.error('خطأ في loadUserFavorites (Postgrest)', e);
+    } on TimeoutException catch (e) {
+      if (!_disposed) {
+        _error = 'تعذر الاتصال بالخادم. تحقق من الإنترنت وحاول مرة أخرى.';
+      }
+      AppLogger.error('خطأ في loadUserFavorites (Timeout)', e);
     } catch (e) {
-      _error = 'خطأ في تحميل المفضلة: $e';
-      AppLogger.error('خطأ في loadUserFavorites', e);
+      if (!_disposed) {
+        if (e.toString().contains('SocketException')) {
+          _error = 'تعذر الاتصال بالخادم. تحقق من الإنترنت وحاول مرة أخرى.';
+          AppLogger.error('خطأ في loadUserFavorites (Socket)', e);
+        } else {
+          // Includes ClientException with SocketException
+          final msg = e.toString();
+          if (msg.contains('Connection reset by peer') ||
+              msg.contains('SocketException')) {
+            _error = 'تعذر الاتصال بالخادم. تحقق من الإنترنت وحاول مرة أخرى.';
+          } else {
+            _error = 'خطأ في تحميل المفضلة: $e';
+          }
+          AppLogger.error('خطأ في loadUserFavorites', e);
+        }
+      }
     }
 
-    _isLoading = false;
-    notifyListeners();
+    if (!_disposed) {
+      _isLoading = false;
+      _notifyListeners();
+    }
+  }
+
+  Future<T> _retryOnNetwork<T>(
+    Future<T> Function() operation, {
+    int attempts = 3,
+  }) async {
+    var delay = const Duration(milliseconds: 350);
+    Object? lastError;
+
+    for (var attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        return await operation();
+      } catch (e) {
+        if (e.toString().contains('SocketException') ||
+            e.toString().contains('TimeoutException') ||
+            e.toString().contains('Connection reset by peer') ||
+            e.toString().contains('Failed host lookup') ||
+            e.toString().contains('ClientException')) {
+          lastError = e;
+        } else {
+          rethrow;
+        }
+      }
+
+      if (attempt < attempts) {
+        await Future<void>.delayed(delay);
+        delay *= 2;
+      }
+    }
+
+    throw lastError ?? Exception('Unknown network error');
   }
 
   /// Toggle product favorite status using official Supabase methods
@@ -101,8 +191,10 @@ class FavoritesProvider with ChangeNotifier {
     try {
       final userId = _getCurrentUserId();
       if (userId == null) {
-        _error = 'يرجى تسجيل الدخول أولاً';
-        notifyListeners();
+        if (!_disposed) {
+          _error = 'يرجى تسجيل الدخول أولاً';
+          _notifyListeners();
+        }
         return false;
       }
 
@@ -114,6 +206,7 @@ class FavoritesProvider with ChangeNotifier {
             .eq('user_id', userId)
             .eq('product_id', product.id);
 
+        if (_disposed) return false;
         _favoriteProducts.removeWhere((p) => p.id == product.id);
         _favoriteProductIds.remove(product.id);
       } else {
@@ -123,17 +216,22 @@ class FavoritesProvider with ChangeNotifier {
           'product_id': product.id,
         });
 
+        if (_disposed) return false;
         _favoriteProducts.add(product);
         _favoriteProductIds.add(product.id);
       }
 
-      _error = null;
-      notifyListeners();
+      if (!_disposed) {
+        _error = null;
+        _notifyListeners();
+      }
       return true;
     } catch (e) {
-      _error = 'خطأ في تحديث المفضلة: $e';
+      if (!_disposed) {
+        _error = 'خطأ في تحديث المفضلة: $e';
+        _notifyListeners();
+      }
       AppLogger.error('خطأ في toggleFavoriteProduct', e);
-      notifyListeners();
       return false;
     }
   }
@@ -143,8 +241,10 @@ class FavoritesProvider with ChangeNotifier {
     try {
       final userId = _getCurrentUserId();
       if (userId == null) {
-        _error = 'يرجى تسجيل الدخول أولاً';
-        notifyListeners();
+        if (!_disposed) {
+          _error = 'يرجى تسجيل الدخول أولاً';
+          _notifyListeners();
+        }
         return false;
       }
 
@@ -156,6 +256,7 @@ class FavoritesProvider with ChangeNotifier {
             .eq('user_id', userId)
             .eq('store_id', store.id);
 
+        if (_disposed) return false;
         _favoriteStores.removeWhere((s) => s.id == store.id);
         _favoriteStoreIds.remove(store.id);
       } else {
@@ -165,28 +266,37 @@ class FavoritesProvider with ChangeNotifier {
           'store_id': store.id,
         });
 
+        if (_disposed) return false;
         _favoriteStores.add(store);
         _favoriteStoreIds.add(store.id);
       }
 
-      _error = null;
-      notifyListeners();
+      if (!_disposed) {
+        _error = null;
+        _notifyListeners();
+      }
       return true;
     } catch (e) {
-      _error = 'خطأ في تحديث المفضلة: $e';
+      if (!_disposed) {
+        _error = 'خطأ في تحديث المفضلة: $e';
+        _notifyListeners();
+      }
       AppLogger.error('خطأ في toggleFavoriteStore', e);
-      notifyListeners();
       return false;
     }
   }
 
   /// Remove product from favorites using official Supabase methods
   Future<bool> removeFromFavorites(String productId) async {
+    if (_disposed) return false;
+
     try {
       final userId = _getCurrentUserId();
       if (userId == null) {
-        _error = 'يرجى تسجيل الدخول أولاً';
-        notifyListeners();
+        if (!_disposed) {
+          _error = 'يرجى تسجيل الدخول أولاً';
+          _notifyListeners();
+        }
         return false;
       }
 
@@ -196,28 +306,35 @@ class FavoritesProvider with ChangeNotifier {
           .eq('user_id', userId)
           .eq('product_id', productId);
 
+      if (_disposed) return false;
       _favoriteProducts.removeWhere((p) => p.id == productId);
       _favoriteProductIds.remove(productId);
 
-      _error = null;
-      notifyListeners();
+      if (!_disposed) {
+        _error = null;
+        _notifyListeners();
+      }
       return true;
     } catch (e) {
-      _error = 'خطأ في إزالة المنتج من المفضلة: $e';
+      if (!_disposed) {
+        _error = 'خطأ في إزالة المنتج من المفضلة: $e';
+        _notifyListeners();
+      }
       AppLogger.error('خطأ في removeFromFavorites', e);
-      notifyListeners();
       return false;
     }
   }
 
   /// Clear all favorites
   void clear() {
+    if (_disposed) return;
+
     _favoriteProducts.clear();
     _favoriteStores.clear();
     _favoriteProductIds.clear();
     _favoriteStoreIds.clear();
     _error = null;
-    notifyListeners();
+    _notifyListeners();
   }
 
   /// Get current user ID (you'll need to implement this based on your auth system)

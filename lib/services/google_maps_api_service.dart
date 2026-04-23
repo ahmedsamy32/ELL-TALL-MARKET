@@ -26,6 +26,32 @@ class GoogleMapsApiService {
 
   final http.Client _client;
 
+  // Places Web Service calls may be denied due to API key restrictions.
+  // Cache denial so we don't keep retrying and slowing down UX.
+  bool _placesNearbyDenied = false;
+
+  // كاش لنتائج reverse geocode — يوفر طلبات API المتكررة
+  // المفتاح: إحداثيات مقربة لـ 4 خانات عشرية (~11 متر دقة)
+  static const int _maxCacheSize = 100;
+  final Map<String, ReverseGeocodeResult> _geocodeCache = {};
+  final List<String> _cacheKeys = []; // LRU order
+
+  String _cacheKey(double lat, double lng, String lang) {
+    // تقريب لـ 4 خانات عشرية (~11م دقة)
+    return '${lat.toStringAsFixed(4)},${lng.toStringAsFixed(4)}_$lang';
+  }
+
+  void _putCache(String key, ReverseGeocodeResult result) {
+    if (_geocodeCache.containsKey(key)) {
+      _cacheKeys.remove(key);
+    } else if (_cacheKeys.length >= _maxCacheSize) {
+      final oldest = _cacheKeys.removeAt(0);
+      _geocodeCache.remove(oldest);
+    }
+    _cacheKeys.add(key);
+    _geocodeCache[key] = result;
+  }
+
   static const _geocodeHost = 'maps.googleapis.com';
   static const _placesHost = 'maps.googleapis.com';
   static const int _maxDisplayParts = 4;
@@ -194,6 +220,7 @@ class GoogleMapsApiService {
     final parsed = _parseAddressComponents(components);
 
     final street = _cleanAndValidate(parsed.street);
+    final landmark = _cleanAndValidate(parsed.landmark);
     final neighborhood = _cleanAndValidate(parsed.neighborhood);
     final city = _cleanAndValidate(parsed.city);
     final governorate = _cleanAndValidate(parsed.governorate);
@@ -204,7 +231,11 @@ class GoogleMapsApiService {
       if (v == null) return;
       final cv = _canonicalForDedup(v);
       if (cv.isEmpty) return;
-      if (parts.any((p) => _canonicalForDedup(p) == cv)) return;
+      // تحقق من التطابق الكامل أو الجزئي
+      for (final p in parts) {
+        final cp = _canonicalForDedup(p);
+        if (cp == cv || cp.contains(cv) || cv.contains(cp)) return;
+      }
       parts.add(v);
     }
 
@@ -234,6 +265,7 @@ class GoogleMapsApiService {
         displayAddress: display,
         formattedAddress: _cleanAndValidate(formatted),
         street: street,
+        landmark: landmark,
         neighborhood: neighborhood,
         city: city,
         governorate: governorate,
@@ -242,26 +274,49 @@ class GoogleMapsApiService {
     );
   }
 
-  /// Reverse geocode using Google Geocoding API.
+  /// Reverse geocode using Google Geocoding API (localized).
   ///
-  /// - Uses `language=ar` to prefer Arabic names.
+  /// - Uses `language` to prefer localized names.
   /// - Avoids returning Plus Codes.
-  /// - Builds a deduplicated Arabic address string: street, neighborhood, city, governorate.
-  Future<ReverseGeocodeResult?> reverseGeocodeArabic(LatLng position) async {
+  /// - Builds a deduplicated address string: street, neighborhood, city, governorate.
+  Future<ReverseGeocodeResult?> _reverseGeocode(
+    LatLng position, {
+    required String language,
+  }) async {
+    // فحص الكاش أولاً
+    final key = _cacheKey(position.latitude, position.longitude, language);
+    if (_geocodeCache.containsKey(key)) {
+      return _geocodeCache[key];
+    }
+
     final uri = Uri.https(_geocodeHost, '/maps/api/geocode/json', {
       'latlng': '${position.latitude},${position.longitude}',
       'key': _apiKey,
-      'language': 'ar',
+      'language': language,
       // Asking for rooftop sometimes improves quality, but we keep default.
     });
 
-    final res = await _client.get(uri).timeout(const Duration(seconds: 10));
+    http.Response res;
+    try {
+      res = await _client.get(uri).timeout(const Duration(seconds: 10));
+    } catch (e) {
+      // Network failures or key restrictions shouldn't break the UI; callers can fall back.
+      AppLogger.warning('Geocode request failed: $e');
+      return null;
+    }
+
     if (res.statusCode != 200) {
       AppLogger.warning('Geocode HTTP ${res.statusCode}: ${res.body}');
       return null;
     }
 
-    final jsonMap = json.decode(res.body) as Map<String, dynamic>;
+    Map<String, dynamic> jsonMap;
+    try {
+      jsonMap = json.decode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      AppLogger.warning('Geocode JSON decode failed: $e');
+      return null;
+    }
     final status = jsonMap['status'] as String?;
     if (status != 'OK') {
       AppLogger.warning('Geocode status=$status body=${res.body}');
@@ -295,6 +350,7 @@ class GoogleMapsApiService {
     final parsed = _parseAddressComponents(components);
 
     final street = _cleanAndValidate(parsed.street);
+    final landmark = _cleanAndValidate(parsed.landmark);
     final neighborhood = _cleanAndValidate(parsed.neighborhood);
     final city = _cleanAndValidate(parsed.city);
     final governorate = _cleanAndValidate(parsed.governorate);
@@ -305,7 +361,11 @@ class GoogleMapsApiService {
       if (v == null) return;
       final cv = _canonicalForDedup(v);
       if (cv.isEmpty) return;
-      if (parts.any((p) => _canonicalForDedup(p) == cv)) return;
+      // تحقق من التطابق الكامل أو الجزئي
+      for (final p in parts) {
+        final cp = _canonicalForDedup(p);
+        if (cp == cv || cp.contains(cv) || cv.contains(cp)) return;
+      }
       parts.add(v);
     }
 
@@ -332,15 +392,93 @@ class GoogleMapsApiService {
       display = displayParts.join('، ');
     }
 
-    return ReverseGeocodeResult(
+    final result = ReverseGeocodeResult(
       displayAddress: display,
       street: street,
+      landmark: landmark,
       neighborhood: neighborhood,
       city: city,
       governorate: governorate,
       country: country,
       formattedAddress: _cleanAndValidate(formatted),
     );
+
+    // حفظ في الكاش
+    _putCache(key, result);
+
+    return result;
+  }
+
+  /// Reverse geocode using Google Geocoding API (Arabic).
+  Future<ReverseGeocodeResult?> reverseGeocodeArabic(LatLng position) async {
+    return _reverseGeocode(position, language: 'ar');
+  }
+
+  /// Reverse geocode using Google Geocoding API (English).
+  Future<ReverseGeocodeResult?> reverseGeocodeEnglish(LatLng position) async {
+    return _reverseGeocode(position, language: 'en');
+  }
+
+  /// Get a nearby landmark name using Google Places Nearby Search.
+  ///
+  /// This is best-effort: if Places API isn't enabled/restricted, returns null.
+  Future<String?> nearbyLandmarkArabic({
+    required LatLng position,
+    int timeoutSeconds = 8,
+  }) async {
+    if (_placesNearbyDenied) return null;
+
+    final uri = Uri.https(_placesHost, '/maps/api/place/nearbysearch/json', {
+      'location': '${position.latitude},${position.longitude}',
+      // Rank by distance gives the closest result. (Cannot use radius with rankby=distance)
+      'rankby': 'distance',
+      'type': 'point_of_interest',
+      'language': 'ar',
+      'key': _apiKey,
+    });
+
+    http.Response res;
+    try {
+      res = await _client.get(uri).timeout(Duration(seconds: timeoutSeconds));
+    } catch (e) {
+      AppLogger.warning('Places nearby request failed: $e');
+      return null;
+    }
+
+    if (res.statusCode != 200) {
+      AppLogger.warning('Places nearby HTTP ${res.statusCode}: ${res.body}');
+      return null;
+    }
+
+    Map<String, dynamic> jsonMap;
+    try {
+      jsonMap = json.decode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      AppLogger.warning('Places nearby JSON decode failed: $e');
+      return null;
+    }
+
+    final status = jsonMap['status'] as String?;
+    if (status != 'OK' && status != 'ZERO_RESULTS') {
+      if (status == 'REQUEST_DENIED') {
+        _placesNearbyDenied = true;
+        AppLogger.warning(
+          'Places nearby REQUEST_DENIED (will skip further Places calls). '
+          'Check Google Cloud: enable Places API + adjust key restrictions. '
+          'body=${res.body}',
+        );
+      } else {
+        AppLogger.warning('Places nearby status=$status body=${res.body}');
+      }
+      return null;
+    }
+
+    final results =
+        (jsonMap['results'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+    if (results.isEmpty) return null;
+
+    final name = (results.first['name'] as String?)?.trim();
+    return _cleanAndValidate(name);
   }
 
   bool _looksLikePlusCodePrefix(String input) {
@@ -421,25 +559,72 @@ class GoogleMapsApiService {
         findByType('establishment') ??
         findByType('premise');
 
+    // A nearby point-of-interest name (landmark) when available.
+    final landmark = place;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Google Geocoding API components mapping for Egypt:
+    // وفقاً لتوثيق pub.dev/packages/geocoding:
+    // - administrativeArea (admin_level_1) = المحافظة (Governorate)
+    // - subAdministrativeArea (admin_level_2) = المركز (Center/District)
+    // - locality = المدينة (City) - في مصر غالباً نفس المركز
+    // - subLocality = القرية/الحي (Village/Neighborhood)
+    // ═══════════════════════════════════════════════════════════════════════
+    final adminLevel1 = findByType('administrative_area_level_1'); // المحافظة
+    final adminLevel2 = findByType('administrative_area_level_2'); // المركز
+    final adminLevel3 = findByType('administrative_area_level_3');
+    final adminLevel4 = findByType('administrative_area_level_4');
     final locality = findByType('locality');
-
-    // City/Center ("المركز"): in Egypt this is very often admin_area_level_2.
-    final city = findByType('administrative_area_level_2') ?? locality;
-
-    // Neighborhood / district / village ("القرية / الحي").
-    // Prefer sublocality/neighborhood (more granular), then admin 3/4.
-    // As a last resort, fall back to locality (when it's not the same as city/center).
-    final neighborhoodRaw =
+    final sublocality =
         findByType('sublocality_level_2') ??
         findByType('sublocality_level_1') ??
-        findByType('sublocality') ??
-        findByType('neighborhood') ??
-        findByType('administrative_area_level_4') ??
-        findByType('administrative_area_level_3') ??
-        locality;
+        findByType('sublocality');
+    final neighborhoodType = findByType('neighborhood');
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🏛️ المركز (City/Center):
+    // في مصر: admin_level_2 هو المركز (مثل "مركز الطود")
+    // إذا لم يوجد، نستخدم locality
+    // ═══════════════════════════════════════════════════════════════════════
+    String? city = adminLevel2 ?? locality;
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 🏘️ القرية/الحي (Village/Neighborhood):
+    // في مصر: sublocality أو admin_level_3/4 هي القرية
+    // الأولوية: sublocality > admin_level_4 > admin_level_3 > neighborhood
+    // نتجنب استخدام locality إذا تم استخدامه كمركز
+    // ═══════════════════════════════════════════════════════════════════════
+    String? neighborhoodRaw;
+
+    // 1. أولاً: sublocality (الأدق للقرى والأحياء في مصر)
+    if (sublocality != null) {
+      neighborhoodRaw = sublocality;
+    }
+    // 2. ثانياً: admin_level_4 (القرى الصغيرة)
+    else if (adminLevel4 != null) {
+      neighborhoodRaw = adminLevel4;
+    }
+    // 3. ثالثاً: admin_level_3
+    else if (adminLevel3 != null) {
+      neighborhoodRaw = adminLevel3;
+    }
+    // 4. رابعاً: neighborhood type
+    else if (neighborhoodType != null) {
+      neighborhoodRaw = neighborhoodType;
+    }
+    // 5. locality فقط إذا لم يُستخدم كمركز وكان admin_level_2 موجوداً
+    else if (locality != null && adminLevel2 != null) {
+      final locCanon = _canonicalForDedup(locality);
+      final cityCanon = _canonicalForDedup(adminLevel2);
+      if (locCanon != cityCanon &&
+          !locCanon.contains(cityCanon) &&
+          !cityCanon.contains(locCanon)) {
+        neighborhoodRaw = locality;
+      }
+    }
 
     // Governorate: admin_area_level_1.
-    final governorate = findByType('administrative_area_level_1');
+    final governorate = adminLevel1;
 
     // Country.
     final country = findByType('country');
@@ -455,13 +640,46 @@ class GoogleMapsApiService {
       final ct = _canonicalForDedup(city ?? '');
       final gv = _canonicalForDedup(governorate ?? '');
 
-      if (n.isEmpty || n == st || n == ct || n == gv) {
+      // إزالة neighborhood إذا كان مكرراً أو جزءاً من حقل آخر
+      if (n.isEmpty ||
+          n == st ||
+          n == ct ||
+          n == gv ||
+          st.contains(n) ||
+          n.contains(st) ||
+          ct.contains(n) ||
+          n.contains(ct)) {
         neighborhood = null;
       }
     }
 
+    // إزالة street إذا كان مكرراً مع city
+    if (street != null && city != null) {
+      final st = _canonicalForDedup(street);
+      final ct = _canonicalForDedup(city);
+      if (st == ct || st.contains(ct) || ct.contains(st)) {
+        street = null;
+      }
+    }
+
+    // Debug logging للتحقق من القيم
+    if (kDebugMode) {
+      AppLogger.info('🔍 _parseAddressComponents:');
+      AppLogger.info('   - adminLevel1 (المحافظة): $adminLevel1');
+      AppLogger.info('   - adminLevel2 (المركز): $adminLevel2');
+      AppLogger.info('   - adminLevel3 (قرية): $adminLevel3');
+      AppLogger.info('   - adminLevel4 (قرية): $adminLevel4');
+      AppLogger.info('   - locality: $locality');
+      AppLogger.info('   - sublocality: $sublocality');
+      AppLogger.info('   - ═══════════════════════════════');
+      AppLogger.info('   - city (المركز - final): $city');
+      AppLogger.info('   - neighborhood (القرية - final): $neighborhood');
+      AppLogger.info('   - governorate (المحافظة - final): $governorate');
+    }
+
     return _ParsedAddress(
       street: street,
+      landmark: landmark,
       neighborhood: neighborhood,
       city: city,
       governorate: governorate,
@@ -495,6 +713,7 @@ class ReverseGeocodeResult {
   final String displayAddress;
   final String? formattedAddress;
   final String? street;
+  final String? landmark;
   final String? neighborhood;
   final String? city;
   final String? governorate;
@@ -504,6 +723,7 @@ class ReverseGeocodeResult {
     required this.displayAddress,
     this.formattedAddress,
     this.street,
+    this.landmark,
     this.neighborhood,
     this.city,
     this.governorate,
@@ -513,6 +733,7 @@ class ReverseGeocodeResult {
 
 class _ParsedAddress {
   final String? street;
+  final String? landmark;
   final String? neighborhood;
   final String? city;
   final String? governorate;
@@ -520,6 +741,7 @@ class _ParsedAddress {
 
   const _ParsedAddress({
     required this.street,
+    required this.landmark,
     required this.neighborhood,
     required this.city,
     required this.governorate,

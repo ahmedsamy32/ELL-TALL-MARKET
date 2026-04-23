@@ -23,7 +23,7 @@ enum FinancialCategory {
 }
 
 /// Currency types for multi-currency support
-enum CurrencyType { egp, usd, eur, sar, aed }
+enum CurrencyType { egp, usd }
 
 /// Financial metrics for analytics
 enum FinancialMetric {
@@ -53,9 +53,6 @@ class FinancialServiceEnhanced {
   final Map<CurrencyType, Map<String, dynamic>> _currencyConfig = {
     CurrencyType.egp: {'symbol': 'ج.م', 'code': 'EGP', 'rate': 1.0},
     CurrencyType.usd: {'symbol': '\$', 'code': 'USD', 'rate': 0.032},
-    CurrencyType.eur: {'symbol': '€', 'code': 'EUR', 'rate': 0.029},
-    CurrencyType.sar: {'symbol': 'ر.س', 'code': 'SAR', 'rate': 0.12},
-    CurrencyType.aed: {'symbol': 'د.إ', 'code': 'AED', 'rate': 0.118},
   };
 
   // ===== Balance Management =====

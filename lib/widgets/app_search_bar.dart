@@ -49,7 +49,30 @@ class _AppSearchBarState extends State<AppSearchBar> {
       widget.focusNode ?? (_internalFocusNode ??= FocusNode());
 
   @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_handleControllerChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant AppSearchBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.controller != widget.controller) {
+      (oldWidget.controller ?? _internalController)
+          ?.removeListener(_handleControllerChanged);
+      _controller.addListener(_handleControllerChanged);
+    }
+  }
+
+  void _handleControllerChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
   void dispose() {
+    _controller.removeListener(_handleControllerChanged);
     _internalController?.dispose();
     _internalFocusNode?.dispose();
     super.dispose();
@@ -57,82 +80,89 @@ class _AppSearchBarState extends State<AppSearchBar> {
 
   @override
   Widget build(BuildContext context) {
+    final searchBar = SearchBar(
+      controller: _controller,
+      focusNode: _focusNode,
+      hintText: widget.hintText,
+      leading: const Padding(
+        padding: EdgeInsets.only(left: 8),
+        child: Icon(Icons.search_rounded),
+      ),
+      trailing: [
+        if (_controller.text.isNotEmpty)
+          IconButton(
+            icon: const Icon(Icons.close_rounded),
+            onPressed: () {
+              _controller.clear();
+              widget.onChanged?.call('');
+            },
+          )
+        else if (widget.showFilterIcon)
+          IconButton(
+            icon: const Icon(Icons.tune_rounded),
+            onPressed: widget.onFilterTap,
+          ),
+      ],
+      elevation: const WidgetStatePropertyAll(1),
+      backgroundColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
+          return Theme.of(context).colorScheme.surfaceContainerHighest;
+        }
+        return Theme.of(
+          context,
+        ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.90);
+      }),
+      shape: WidgetStatePropertyAll(
+        RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      ),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 16),
+      ),
+      textStyle: WidgetStatePropertyAll(
+        TextStyle(
+          fontSize: 15,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+      ),
+      hintStyle: WidgetStatePropertyAll(
+        TextStyle(
+          fontSize: 15,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+      enabled: widget.enabled,
+      autoFocus: widget.autofocus && !widget.readOnly,
+      onChanged: widget.readOnly
+          ? null
+          : (value) {
+              widget.onChanged?.call(value);
+            },
+      onSubmitted: widget.readOnly
+          ? null
+          : (value) {
+              if (value.isNotEmpty) {
+                HapticFeedback.lightImpact();
+                if (widget.onSubmitted != null) {
+                  widget.onSubmitted!(value);
+                } else {
+                  Navigator.pushNamed(context, '/search', arguments: value);
+                }
+              }
+            },
+    );
+
+    final readOnlyChild = AbsorbPointer(
+      absorbing: widget.readOnly,
+      child: searchBar,
+    );
+
     return Padding(
       padding:
           widget.margin ??
           const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: SearchBar(
-        controller: _controller,
-        focusNode: _focusNode,
-        hintText: widget.hintText,
-        leading: const Padding(
-          padding: EdgeInsets.only(left: 8),
-          child: Icon(Icons.search_rounded),
-        ),
-        trailing: [
-          if (_controller.text.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.close_rounded),
-              onPressed: () {
-                _controller.clear();
-                setState(() {});
-                widget.onChanged?.call('');
-              },
-            )
-          else if (widget.showFilterIcon)
-            IconButton(
-              icon: const Icon(Icons.tune_rounded),
-              onPressed: widget.onFilterTap,
-            ),
-        ],
-        elevation: const WidgetStatePropertyAll(1),
-        backgroundColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.disabled)) {
-            return Theme.of(context).colorScheme.surfaceContainerHighest;
-          }
-          // رمادي فاتح للخلفية بدلاً من الأبيض
-          return Theme.of(
-            context,
-          ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.90);
-        }),
-        shape: WidgetStatePropertyAll(
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-        ),
-        padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: 16),
-        ),
-        textStyle: WidgetStatePropertyAll(
-          TextStyle(
-            fontSize: 15,
-            color: Theme.of(context).colorScheme.onSurface,
-          ),
-        ),
-        hintStyle: WidgetStatePropertyAll(
-          TextStyle(
-            fontSize: 15,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
-        ),
-        enabled: widget.enabled,
-        autoFocus: widget.autofocus,
-        onTap: widget.readOnly ? widget.onTap : null,
-        onChanged: (value) {
-          setState(() {});
-          widget.onChanged?.call(value);
-        },
-        onSubmitted: (value) {
-          if (value.isNotEmpty) {
-            HapticFeedback.lightImpact();
-            // تنفيذ callback المخصص أولاً إذا كان موجودًا
-            if (widget.onSubmitted != null) {
-              widget.onSubmitted!(value);
-            } else {
-              // إذا لم يكن هناك callback مخصص، انتقل لصفحة البحث
-              Navigator.pushNamed(context, '/search', arguments: value);
-            }
-          }
-        },
-      ),
+      child: widget.readOnly
+          ? GestureDetector(onTap: widget.onTap, child: readOnlyChild)
+          : searchBar,
     );
   }
 }
@@ -159,6 +189,33 @@ class CompactSearchBar extends StatefulWidget {
 }
 
 class _CompactSearchBarState extends State<CompactSearchBar> {
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_handleControllerChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant CompactSearchBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleControllerChanged);
+      widget.controller.addListener(_handleControllerChanged);
+    }
+  }
+
+  void _handleControllerChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleControllerChanged);
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;

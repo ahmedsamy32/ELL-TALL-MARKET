@@ -10,7 +10,6 @@ packages
 build/
 
 # Web related
-lib/generated_plugin_registrant.dart
 
 # Exceptions to above rules.
 !/packages/flutter_tools/test/data/dart_dependencies_test/**/.packages
@@ -96,6 +95,9 @@ firestore.rules
 .env.local
 .env.production
 .env.staging
+
+# Firebase service account keys
+firebase-service-account.json/
 
 # Coverage
 coverage/

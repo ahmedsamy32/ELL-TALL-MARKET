@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:io';
 import 'dart:math' as math;
 import 'package:image_picker/image_picker.dart';
+import 'package:ell_tall_market/services/permission_service.dart';
 import 'package:image_cropper/image_cropper.dart';
 import 'package:provider/provider.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -12,8 +12,12 @@ import 'package:ell_tall_market/services/store_service.dart';
 import 'package:ell_tall_market/services/merchant_service.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/screens/shared/advanced_map_screen.dart';
+import 'package:ell_tall_market/widgets/address/address_form_section.dart';
 import 'package:ell_tall_market/core/logger.dart';
-import 'package:shimmer/shimmer.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:ell_tall_market/services/delivery_zone_pricing_service.dart';
+import 'package:ell_tall_market/models/delivery_zone_pricing_model.dart';
 
 class MerchantSettingsScreen extends StatefulWidget {
   final bool scrollToSections;
@@ -30,49 +34,55 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
   bool _loading = true;
   bool _saving = false;
   String? _error;
-  String? _coverUrl; // public url لصورة الغلاف
-  String? _currentMerchantId; // لتتبع تغيّر التاجر الحالي
-  VoidCallback? _mpListenerRef; // مرجع لإزالة المستمع عند التخلص
+  String? _coverUrl;
+  String? _currentMerchantId;
+  VoidCallback? _mpListenerRef;
   int _logoCacheBuster = DateTime.now().millisecondsSinceEpoch;
   int _coverCacheBuster = DateTime.now().millisecondsSinceEpoch;
   String _deliveryMode = 'store';
   TabController? _tabController;
   int _currentTabIndex = 0;
 
-  // صور مؤجلة حتى الضغط على "حفظ التغييرات"
   Uint8List? _pendingLogoBytes;
   String? _pendingLogoFileName;
   Uint8List? _pendingCoverBytes;
   String? _pendingCoverFileName;
 
-  // Controllers
   final _nameCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
-  final _addressCtrl = TextEditingController();
   final _streetCtrl = TextEditingController();
   final _landmarkCtrl = TextEditingController();
-  final _villageCtrl = TextEditingController();
+  final _areaCtrl = TextEditingController();
   final _cityCtrl = TextEditingController();
   final _governorateCtrl = TextEditingController();
+  final _deliveryRadiusCtrl = TextEditingController(text: '7');
   final _deliveryFeeCtrl = TextEditingController();
   final _minOrderCtrl = TextEditingController();
   final _deliveryTimeCtrl = TextEditingController();
+
+  // FocusNodes للحقول المطلوبة
+  final _streetFocus = FocusNode();
+  final _governorateFocus = FocusNode();
+  final _cityFocus = FocusNode();
+  final _deliveryRadiusFocus = FocusNode();
+
+  final _addressFormKey = GlobalKey<FormState>();
+
+  // تتبع الحقول التي بها أخطاء (لشاشة التوصيل)
+  String? _deliveryRadiusError;
+
   bool _isOpen = true;
   bool get _isStoreDelivery => _deliveryMode == 'store';
   bool get _isAppDelivery => _deliveryMode == 'app';
 
-  // معلومات الموقع
   String? _storeCity;
   String? _storeGovernorate;
   double? _storeLatitude;
   double? _storeLongitude;
+  List<DeliveryZonePricingModel> _ownerZones = <DeliveryZonePricingModel>[];
 
-  // GlobalKey للتمكن من التمرير إلى قسم الأقسام داخل تبويب المعلومات
-
-  // New settings entities state
   List<Map<String, dynamic>> _branches = [];
-  List<Map<String, dynamic>> _areas = [];
   List<Map<String, dynamic>> _windows = [];
   List<Map<String, dynamic>> _sections = [];
   final Map<String, bool> _paymentActive = {
@@ -80,24 +90,121 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     'card': false,
     'wallet': false,
   };
-  static const int _pageSize =
-      10; // limit initial render cost for large datasets
+  static const int _pageSize = 10;
   int _sectionsVisible = _pageSize;
   int _branchesVisible = _pageSize;
-  int _areasVisible = _pageSize;
 
   @override
   void initState() {
     super.initState();
     _currentTabIndex = widget.scrollToSections ? 1 : 0;
     _ensureTabController();
+    _loadOwnerZones();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _attachMerchantProviderListener();
       _ensureMerchantAvailable();
     });
   }
 
-  // يضمن توفر التاجر قبل إظهار رسالة خطأ، مع إعادة المحاولة لفترة قصيرة
+  Future<void> _loadOwnerZones() async {
+    final zones = await DeliveryZonePricingService.getActiveZones();
+    if (!mounted) return;
+    setState(() {
+      _ownerZones = zones;
+    });
+  }
+
+  List<String> get _governorateOptions {
+    final values = _ownerZones
+        .map((z) => z.governorate.trim())
+        .where((v) => v.isNotEmpty)
+        .toSet()
+        .toList();
+    values.sort();
+    return values;
+  }
+
+  List<String> get _cityOptions {
+    final gov = _governorateCtrl.text.trim();
+    if (gov.isEmpty) return const <String>[];
+
+    final values = _ownerZones
+        .where((z) => z.governorate.trim() == gov)
+        .map((z) => (z.city ?? '').trim())
+        .where((v) => v.isNotEmpty)
+        .toSet()
+        .toList();
+    values.sort();
+    return values;
+  }
+
+  List<String> get _areaOptions {
+    final gov = _governorateCtrl.text.trim();
+    final city = _cityCtrl.text.trim();
+    if (gov.isEmpty) return const <String>[];
+
+    final values = _ownerZones
+        .where((z) {
+          if (z.governorate.trim() != gov) return false;
+          final zoneCity = (z.city ?? '').trim();
+          if (city.isEmpty) return zoneCity.isEmpty;
+          return zoneCity == city;
+        })
+        .map((z) => (z.area ?? '').trim())
+        .where((v) => v.isNotEmpty)
+        .toSet()
+        .toList();
+    values.sort();
+    return values;
+  }
+
+  bool get _hasOwnerZoneOptions => _ownerZones.isNotEmpty;
+
+  void _handleGovernorateSelection(String governorate) {
+    setState(() {
+      final selected = governorate.trim();
+      _governorateCtrl.text = selected;
+      _storeGovernorate = selected.isEmpty ? null : selected;
+
+      final validCities = _ownerZones
+          .where((z) => z.governorate.trim() == selected)
+          .map((z) => (z.city ?? '').trim())
+          .where((v) => v.isNotEmpty)
+          .toSet();
+
+      if (_cityCtrl.text.trim().isNotEmpty &&
+          !validCities.contains(_cityCtrl.text.trim())) {
+        _cityCtrl.clear();
+        _storeCity = null;
+      }
+
+      _areaCtrl.clear();
+    });
+  }
+
+  void _handleCitySelection(String city) {
+    setState(() {
+      final selected = city.trim();
+      _cityCtrl.text = selected;
+      _storeCity = selected.isEmpty ? null : selected;
+
+      final validAreas = _ownerZones
+          .where(
+            (z) =>
+                z.governorate.trim() == _governorateCtrl.text.trim() &&
+                (z.city ?? '').trim() == selected,
+          )
+          .map((z) => (z.area ?? '').trim())
+          .where((v) => v.isNotEmpty)
+          .toSet();
+
+      if (_areaCtrl.text.trim().isNotEmpty &&
+          !validAreas.contains(_areaCtrl.text.trim())) {
+        _areaCtrl.clear();
+      }
+    });
+  }
+
   Future<void> _ensureMerchantAvailable() async {
     setState(() {
       _loading = true;
@@ -107,16 +214,13 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     final mp = context.read<MerchantProvider>();
     final auth = context.read<SupabaseProvider>();
 
-    // إذا كان التاجر موجود بالفعل
     if (mp.selectedMerchant != null) {
       _currentMerchantId = mp.selectedMerchant!.id;
       await _loadForMerchant(_currentMerchantId!);
       return;
     }
 
-    // إذا كان قيد التحميل أو غير جاهز، نحاول عدة مرات قبل اظهار الخطأ
     if (auth.isLoggedIn && auth.currentUserProfile != null) {
-      // حاول جلب التاجر إذا لم يكن هناك تحميل جارٍ
       if (!mp.isLoading) {
         try {
           await mp.fetchMerchantByProfileId(auth.currentUserProfile!.id);
@@ -129,7 +233,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         } catch (_) {}
       }
 
-      // backoff بسيط حتى 1.5 ثانية (6 محاولات فقط)
       for (int i = 0; i < 6; i++) {
         await Future.delayed(const Duration(milliseconds: 250));
         if (!mounted) return;
@@ -141,7 +244,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
       }
     }
 
-    // إذا لم نجد تاجر بعد المحاولات
     if (mounted) {
       setState(() {
         _loading = false;
@@ -150,7 +252,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     }
   }
 
-  // تحميل بيانات المتجر والإعدادات بناءً على معرف التاجر
   Future<void> _loadForMerchant(String merchantId) async {
     try {
       final store = await StoreService.getStoreByMerchantIdV2(merchantId);
@@ -167,23 +268,28 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         _nameCtrl.text = store.name;
         _descCtrl.text = store.description ?? '';
         _phoneCtrl.text = store.phone ?? '';
-        _addressCtrl.text = store.address;
-        _streetCtrl.text = '';
-        _landmarkCtrl.text = '';
-        _villageCtrl.text = _extractVillageFromAddress(store.address);
-        _storeCity = store.city;
-        _storeGovernorate = store.governorate;
-        _cityCtrl.text = store.city ?? '';
+        // تحميل الحقول المفصّلة من القاعدة (والfallback لتحليل العنوان المدمج)
         _governorateCtrl.text = store.governorate ?? '';
+        _cityCtrl.text = store.city ?? '';
+        _areaCtrl.text = store.area ?? '';
+        _streetCtrl.text = store.street ?? '';
+        _landmarkCtrl.text = store.landmark ?? '';
+
+        if (_governorateCtrl.text.trim().isEmpty &&
+            _cityCtrl.text.trim().isEmpty &&
+            _streetCtrl.text.trim().isEmpty &&
+            store.address.trim().isNotEmpty) {
+          _parseAddressToFields(store.address);
+        }
         _storeLatitude = store.latitude;
         _storeLongitude = store.longitude;
+        _deliveryRadiusCtrl.text = store.deliveryRadiusKm.toStringAsFixed(0);
         _deliveryFeeCtrl.text = store.deliveryFee.toStringAsFixed(0);
         _minOrderCtrl.text = store.minOrder.toStringAsFixed(0);
         _deliveryTimeCtrl.text = store.deliveryTime.toString();
         _isOpen = store.isOpen;
         _deliveryMode = store.deliveryMode;
 
-        // إذا لم يكن لدينا رابط غلاف مخزّن، حاول جلبه من التخزين
         if ((_coverUrl == null || _coverUrl!.isEmpty)) {
           try {
             final cover = await StoreService.getStoreCoverUrl(store.id);
@@ -196,11 +302,9 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
           } catch (_) {}
         }
 
-        // تحميل الكيانات الإضافية بالتوازي دون حجب الواجهة
         try {
           final results = await Future.wait([
             StoreService.getStoreBranches(store.id),
-            StoreService.getStoreDeliveryAreas(store.id),
             StoreService.getStorePaymentMethods(store.id),
             StoreService.getStoreOrderWindows(store.id),
             StoreService.getStoreSections(store.id),
@@ -209,18 +313,15 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
           if (!mounted) return;
 
           final branches = List<Map<String, dynamic>>.from(results[0] as List);
-          final areas = List<Map<String, dynamic>>.from(results[1] as List);
-          final payments = List<Map<String, dynamic>>.from(results[2] as List);
-          final windows = List<Map<String, dynamic>>.from(results[3] as List);
-          final sections = List<Map<String, dynamic>>.from(results[4] as List);
+          final payments = List<Map<String, dynamic>>.from(results[1] as List);
+          final windows = List<Map<String, dynamic>>.from(results[2] as List);
+          final sections = List<Map<String, dynamic>>.from(results[3] as List);
 
           setState(() {
             _branches = branches;
-            _areas = areas;
             _windows = _normalizeWindows(windows);
             _sections = sections;
             _branchesVisible = math.min(_pageSize, _branches.length);
-            _areasVisible = math.min(_pageSize, _areas.length);
             _sectionsVisible = math.min(_pageSize, _sections.length);
             for (final m in ['cash', 'card', 'wallet']) {
               final row = payments.firstWhere(
@@ -233,7 +334,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
             }
           });
 
-          // إذا طُلب التركيز على الأقسام فانتقل مباشرة إلى تبويبها
           if (widget.scrollToSections) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
@@ -242,7 +342,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
             });
           }
         } catch (e) {
-          // نتجاهل أخطاء الكيانات الثانوية كي لا تمنع فتح الصفحة
           AppLogger.warning('⚠️ تحذير: فشل تحميل بعض الإعدادات الثانوية: $e');
         }
       }
@@ -255,7 +354,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     }
   }
 
-  // إعادة تحميل عند السحب مع احترام حالة التاجر الحالية
   Future<void> _load() async {
     final mp = context.read<MerchantProvider>();
     final merchant = mp.selectedMerchant;
@@ -268,13 +366,15 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
 
   void _attachMerchantProviderListener() {
     final mp = context.read<MerchantProvider>();
-    // إذا تم تغيير التاجر في أي وقت، أعد التحميل تلقائياً
     _mpListenerRef = () {
       if (!mounted) return;
       final m = mp.selectedMerchant;
       if (m != null && m.id != _currentMerchantId) {
         _currentMerchantId = m.id;
-        _loadForMerchant(m.id);
+        // تأجيل التحميل حتى ينتهي الـ build
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _loadForMerchant(m.id);
+        });
       }
     };
     mp.addListener(_mpListenerRef!);
@@ -282,28 +382,29 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
 
   @override
   void dispose() {
-    // إزالة مستمع الـ Provider إن وُجد
     try {
       final mp = context.read<MerchantProvider>();
       if (_mpListenerRef != null) {
         mp.removeListener(_mpListenerRef!);
         _mpListenerRef = null;
       }
-    } catch (_) {
-      // في حالة أن الـ context غير متاح عند الـ dispose
-    }
+    } catch (_) {}
     _nameCtrl.dispose();
     _descCtrl.dispose();
     _phoneCtrl.dispose();
-    _addressCtrl.dispose();
     _streetCtrl.dispose();
     _landmarkCtrl.dispose();
-    _villageCtrl.dispose();
+    _areaCtrl.dispose();
     _cityCtrl.dispose();
     _governorateCtrl.dispose();
+    _deliveryRadiusCtrl.dispose();
     _deliveryFeeCtrl.dispose();
     _minOrderCtrl.dispose();
     _deliveryTimeCtrl.dispose();
+    _streetFocus.dispose();
+    _governorateFocus.dispose();
+    _cityFocus.dispose();
+    _deliveryRadiusFocus.dispose();
     _tabController?.removeListener(_handleTabSelectionChange);
     _tabController?.dispose();
     super.dispose();
@@ -313,11 +414,29 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     if (_store == null) return;
 
     try {
-      final picker = ImagePicker();
-
       // احفظ الألوان قبل أي async gap
       final primaryColor = Theme.of(context).colorScheme.primary;
       final onPrimaryColor = Theme.of(context).colorScheme.onPrimary;
+
+      // التحقق من الأذونات أولاً
+      final permissionService = PermissionService();
+      final permissionResult = await permissionService
+          .requestGalleryPermission();
+
+      if (!permissionResult.granted) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              permissionResult.message ?? 'تم رفض إذن الوصول للصور',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      final picker = ImagePicker();
 
       final file = await picker.pickImage(
         source: ImageSource.gallery,
@@ -374,7 +493,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         }
 
         // استخدم الصورة المقصوصة
-        final bytes = await File(cropped.path).readAsBytes();
+        final bytes = await cropped.readAsBytes();
 
         // تحقق من mounted بعد قراءة الملف
         if (!mounted) return;
@@ -496,47 +615,43 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     final merchant = mp.selectedMerchant;
     if (merchant == null) return;
 
+    // ✅ التحقق من فورم العنوان (Best practices: Form + TextFormField validators)
+    final addressFormState = _addressFormKey.currentState;
+    final addressValid =
+        addressFormState?.validate() ?? _isAddressFieldsValid();
+    if (!addressValid) {
+      _showValidationError(
+        'من فضلك أكمل بيانات العنوان المطلوبة قبل الحفظ',
+        0,
+        null,
+      );
+      return;
+    }
+
     final streetText = _streetCtrl.text.trim();
     final landmarkText = _landmarkCtrl.text.trim();
-    final villageText = _villageCtrl.text.trim();
+    final areaText = _areaCtrl.text.trim();
     final cityText = _cityCtrl.text.trim();
     final governorateText = _governorateCtrl.text.trim();
 
     _storeCity = cityText.isEmpty ? null : cityText;
     _storeGovernorate = governorateText.isEmpty ? null : governorateText;
 
-    if (streetText.isEmpty) {
-      _showErrorSnackBar('الرجاء إدخال اسم الشارع');
-      return;
-    }
-    if (governorateText.isEmpty) {
-      _showErrorSnackBar('الرجاء إدخال المحافظة');
-      return;
-    }
-    if (cityText.isEmpty) {
-      _showErrorSnackBar('الرجاء إدخال المركز');
-      return;
+    // نطاق التوصيل - استخدام القيمة الافتراضية 7 كم إذا كان فارغاً
+    final deliveryRadiusText = _deliveryRadiusCtrl.text.trim();
+    double deliveryRadius = double.tryParse(deliveryRadiusText) ?? 7.0;
+    if (deliveryRadius <= 0) {
+      deliveryRadius = 7.0;
     }
 
     final parts = <String>[];
     if (governorateText.isNotEmpty) parts.add(governorateText);
     if (cityText.isNotEmpty) parts.add(cityText);
-    if (villageText.isNotEmpty) {
-      parts.add(
-        villageText.startsWith('قرية') ? villageText : 'قرية $villageText',
-      );
-    }
+    if (areaText.isNotEmpty) parts.add(areaText);
     parts.add(streetText);
     if (landmarkText.isNotEmpty) parts.add(landmarkText);
 
     final addressText = parts.join('، ');
-
-    if (_storeLatitude == null || _storeLongitude == null) {
-      _showErrorSnackBar(
-        'الرجاء اختيار موقع المتجر من الخريطة لتحديد الإحداثيات',
-      );
-      return;
-    }
 
     setState(() => _saving = true);
     try {
@@ -552,11 +667,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
       // 🔍 Debug: طباعة قيم الموقع قبل الحفظ
       AppLogger.info('حفظ بيانات المتجر:');
       AppLogger.info('  - العنوان المركب: $addressText');
-      AppLogger.info('  - الشارع: ${_streetCtrl.text.trim()}');
-      AppLogger.info('  - علامة مميزة: ${_landmarkCtrl.text.trim()}');
-      AppLogger.info('  - القرية: ${_villageCtrl.text.trim()}');
-      AppLogger.info('  - المدينة: $_storeCity');
-      AppLogger.info('  - المحافظة: $_storeGovernorate');
       AppLogger.info('  - Latitude: $_storeLatitude');
       AppLogger.info('  - Longitude: $_storeLongitude');
 
@@ -566,11 +676,14 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         name: _nameCtrl.text.trim(),
         description: _descCtrl.text.trim(),
         phone: _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
-        address: addressText,
-        city: _storeCity,
-        governorate: _storeGovernorate,
+        governorate: governorateText.isEmpty ? null : governorateText,
+        city: cityText.isEmpty ? null : cityText,
+        area: areaText.isEmpty ? null : areaText,
+        street: streetText,
+        landmark: landmarkText.isEmpty ? null : landmarkText,
         latitude: _storeLatitude,
         longitude: _storeLongitude,
+        deliveryRadiusKm: deliveryRadius,
         deliveryTime: deliveryTime,
         isOpen: _isOpen,
         deliveryFee: deliveryFee,
@@ -631,60 +744,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     }
   }
 
-  Future<void> _pickAddressFromMap() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => AdvancedMapScreen(
-          userType: MapUserType.merchant,
-          actionType: MapActionType.pickLocation,
-          initialPosition: _storeLatitude != null && _storeLongitude != null
-              ? LatLng(_storeLatitude!, _storeLongitude!)
-              : null,
-          onLocationSelectedDetails: (details) {
-            if (!mounted) return;
-            setState(() {
-              _storeCity = details.city;
-              _storeGovernorate = details.governorate;
-              _cityCtrl.text = details.city ?? '';
-              _governorateCtrl.text = details.governorate ?? '';
-              final street = (details.street ?? '').trim();
-              _streetCtrl.text = street.isNotEmpty
-                  ? street
-                  : _extractStreetFromAddress(details.address);
-              _landmarkCtrl.text = '';
-              _villageCtrl.text = (details.district ?? '').trim();
-              _storeLatitude = details.position.latitude;
-              _storeLongitude = details.position.longitude;
-            });
-
-            AppLogger.info('✅ تم اختيار موقع المتجر: ${details.address}');
-            AppLogger.info(
-              '📍 الإحداثيات: ${details.position.latitude}, ${details.position.longitude}',
-            );
-            AppLogger.info(
-              '📍 المدينة: ${details.city}، المحافظة: ${details.governorate}',
-            );
-          },
-        ),
-      ),
-    );
-
-    // عرض رسالة بعد الرجوع من الخريطة
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            '✅ تم اختيار الموقع. اضغط "حفظ التغييرات" لحفظه نهائياً',
-          ),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 3),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
-  }
-
   // Removed global categories add dialog. Merchant uses store-specific sections dialogs below.
 
   @override
@@ -734,73 +793,80 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
       Tab(icon: Icon(Icons.apartment_outlined), text: 'الفروع والدفع'),
     ];
 
-    return Stack(
-      children: [
-        Column(
-          children: [
-            Material(
-              color: color.surface,
-              elevation: 1,
-              child: SafeArea(
-                bottom: false,
-                child: TabBar(
-                  controller: controller,
-                  isScrollable: true,
-                  tabAlignment: TabAlignment.start,
-                  padding: EdgeInsetsDirectional.zero,
-                  labelPadding: const EdgeInsetsDirectional.only(
-                    start: 6,
-                    end: 14,
+    return ResponsiveCenter(
+      maxWidth: 700,
+      child: Stack(
+        children: [
+          Column(
+            children: [
+              Material(
+                color: color.surface,
+                elevation: 1,
+                child: SafeArea(
+                  bottom: false,
+                  child: TabBar(
+                    controller: controller,
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.start,
+                    padding: EdgeInsetsDirectional.zero,
+                    labelPadding: const EdgeInsetsDirectional.only(
+                      start: 6,
+                      end: 14,
+                    ),
+                    labelColor: color.primary,
+                    unselectedLabelColor: color.onSurfaceVariant,
+                    indicatorColor: color.primary,
+                    tabs: tabs,
                   ),
-                  labelColor: color.primary,
-                  unselectedLabelColor: color.onSurfaceVariant,
-                  indicatorColor: color.primary,
-                  tabs: tabs,
+                ),
+              ),
+              Expanded(
+                child: TabBarView(
+                  controller: controller,
+                  children: [
+                    _buildStoreInfoTab(),
+                    _buildSectionsTab(),
+                    _buildDeliveryScheduleTab(),
+                    _buildBranchesPaymentTab(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (_saving)
+            Container(
+              color: Colors.black.withValues(alpha: 0.1),
+              alignment: Alignment.center,
+              child: AppShimmer.centeredLines(context, lines: 2),
+            ),
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: SafeArea(
+              child: Center(
+                child: FloatingActionButton.extended(
+                  onPressed: _saving ? null : _save,
+                  icon: _saving
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              color.onPrimaryContainer,
+                            ),
+                          ),
+                        )
+                      : const Icon(Icons.save_rounded),
+                  label: Text(_saving ? 'جارٍ الحفظ...' : 'حفظ التغييرات'),
+                  elevation: 6,
                 ),
               ),
             ),
-            Expanded(
-              child: TabBarView(
-                controller: controller,
-                children: [
-                  _buildStoreInfoTab(),
-                  _buildSectionsTab(),
-                  _buildDeliveryScheduleTab(),
-                  _buildBranchesPaymentTab(),
-                ],
-              ),
-            ),
-          ],
-        ),
-        Positioned(
-          right: 16,
-          bottom: 16,
-          child: SafeArea(
-            child: FloatingActionButton.extended(
-              onPressed: _saving ? null : _save,
-              icon: _saving
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation(
-                          Theme.of(context).colorScheme.onPrimary,
-                        ),
-                      ),
-                    )
-                  : const Icon(Icons.save_rounded),
-              label: Text(_saving ? 'جارٍ الحفظ...' : 'حفظ التغييرات'),
-            ),
           ),
-        ),
-        if (_saving)
-          Container(
-            color: Colors.black.withValues(alpha: 0.1),
-            alignment: Alignment.center,
-            child: const CircularProgressIndicator(),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -826,16 +892,13 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     double height = 80,
     double radius = 8,
   }) {
-    return Shimmer.fromColors(
-      baseColor: Colors.grey.shade300,
-      highlightColor: Colors.grey.shade100,
-      child: Container(
+    return AppShimmer.wrap(
+      context,
+      child: AppShimmer.box(
+        context,
         width: width,
         height: height,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(radius),
-        ),
+        borderRadius: BorderRadius.circular(radius),
       ),
     );
   }
@@ -883,129 +946,43 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
                     onFieldSubmitted: () => FocusScope.of(context).nextFocus(),
                   ),
                   const SizedBox(height: 16),
-                  // حقول العنوان (3 خانات) + زر الخريطة
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'اختر موقع المتجر من الخريطة لتحديد الإحداثيات',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurfaceVariant,
-                                  ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          IconButton.filledTonal(
-                            onPressed: _pickAddressFromMap,
-                            icon: const Icon(Icons.map),
-                            tooltip: 'اختر من الخريطة',
-                            iconSize: 24,
-                          ),
-                        ],
-                      ),
-
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _textField(
-                              _governorateCtrl,
-                              label: 'المحافظة',
-                              icon: Icons.map_outlined,
-                              textInputAction: TextInputAction.next,
-                              onChanged: (v) => _storeGovernorate =
-                                  v.trim().isEmpty ? null : v.trim(),
-                              onFieldSubmitted: () =>
-                                  FocusScope.of(context).nextFocus(),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _textField(
-                              _cityCtrl,
-                              label: 'المركز',
-                              icon: Icons.location_city,
-                              textInputAction: TextInputAction.next,
-                              onChanged: (v) => _storeCity = v.trim().isEmpty
-                                  ? null
-                                  : v.trim(),
-                              onFieldSubmitted: () =>
-                                  FocusScope.of(context).nextFocus(),
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 12),
-                      _textField(
-                        _villageCtrl,
-                        label: 'القرية (اختياري)',
-                        icon: Icons.cottage_outlined,
-                        textInputAction: TextInputAction.next,
-                        onFieldSubmitted: () =>
-                            FocusScope.of(context).nextFocus(),
-                      ),
-
-                      const SizedBox(height: 12),
-                      _textField(
-                        _streetCtrl,
-                        label: 'الشارع',
-                        icon: Icons.route,
-                        textInputAction: TextInputAction.next,
-                        onFieldSubmitted: () =>
-                            FocusScope.of(context).nextFocus(),
-                      ),
-                      const SizedBox(height: 12),
-                      _textField(
-                        _landmarkCtrl,
-                        label: 'علامة مميزة (اختياري)',
-                        icon: Icons.place_outlined,
-                        textInputAction: TextInputAction.done,
-                        onFieldSubmitted: () =>
-                            FocusScope.of(context).unfocus(),
-                      ),
-                      if (_storeCity != null && _storeGovernorate != null) ...[
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .primaryContainer
-                                .withValues(alpha: 0.3),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.check_circle,
-                                size: 16,
-                                color: Theme.of(context).colorScheme.primary,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                '$_storeCity، $_storeGovernorate',
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ],
+                  AddressLocationFormSection(
+                    userType: MapUserType.merchant,
+                    formType: AddressFormType.store,
+                    formKey: _addressFormKey,
+                    governorateController: _governorateCtrl,
+                    cityController: _cityCtrl,
+                    areaController: _areaCtrl,
+                    streetController: _streetCtrl,
+                    landmarkController: _landmarkCtrl,
+                    governorateFocus: _governorateFocus,
+                    cityFocus: _cityFocus,
+                    streetFocus: _streetFocus,
+                    position: _storeLatitude != null && _storeLongitude != null
+                        ? LatLng(_storeLatitude!, _storeLongitude!)
+                        : null,
+                    requirePosition: false,
+                    showMapPicker: false,
+                    onPositionChanged: (pos) {
+                      setState(() {
+                        _storeLatitude = pos?.latitude;
+                        _storeLongitude = pos?.longitude;
+                      });
+                    },
+                    onGovernorateChanged: _handleGovernorateSelection,
+                    onCityChanged: _handleCitySelection,
+                    governorateOptions: _hasOwnerZoneOptions
+                        ? _governorateOptions
+                        : null,
+                    cityOptions: _hasOwnerZoneOptions ? _cityOptions : null,
+                    areaOptions: _hasOwnerZoneOptions ? _areaOptions : null,
+                    summaryCity: _storeCity,
+                    summaryGovernorate: _storeGovernorate,
+                    // لا نحدّث LocationProvider هنا لأن ده موقع متجر.
+                    updateLocationProvider: false,
+                    refreshNearbyStores: false,
+                    // الافتراضي: يملأ المحافظة + المركز فقط.
+                    autofillAllFieldsFromMap: false,
                   ),
                 ]),
                 const SizedBox(height: 120),
@@ -1021,7 +998,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
         children: [
           _sectionTitle('إعدادات التوصيل'),
           _buildDeliverySettingsCard(),
@@ -1031,7 +1008,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
           const SizedBox(height: 24),
           _sectionTitle('حالة المتجر'),
           _buildStoreStatusFooter(),
-          const SizedBox(height: 120),
         ],
       ),
     );
@@ -1250,7 +1226,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
         children: [
           _sectionTitle('الفروع'),
           _card([
@@ -1290,7 +1266,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
           const SizedBox(height: 16),
           _sectionTitle('طرق الدفع'),
           _buildPaymentMethodsCard(),
-          const SizedBox(height: 120),
         ],
       ),
     );
@@ -1533,7 +1508,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
         children: [
           _sectionTitle('أقسام المتجر'),
           _card([
@@ -1570,7 +1545,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
               ),
             ],
           ]),
-          const SizedBox(height: 120),
         ],
       ),
     );
@@ -1867,271 +1841,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     );
   }
 
-  // بطاقة منطقة توصيل محسّنة
-  Widget _areaCard(Map<String, dynamic> a) {
-    final active = a['is_active'] == true;
-    final color = Theme.of(context).colorScheme;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        border: Border.all(
-          color: active
-              ? color.primary.withValues(alpha: 0.3)
-              : color.outlineVariant,
-          width: active ? 2 : 1,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        color: active
-            ? color.primaryContainer.withValues(alpha: 0.08)
-            : color.surfaceContainerHighest.withValues(alpha: 0.3),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // الصف الأول: الأيقونة + الاسم + السويتش
-            Row(
-              children: [
-                // أيقونة المنطقة
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: active
-                        ? color.primaryContainer
-                        : color.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    Icons.delivery_dining,
-                    color: active ? color.primary : color.onSurfaceVariant,
-                    size: 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                // اسم المنطقة
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        a['area_name'] ?? 'منطقة بدون اسم',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: active
-                              ? color.onSurface
-                              : color.onSurfaceVariant,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        active ? 'نشطة' : 'معطلة',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: active
-                              ? color.primary
-                              : color.onSurfaceVariant.withValues(alpha: 0.7),
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // مفتاح التفعيل
-                Transform.scale(
-                  scale: 0.9,
-                  child: Switch(
-                    value: active,
-                    onChanged: _saving
-                        ? null
-                        : (v) async {
-                            setState(() => _saving = true);
-                            try {
-                              final updated =
-                                  await StoreService.updateDeliveryArea(
-                                    a['id'] as String,
-                                    {'is_active': v},
-                                  );
-                              if (updated != null) {
-                                final idx = _areas.indexWhere(
-                                  (x) => x['id'] == a['id'],
-                                );
-                                if (idx >= 0) {
-                                  setState(() => _areas[idx] = updated);
-                                }
-                              }
-                            } finally {
-                              if (mounted) setState(() => _saving = false);
-                            }
-                          },
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 12),
-
-            // الصف الثاني: معلومات الرسوم والحد الأدنى
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: color.surfaceContainerHighest.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  // رسوم التوصيل
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.monetization_on,
-                          size: 18,
-                          color: color.primary,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'رسوم التوصيل',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: color.onSurfaceVariant,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              Text(
-                                '${a['fee'] ?? 0} جنيه',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: color.onSurface,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // فاصل عمودي
-                  Container(
-                    width: 1,
-                    height: 35,
-                    color: color.outlineVariant,
-                    margin: const EdgeInsets.symmetric(horizontal: 12),
-                  ),
-
-                  // الحد الأدنى للطلب
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.shopping_basket,
-                          size: 18,
-                          color: color.secondary,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'الحد الأدنى',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: color.onSurfaceVariant,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              Text(
-                                '${a['min_order'] ?? 0} جنيه',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: color.onSurface,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 10),
-
-            // الصف الثالث: أزرار التحكم
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                // زر التعديل
-                OutlinedButton.icon(
-                  onPressed: _saving ? null : () => _showAreaDialog(area: a),
-                  icon: const Icon(Icons.edit_outlined, size: 18),
-                  label: const Text('تعديل'),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // زر الحذف
-                OutlinedButton.icon(
-                  onPressed: _saving
-                      ? null
-                      : () async {
-                          final ok = await _confirm(
-                            context,
-                            'هل تريد حذف منطقة "${a['area_name']}"؟',
-                          );
-                          if (!ok) return;
-                          setState(() => _saving = true);
-                          try {
-                            await StoreService.deleteDeliveryArea(
-                              a['id'] as String,
-                            );
-                            setState(
-                              () =>
-                                  _areas.removeWhere((x) => x['id'] == a['id']),
-                            );
-                            if (mounted) {
-                              _showSuccessSnackBar('تم حذف المنطقة بنجاح');
-                            }
-                          } finally {
-                            if (mounted) setState(() => _saving = false);
-                          }
-                        },
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  label: const Text('حذف'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: color.error,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
+  // بطاقة موعد عمل محسّنة
   Widget _windowTile(Map<String, dynamic> w, {VoidCallback? onChanged}) {
     final active = w['is_active'] == true;
     final day = _dayName(w['day_of_week'] as int? ?? 0);
@@ -2501,157 +2211,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('فشل حفظ الفرع: $e')));
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  Future<void> _showAreaDialog({Map<String, dynamic>? area}) async {
-    if (_store == null) return;
-    final name = TextEditingController(text: area?['area_name'] ?? '');
-    final fee = TextEditingController(text: area?['fee']?.toString() ?? '0');
-    final minOrder = TextEditingController(
-      text: area?['min_order']?.toString() ?? '0',
-    );
-    bool active = area?['is_active'] == true;
-    final isEdit = area != null;
-
-    // احفظ اللون قبل async gap
-    final primaryColor = Theme.of(context).colorScheme.primary;
-
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: Row(
-            children: [
-              Icon(
-                isEdit ? Icons.edit : Icons.add_location,
-                color: primaryColor,
-              ),
-              const SizedBox(width: 8),
-              Text(isEdit ? 'تعديل منطقة التوصيل' : 'إضافة منطقة توصيل'),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: name,
-                  decoration: InputDecoration(
-                    labelText: 'اسم المنطقة',
-                    hintText: 'مثال: وسط البلد، المعادي، مدينة نصر',
-                    prefixIcon: const Icon(Icons.location_city),
-                    border: const OutlineInputBorder(),
-                  ),
-                  autofocus: !isEdit,
-                  textInputAction: TextInputAction.next,
-                  onSubmitted: (_) => FocusScope.of(ctx).nextFocus(),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: fee,
-                        decoration: const InputDecoration(
-                          labelText: 'رسوم التوصيل',
-                          hintText: '0',
-                          prefixIcon: Icon(Icons.monetization_on),
-                          suffixText: 'جنيه',
-                          border: OutlineInputBorder(),
-                        ),
-                        keyboardType: TextInputType.number,
-                        textInputAction: TextInputAction.next,
-                        onSubmitted: (_) => FocusScope.of(ctx).nextFocus(),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: minOrder,
-                        decoration: const InputDecoration(
-                          labelText: 'الحد الأدنى',
-                          hintText: '0',
-                          prefixIcon: Icon(Icons.shopping_basket),
-                          suffixText: 'جنيه',
-                          border: OutlineInputBorder(),
-                        ),
-                        keyboardType: TextInputType.number,
-                        textInputAction: TextInputAction.done,
-                        onSubmitted: (_) => FocusScope.of(ctx).unfocus(),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('تفعيل المنطقة'),
-                  subtitle: const Text('يمكن للعملاء الطلب من هذه المنطقة'),
-                  value: active,
-                  onChanged: (v) => setLocal(() => active = v),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء'),
-            ),
-            FilledButton.icon(
-              onPressed: () => Navigator.pop(ctx, true),
-              icon: const Icon(Icons.check),
-              label: const Text('حفظ'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (saved != true) return;
-
-    setState(() => _saving = true);
-    try {
-      final feeVal = double.tryParse(fee.text.trim()) ?? 0;
-      final minVal = double.tryParse(minOrder.text.trim()) ?? 0;
-      if (isEdit) {
-        final updated =
-            await StoreService.updateDeliveryArea(area['id'] as String, {
-              'area_name': name.text.trim(),
-              'fee': feeVal,
-              'min_order': minVal,
-              'is_active': active,
-            });
-        if (updated != null) {
-          final idx = _areas.indexWhere((x) => x['id'] == area['id']);
-          if (idx >= 0) setState(() => _areas[idx] = updated);
-        }
-      } else {
-        final added = await StoreService.addDeliveryArea(
-          storeId: _store!.id,
-          areaName: name.text.trim(),
-          fee: feeVal,
-          minOrder: minVal,
-          isActive: active,
-        );
-        if (added != null) {
-          setState(() {
-            _areas.insert(0, added);
-            _areasVisible = math.min(
-              _areas.length,
-              math.max(_areasVisible, _pageSize),
-            );
-          });
-        }
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('فشل حفظ المنطقة: $e')));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -3043,6 +2602,12 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     return sorted.map((e) => e.value).toList();
   }
 
+  bool _isAddressFieldsValid() {
+    return _governorateCtrl.text.trim().isNotEmpty &&
+        _cityCtrl.text.trim().isNotEmpty &&
+        _streetCtrl.text.trim().isNotEmpty;
+  }
+
   // ===== Helpers =====
   Future<bool> _confirm(BuildContext context, String message) async {
     final ok = await showDialog<bool>(
@@ -3129,37 +2694,136 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     );
   }
 
-  String _extractVillageFromAddress(String address) {
-    final match = RegExp(
-      r'(?:^|[،,]\s*)قرية\s+([^،,]+)',
-      unicode: true,
-    ).firstMatch(address);
-    return match?.group(1)?.trim() ?? '';
-  }
+  /// يعرض خطأ وينتقل إلى التاب والحقل المطلوب
+  void _showValidationError(
+    String message,
+    int tabIndex,
+    FocusNode? focusNode, {
+    String? fieldName,
+  }) {
+    // تعيين رسالة الخطأ للحقل المناسب (مستخدم حالياً لنطاق التوصيل فقط)
+    setState(() {
+      _deliveryRadiusError = null;
 
-  String _extractStreetFromAddress(String address) {
-    final trimmed = address.trim();
-    if (trimmed.isEmpty) return '';
+      if (fieldName == 'deliveryRadius') {
+        _deliveryRadiusError = message;
+      }
+    });
 
-    final parts = trimmed.split(RegExp(r'[،,]'));
-    for (final rawPart in parts) {
-      final part = rawPart.trim();
-      if (part.isEmpty) continue;
-
-      final lower = part.toLowerCase();
-      final isAdministrative =
-          part.startsWith('محافظة') ||
-          part.startsWith('مركز') ||
-          part.startsWith('قرية') ||
-          part.startsWith('مدينة') ||
-          lower.startsWith('egypt') ||
-          part.startsWith('مصر');
-
-      if (isAdministrative) continue;
-      return part;
+    // الانتقال إلى التاب الصحيح أولاً
+    if (_tabController != null && _tabController!.index != tabIndex) {
+      _tabController!.animateTo(tabIndex);
     }
 
-    return parts.first.trim();
+    // عرض رسالة الخطأ
+    _showErrorSnackBar(message);
+
+    // الانتقال إلى الحقل بعد انتهاء الأنيميشن
+    if (focusNode != null) {
+      Future.delayed(const Duration(milliseconds: 350), () {
+        if (mounted) {
+          focusNode.requestFocus();
+        }
+      });
+    }
+  }
+
+  /// تفكيك العنوان المدمج إلى الحقول المنفصلة
+  /// الترتيب: المحافظة - المدينة/المركز - القرية/الحي - الشارع - العلامة
+  void _parseAddressToFields(String address) {
+    if (address.isEmpty) return;
+
+    final parts = address.split(RegExp(r'[،,]')).map((p) => p.trim()).toList();
+
+    for (final part in parts) {
+      if (part.isEmpty) continue;
+
+      // 1. المحافظة
+      if (part.startsWith('محافظة ')) {
+        _governorateCtrl.text = part.replaceFirst('محافظة ', '');
+        _storeGovernorate = _governorateCtrl.text;
+      }
+      // 2. المدينة/المركز (خانة واحدة)
+      else if (part.startsWith('مركز ')) {
+        _cityCtrl.text = part.replaceFirst('مركز ', '');
+        _storeCity = _cityCtrl.text;
+      } else if (part.startsWith('مدينة ')) {
+        _cityCtrl.text = part.replaceFirst('مدينة ', '');
+        _storeCity = _cityCtrl.text;
+      }
+      // 3. القرية/الحي (خانة واحدة)
+      else if (part.startsWith('قرية ')) {
+        _areaCtrl.text = part.replaceFirst('قرية ', '');
+      } else if (part.startsWith('حي ')) {
+        _areaCtrl.text = part.replaceFirst('حي ', '');
+      }
+      // التعرف الذكي على الحقول
+      else if (_governorateCtrl.text.isEmpty && _isGovernorate(part)) {
+        _governorateCtrl.text = part;
+        _storeGovernorate = part;
+      } else if (_cityCtrl.text.isEmpty && _isCity(part)) {
+        _cityCtrl.text = part;
+        _storeCity = part;
+      } else if (_areaCtrl.text.isEmpty && _isVillageOrDistrict(part)) {
+        _areaCtrl.text = part;
+      }
+      // 4. الشارع (أول قيمة غير إدارية)
+      else if (_streetCtrl.text.isEmpty && !_isAdministrative(part)) {
+        _streetCtrl.text = part;
+      }
+      // 5. العلامة المميزة (ثاني قيمة غير إدارية)
+      else if (_landmarkCtrl.text.isEmpty && !_isAdministrative(part)) {
+        _landmarkCtrl.text = part;
+      }
+    }
+  }
+
+  /// التحقق إذا كان النص يبدو كمحافظة (بدون قائمة ثابتة)
+  bool _isGovernorate(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return false;
+
+    // إذا بدأ بـ "محافظة" فهو محافظة
+    if (trimmed.startsWith('محافظة')) return true;
+
+    // إذا كان جزء من المحافظة المخزنة حالياً
+    if (_storeGovernorate != null &&
+        _storeGovernorate!.isNotEmpty &&
+        (trimmed.contains(_storeGovernorate!) ||
+            _storeGovernorate!.contains(trimmed))) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /// التحقق إذا كان النص يبدو كمدينة أو مركز
+  /// المدينة والمركز = خانة واحدة
+  bool _isCity(String text) {
+    final trimmed = text.trim();
+    return trimmed.startsWith('مدينة') ||
+        trimmed.startsWith('مركز') ||
+        trimmed.contains('مركز');
+  }
+
+  /// التحقق إذا كان النص يبدو كقرية أو حي
+  bool _isVillageOrDistrict(String text) {
+    final trimmed = text.trim();
+    return trimmed.startsWith('قرية') || trimmed.startsWith('حي');
+  }
+
+  /// التحقق من أن النص إداري (لا يجب وضعه في حقل الشارع)
+  /// الترتيب: المحافظة - المدينة/المركز - القرية/الحي - الشارع - العلامة
+  bool _isAdministrative(String text) {
+    final trimmed = text.trim();
+    final lower = trimmed.toLowerCase();
+    return trimmed.startsWith('محافظة') || // المحافظة
+        trimmed.startsWith('مدينة') || // المدينة/المركز
+        trimmed.startsWith('مركز') || // المدينة/المركز
+        trimmed.startsWith('قرية') || // القرية/الحي
+        trimmed.startsWith('حي') || // القرية/الحي
+        lower.startsWith('egypt') ||
+        trimmed == 'مصر';
   }
 
   // حالة فارغة محسّنة للأقسام
@@ -3213,66 +2877,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
             onPressed: _saving ? null : () => _showSectionDialog(),
             icon: const Icon(Icons.add),
             label: const Text('إضافة أول قسم'),
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // حالة فارغة محسّنة للمناطق
-  Widget _buildEmptyAreasState() {
-    final color = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            color.tertiaryContainer.withValues(alpha: 0.1),
-            color.primaryContainer.withValues(alpha: 0.1),
-          ],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: color.tertiary.withValues(alpha: 0.2),
-          width: 2,
-        ),
-      ),
-      child: Column(
-        children: [
-          Icon(
-            Icons.location_on_outlined,
-            size: 64,
-            color: color.tertiary.withValues(alpha: 0.5),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'حدد مناطق التوصيل',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: color.onSurface,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'أضف المناطق التي يمكنك التوصيل إليها\nوحدد تكلفة التوصيل لكل منطقة',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: color.onSurfaceVariant,
-              fontSize: 14,
-              height: 1.5,
-            ),
-          ),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: _saving ? null : () => _showAreaDialog(),
-            icon: const Icon(Icons.add_location),
-            label: const Text('إضافة منطقة توصيل'),
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
             ),
@@ -3465,10 +3069,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
       _buildDeliveryModeInfoBanner(),
       const SizedBox(height: 20),
       _buildDeliveryInputGrid(),
-      const SizedBox(height: 20),
-      const Divider(height: 1),
-      const SizedBox(height: 20),
-      _buildDeliveryAreasSection(),
     ]);
   }
 
@@ -3546,6 +3146,27 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         ),
         const SizedBox(height: 16),
         _textField(
+          _deliveryRadiusCtrl,
+          label: 'نطاق التوصيل (كم)',
+          icon: Icons.radar_outlined,
+          focusNode: _deliveryRadiusFocus,
+          errorText: _deliveryRadiusError,
+          enabled: !disable,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          helperText: disable
+              ? 'يتم تحديد نطاق التوصيل من التطبيق تلقائياً (القيمة الافتراضية: 7 كم)'
+              : 'أقصى مسافة للتوصيل من موقع المتجر (افتراضي: 7 كم)',
+          helperMaxLines: 2,
+          textInputAction: TextInputAction.next,
+          onChanged: (v) {
+            if (_deliveryRadiusError != null) {
+              setState(() => _deliveryRadiusError = null);
+            }
+          },
+          onFieldSubmitted: () => FocusScope.of(context).nextFocus(),
+        ),
+        const SizedBox(height: 16),
+        _textField(
           _minOrderCtrl,
           label: 'الحد الأدنى للطلب (جنيه)',
           icon: Icons.shopping_cart_outlined,
@@ -3610,136 +3231,6 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         padding: const EdgeInsets.symmetric(horizontal: 8),
         child: _buildStoreStatusTile(),
       ),
-    );
-  }
-
-  Widget _buildDeliveryAreasSection() {
-    final theme = Theme.of(context).textTheme;
-    final color = Theme.of(context).colorScheme;
-
-    if (_isAppDelivery) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.map_outlined, color: color.primary, size: 20),
-              const SizedBox(width: 8),
-              Text(
-                'مناطق التوصيل',
-                style: theme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 15,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'تم تعطيل مناطق التوصيل لأن التطبيق يتولى التوصيل.',
-            style: theme.bodySmall?.copyWith(
-              color: color.onSurfaceVariant,
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: color.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: color.outlineVariant.withValues(alpha: 0.6),
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.lock_outline, color: color.onSurfaceVariant),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'لتحديد مناطق ورسوم توصيل خاصة بالمتجر، اختر "المتجر مسؤول عن التوصيل".',
-                    style: theme.bodySmall?.copyWith(
-                      color: color.onSurfaceVariant,
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      );
-    }
-
-    final areasLimit = math.min(_areasVisible, _areas.length);
-    final areasToShow = _areas.take(areasLimit).toList();
-    final hasMoreAreas = _areas.length > areasLimit;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.map_outlined, color: color.primary, size: 20),
-            const SizedBox(width: 8),
-            Text(
-              'مناطق التوصيل',
-              style: theme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                fontSize: 15,
-              ),
-            ),
-            const Spacer(),
-            if (_areas.isNotEmpty)
-              OutlinedButton.icon(
-                onPressed: _saving ? null : () => _showAreaDialog(),
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('إضافة منطقة'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'حدد المناطق التي يمكنك التوصيل إليها مع رسوم كل منطقة',
-          style: theme.bodySmall?.copyWith(
-            color: color.onSurfaceVariant,
-            fontSize: 12,
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (_areas.isEmpty)
-          _buildEmptyAreasState()
-        else ...[
-          ...areasToShow.map((a) => _areaCard(a)),
-          if (hasMoreAreas) ...[
-            const SizedBox(height: 12),
-            Center(
-              child: OutlinedButton.icon(
-                onPressed: () {
-                  setState(() {
-                    _areasVisible = math.min(
-                      _areas.length,
-                      _areasVisible + _pageSize,
-                    );
-                  });
-                },
-                icon: const Icon(Icons.expand_more, size: 18),
-                label: Text('عرض المزيد (${_areas.length - areasLimit} متبقي)'),
-                style: OutlinedButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-            ),
-          ],
-        ],
-      ],
     );
   }
 
@@ -4028,9 +3519,15 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     VoidCallback? onTap,
     ValueChanged<String>? onChanged,
     Widget? suffixIcon,
+    FocusNode? focusNode,
+    String? errorText,
   }) {
+    final hasError = errorText != null && errorText.isNotEmpty;
+    final color = Theme.of(context).colorScheme;
+
     return TextField(
       controller: ctrl,
+      focusNode: focusNode,
       maxLines: maxLines,
       enabled: enabled,
       readOnly: readOnly,
@@ -4043,8 +3540,20 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
       onSubmitted: onFieldSubmitted != null ? (_) => onFieldSubmitted() : null,
       decoration: InputDecoration(
         labelText: label,
-        prefixIcon: Icon(icon),
+        labelStyle: hasError ? TextStyle(color: color.error) : null,
+        prefixIcon: Icon(icon, color: hasError ? color.error : null),
         border: const OutlineInputBorder(),
+        enabledBorder: hasError
+            ? OutlineInputBorder(
+                borderSide: BorderSide(color: color.error, width: 2),
+              )
+            : null,
+        focusedBorder: hasError
+            ? OutlineInputBorder(
+                borderSide: BorderSide(color: color.error, width: 2),
+              )
+            : null,
+        errorText: errorText,
         helperText: helperText,
         helperMaxLines: helperMaxLines,
         suffixIcon: suffixIcon,

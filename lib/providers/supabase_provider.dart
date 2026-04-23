@@ -1,7 +1,6 @@
 library;
 
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -11,12 +10,16 @@ import '../core/logger.dart';
 import 'merchant_provider.dart';
 import 'product_provider.dart';
 import 'order_provider.dart';
+import '../services/facebook_signin_service.dart';
+import '../services/notification_service.dart';
 
 /// SupabaseProvider - manages authentication state
 class SupabaseProvider with ChangeNotifier {
   ProfileModel? _currentProfile;
   User? _currentUser;
   bool _isLoading = false;
+  bool _isProfileLoading = false;
+  bool _isProfileMissing = false;
   String? _error;
   StreamSubscription<AuthState>? _authSubscription;
 
@@ -25,11 +28,15 @@ class SupabaseProvider with ChangeNotifier {
       _currentProfile; // Alias for compatibility
   User? get currentUser => _currentUser;
   bool get isLoading => _isLoading;
+  bool get isProfileLoading => _isProfileLoading;
+  bool get isProfileMissing => _isProfileMissing;
   String? get error => _error;
   String? get errorMessage => _error; // Alias for compatibility
   bool get isLoggedIn => _currentUser != null;
   bool get isInitialized => _authSubscription != null;
   bool get isAdmin => _currentProfile?.role == UserRole.admin;
+  bool get isDeliveryCompanyAdmin =>
+      _currentProfile?.role == UserRole.deliveryCompanyAdmin;
   bool get isMerchant => _currentProfile?.role == UserRole.merchant;
   bool get isCaptain => _currentProfile?.role == UserRole.captain;
   bool get isClient => _currentProfile?.role == UserRole.client;
@@ -41,6 +48,8 @@ class SupabaseProvider with ChangeNotifier {
       .auth
       .onAuthStateChange
       .map((event) => event.session?.user);
+
+  SupabaseClient get client => Supabase.instance.client;
 
   // For admin screens that manage all users
   List<ProfileModel> _allUsers = [];
@@ -67,19 +76,12 @@ class SupabaseProvider with ChangeNotifier {
       // تحميل البيانات في الخلفية بعد فتح التطبيق
       if (_currentUser != null) {
         // Load profile in background without blocking
-        // زودنا الـ timeout لـ 10 ثواني لأن الاتصال قد يكون بطيء
-        _loadProfile()
-            .timeout(
-              Duration(seconds: 10),
-              onTimeout: () {
-                AppLogger.warning('Profile load timeout after 10 seconds');
-                return Future.value(); // نرجع Future فاضية بدل من null
-              },
-            )
-            .catchError((e) {
-              AppLogger.warning('Profile load error: $e');
-              return Future.value(); // نرجع Future فاضية عشان ميعملش crash
-            });
+        // SupabaseService.getCurrentProfile() already has retry logic with timeouts
+        // so we don't need an outer timeout here
+        _loadProfile().catchError((e) {
+          AppLogger.warning('Profile load error: $e');
+          return Future.value(); // return empty Future to avoid crash
+        });
       }
     } catch (e) {
       _error = 'Initialization error: $e';
@@ -97,6 +99,11 @@ class SupabaseProvider with ChangeNotifier {
 
   /// Load user profile with retry
   Future<void> _loadProfile() async {
+    if (_isProfileLoading) return;
+
+    _isProfileLoading = true;
+    notifyListeners();
+
     try {
       AppLogger.debug('🔄 Attempting to load profile...');
 
@@ -106,17 +113,37 @@ class SupabaseProvider with ChangeNotifier {
         return;
       }
 
-      _currentProfile = await SupabaseService.getCurrentProfile().timeout(
-        Duration(seconds: 8), // زودنا الـ timeout
-        onTimeout: () {
-          AppLogger.warning('⚠️ Profile load timed out after 8 seconds');
-          return null;
-        },
-      );
+      // بدء محاولة تحميل بروفايل جديدة
+      _isProfileMissing = false;
+
+      _currentProfile = await SupabaseService.getCurrentProfile();
       if (_currentProfile != null) {
         AppLogger.info('✅ Profile loaded: ${_currentProfile?.fullName}');
       } else {
-        AppLogger.warning('⚠️ Profile data unavailable after load attempt');
+        AppLogger.warning(
+          '⚠️ Profile data unavailable after load attempt (userId: ${_currentUser?.id})',
+        );
+
+        // إذا لم نجد profile (maybeSingle = null) نحاول إنشاءه ثم إعادة التحميل.
+        final ensured = await SupabaseService.ensureCurrentProfileExists();
+        if (ensured) {
+          _currentProfile = await SupabaseService.getCurrentProfile();
+
+          if (_currentProfile != null) {
+            AppLogger.info(
+              '✅ Profile loaded after ensure: ${_currentProfile?.fullName}',
+            );
+          } else {
+            AppLogger.warning(
+              '⚠️ Profile still unavailable after ensure (possible RLS denial)',
+            );
+          }
+        }
+
+        // إذا مازال null بعد ensure، نعتبره بروفايل مفقود/غير قابل للقراءة
+        if (_currentProfile == null) {
+          _isProfileMissing = true;
+        }
       }
       notifyListeners(); // Update UI after profile loads
     } catch (e) {
@@ -141,21 +168,33 @@ class SupabaseProvider with ChangeNotifier {
             AppLogger.info(
               '✅ Profile loaded on retry: ${_currentProfile?.fullName}',
             );
+            _isProfileMissing = false;
           } else {
             AppLogger.warning('⚠️ Profile data still unavailable after retry');
+            _isProfileMissing = true;
           }
           notifyListeners();
         } catch (retryError) {
           AppLogger.warning('⚠️ Profile load failed after retry: $retryError');
           _currentProfile = null;
+          _isProfileMissing = true;
           notifyListeners();
         }
       } else {
         AppLogger.warning('⚠️ User logged out during profile load');
         _currentProfile = null;
+        _isProfileMissing = false;
         notifyListeners();
       }
+    } finally {
+      _isProfileLoading = false;
+      notifyListeners();
     }
+  }
+
+  /// Force refresh the current profile from the `profiles` table.
+  Future<void> refreshCurrentProfile() async {
+    await _loadProfile();
   }
 
   /// Handle auth state changes
@@ -165,16 +204,18 @@ class SupabaseProvider with ChangeNotifier {
     switch (authState.event) {
       case AuthChangeEvent.signedIn:
         _currentUser = authState.session?.user;
+        _isProfileMissing = false;
         _isLoading = false; // Clear loading state
         _error = null; // Clear any previous errors
         AppLogger.info('✅ User signed in: ${_currentUser?.email}');
         notifyListeners(); // Update UI immediately
-        // Load profile in background
-        _loadProfile();
+        // Load profile first, then save FCM token with correct role
+        _loadProfileThenSaveToken();
         break;
       case AuthChangeEvent.signedOut:
         _currentUser = null;
         _currentProfile = null;
+        _isProfileMissing = false;
         _isLoading = false;
         _error = null;
         AppLogger.info('User signed out');
@@ -182,6 +223,7 @@ class SupabaseProvider with ChangeNotifier {
         break;
       case AuthChangeEvent.userUpdated:
         _currentUser = authState.session?.user;
+        _isProfileMissing = false;
         notifyListeners();
         _loadProfile();
         break;
@@ -192,6 +234,55 @@ class SupabaseProvider with ChangeNotifier {
       default:
         notifyListeners();
         break;
+    }
+  }
+
+  /// Load profile then save FCM device token with correct role
+  Future<void> _loadProfileThenSaveToken() async {
+    try {
+      // 1) Wait for profile to load so we know the user's role
+      await _loadProfile();
+
+      // 2) Now save FCM token with the correct role
+      await _saveDeviceTokenAfterAuth();
+    } catch (e) {
+      AppLogger.warning('⚠️ Profile load or token save failed: $e');
+    }
+  }
+
+  /// Save FCM device token after authentication with correct role
+  Future<void> _saveDeviceTokenAfterAuth() async {
+    try {
+      // Always save as 'client' first (every user is at minimum a client)
+      await NotificationServiceEnhanced.instance.saveTokenForCurrentUser(
+        role: 'client',
+      );
+
+      // Profile should be loaded by now — save for their specific role
+      if (_currentProfile != null) {
+        final role = _currentProfile!.role;
+        AppLogger.info('🔑 Saving device token for role: $role');
+        if (role == UserRole.admin) {
+          await NotificationServiceEnhanced.instance.saveTokenForCurrentUser(
+            role: 'admin',
+          );
+        } else if (role == UserRole.deliveryCompanyAdmin) {
+          await NotificationServiceEnhanced.instance.saveTokenForCurrentUser(
+            role: 'delivery_company_admin',
+          );
+        } else if (role == UserRole.captain) {
+          await NotificationServiceEnhanced.instance.saveTokenForCurrentUser(
+            role: 'captain',
+          );
+        }
+        // merchant token is saved separately with store_id in merchant dashboard
+      } else {
+        AppLogger.warning(
+          '⚠️ Profile not loaded yet — only client token saved',
+        );
+      }
+    } catch (e) {
+      AppLogger.warning('⚠️ Failed to save device token after auth: $e');
     }
   }
 
@@ -237,6 +328,13 @@ class SupabaseProvider with ChangeNotifier {
     String userType = 'client',
     String? storeName,
     String? storeAddress,
+    String? storeGovernorate,
+    String? storeCity,
+    String? storeArea,
+    String? storeStreet,
+    String? storeLandmark,
+    double? storeLatitude,
+    double? storeLongitude,
     String? storeDescription,
     String? category,
     String? storeLogoUrl,
@@ -246,12 +344,28 @@ class SupabaseProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      final normalizedUserType = userType.trim().toLowerCase();
+      const selfSignupAllowedRoles = <String>{'client', 'merchant'};
+
+      if (!selfSignupAllowedRoles.contains(normalizedUserType)) {
+        throw Exception(
+          'هذا النوع من الحسابات لا يمكن إنشاؤه من شاشة التسجيل. يتم إنشاؤه بواسطة الإدارة فقط.',
+        );
+      }
+
       // إعداد البيانات الإضافية للتاجر
       Map<String, dynamic>? additionalData;
-      if (userType == 'merchant' && storeName != null) {
+      if (normalizedUserType == 'merchant' && storeName != null) {
         additionalData = {
           'store_name': storeName,
           'store_address': storeAddress,
+          'store_governorate': storeGovernorate,
+          'store_city': storeCity,
+          'store_area': storeArea,
+          'store_street': storeStreet,
+          'store_landmark': storeLandmark,
+          'store_latitude': storeLatitude,
+          'store_longitude': storeLongitude,
           'store_description': storeDescription,
         };
 
@@ -271,7 +385,7 @@ class SupabaseProvider with ChangeNotifier {
         password: password,
         name: name,
         phone: phone,
-        userType: userType,
+        userType: normalizedUserType,
         additionalData: additionalData,
       );
 
@@ -305,6 +419,11 @@ class SupabaseProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      // حذف device token قبل تسجيل الخروج لمنع وصول إشعارات لمستخدم آخر
+      await NotificationServiceEnhanced.instance
+          .removeDeviceTokenForCurrentUser();
+      await NotificationServiceEnhanced.instance.unsubscribeFromAllTopics();
+
       // Sign out from Supabase
       await SupabaseService.signOut();
 
@@ -339,7 +458,7 @@ class SupabaseProvider with ChangeNotifier {
   }
 
   /// Upload avatar image
-  Future<String?> uploadAvatar(File imageFile) async {
+  Future<String?> uploadAvatar(dynamic imageFile) async {
     try {
       if (_currentUser == null) {
         throw Exception('المستخدم غير مسجل الدخول');
@@ -347,6 +466,26 @@ class SupabaseProvider with ChangeNotifier {
       return await SupabaseService.uploadAvatar(imageFile, _currentUser!.id);
     } catch (e) {
       _error = 'Upload avatar error: $e';
+      return null;
+    }
+  }
+
+  /// Upload avatar from bytes
+  Future<String?> uploadAvatarBytes({
+    required Uint8List imageBytes,
+    required String fileName,
+  }) async {
+    try {
+      if (_currentUser == null) {
+        throw Exception('المستخدم غير مسجل الدخول');
+      }
+      return await SupabaseService.uploadAvatarBytes(
+        imageBytes: imageBytes,
+        fileName: fileName,
+        userId: _currentUser!.id,
+      );
+    } catch (e) {
+      _error = 'Upload avatar bytes error: $e';
       return null;
     }
   }
@@ -422,8 +561,14 @@ class SupabaseProvider with ChangeNotifier {
       // signInWithOAuth يفتح المتصفح ويرجع true/false فوراً (ليس await للمصادقة)
       final launched = await Supabase.instance.client.auth.signInWithOAuth(
         OAuthProvider.google,
-        redirectTo: 'elltallmarket://auth/callback',
-        authScreenLaunchMode: LaunchMode.externalApplication,
+        // ✅ الويب يستخدم URL حقيقي، الموبايل يستخدم Deep Link
+        redirectTo: kIsWeb
+            ? '${Uri.base.origin}/auth/callback'
+            : 'elltallmarket://auth/callback',
+        // ✅ الويب يفتح popup في نفس النافذة، الموبايل يفتح متصفح خارجي
+        authScreenLaunchMode: kIsWeb
+            ? LaunchMode.platformDefault
+            : LaunchMode.externalApplication,
         queryParams: {'access_type': 'offline', 'prompt': 'consent'},
         // ⚠️ ملاحظة: لا يمكن إرسال metadata مع OAuth!
         // الحل: سنستخدم pending merchants table أو update بعد تسجيل الدخول
@@ -459,19 +604,28 @@ class SupabaseProvider with ChangeNotifier {
     }
   }
 
-  /// Sign in with Facebook (placeholder)
+  /// Sign in with Facebook
   Future<bool> signInWithFacebook() async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      // Note: Implement Facebook Sign In with Supabase
-      // await SupabaseService.signInWithFacebook();
-      _error = 'Facebook Sign In قيد التطوير';
+      final response = await FacebookSignInService.instance
+          .signInWithFacebook();
+
+      if (response != null && response.user != null) {
+        _currentUser = response.user;
+        await _loadProfile();
+        return true;
+      }
+
+      return false;
+    } on AuthException catch (e) {
+      _error = e.message;
       return false;
     } catch (e) {
-      _error = 'Facebook Sign In error: $e';
+      _error = 'خطأ في تسجيل الدخول بفيسبوك: $e';
       return false;
     } finally {
       _isLoading = false;
@@ -508,7 +662,7 @@ class SupabaseProvider with ChangeNotifier {
   Future<void> resendEmailConfirmationSimple(String email) async {
     try {
       await Supabase.instance.client.auth.resend(
-        type: OtpType.email,
+        type: OtpType.signup,
         email: email,
       );
     } catch (e) {
@@ -601,28 +755,33 @@ class SupabaseProvider with ChangeNotifier {
   }
 
   /// Delete user account
+  /// Uses RPC function to delete from auth.users + profiles + sessions
   Future<({bool success, String? message})> deleteUser(String userId) async {
     try {
-      AppLogger.info('🔄 Attempting to delete user: $userId');
+      AppLogger.info('🔄 Attempting to delete user via RPC: $userId');
 
-      // Delete from profiles table (RLS policy will check if current user is admin)
-      await Supabase.instance.client.from('profiles').delete().eq('id', userId);
+      final response = await Supabase.instance.client.rpc(
+        'admin_delete_user',
+        params: {'p_user_id': userId},
+      );
 
-      AppLogger.info('✅ User deleted successfully');
-      return (success: true, message: null);
-    } catch (e) {
-      AppLogger.error('❌ Delete user error', e);
+      AppLogger.info('📦 Delete user response: $response');
 
-      // Check if error is due to RLS policy
-      if (e.toString().contains('row-level security') ||
-          e.toString().contains('policy')) {
-        return (
-          success: false,
-          message:
-              'فشل الحذف - لا تمتلك صلاحيات الحذف. تأكد من أنك مسجل كمدير في النظام.',
-        );
+      if (response is Map) {
+        if (response['success'] == true) {
+          AppLogger.info('✅ User deleted successfully from auth + profiles');
+          return (success: true, message: null);
+        } else {
+          final errorMsg =
+              response['error']?.toString() ?? 'فشل في حذف المستخدم';
+          AppLogger.error('Delete user failed', Exception(errorMsg));
+          return (success: false, message: errorMsg);
+        }
       }
 
+      return (success: false, message: 'استجابة غير متوقعة من الخادم');
+    } catch (e) {
+      AppLogger.error('❌ Delete user error', e);
       return (success: false, message: 'خطأ في الحذف: ${e.toString()}');
     }
   }
@@ -642,7 +801,7 @@ class SupabaseProvider with ChangeNotifier {
   }
 
   /// Add new user (for admin)
-  /// Note: This uses a workaround since Admin API requires Service Role Key
+  /// Uses RPC function to create user in auth.users + profiles
   Future<String?> addUser({
     required String fullName,
     required String email,
@@ -655,75 +814,42 @@ class SupabaseProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      AppLogger.info('🔄 Starting user creation: $email');
+      AppLogger.info('🔄 Starting user creation via RPC: $email');
 
-      // Check if admin is authenticated
-      final adminUser = Supabase.instance.client.auth.currentUser;
-      if (adminUser == null) {
-        _error = 'Admin user not authenticated';
-        AppLogger.error('Add user error', Exception(_error));
-        return null;
-      }
-
-      AppLogger.info('✅ Admin authenticated: ${adminUser.email}');
-
-      // WORKAROUND: Use regular signup with metadata
-      // The is_admin() function will allow the profile insertion
-      AppLogger.info('🔄 Creating user account...');
-
-      final authResponse = await Supabase.instance.client.auth.signUp(
-        email: email,
-        password: password,
-        data: {'full_name': fullName, 'phone': phone, 'role': role.name},
+      final response = await Supabase.instance.client.rpc(
+        'admin_create_user',
+        params: {
+          'user_email': email,
+          'user_password': password,
+          'user_full_name': fullName,
+          'user_phone': phone,
+          'user_role': role.value,
+        },
       );
 
-      if (authResponse.user == null) {
-        _error = 'Failed to create user account - no user returned';
-        AppLogger.error('Add user error', Exception(_error));
-        return null;
+      AppLogger.info('📦 Create user response: $response');
+
+      if (response is Map) {
+        if (response['success'] == true) {
+          final newUserId = response['user_id'] as String?;
+          AppLogger.info('✅ User created successfully: $newUserId');
+          await fetchAllUsers();
+          return newUserId;
+        } else {
+          _error = response['error']?.toString() ?? 'فشل في إنشاء المستخدم';
+          AppLogger.error('Create user failed', Exception(_error));
+          return null;
+        }
       }
 
-      final newUserId = authResponse.user!.id;
-      AppLogger.info('✅ Auth user created: $newUserId');
-
-      // Wait a bit for the trigger to create the profile
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      // Verify/update the profile with admin-specified role
-      final profileData = {
-        'id': newUserId,
-        'full_name': fullName,
-        'email': email,
-        'phone': phone,
-        'role': role.name,
-        'is_active': true,
-        'updated_at': DateTime.now().toIso8601String(),
-      };
-
-      AppLogger.info('🔄 Upserting profile data with role: ${role.name}');
-
-      // Use upsert to update if trigger already created it
-      await Supabase.instance.client
-          .from('profiles')
-          .upsert(profileData, onConflict: 'id');
-
-      AppLogger.info('✅ Profile created/updated successfully');
-      AppLogger.info('✅ New user added: $email with ID: $newUserId');
-
-      // Refresh users list
-      await fetchAllUsers();
-
-      return newUserId;
-    } on AuthException catch (e) {
-      _error = 'Authentication error: ${e.message}';
-      AppLogger.error('Auth error adding user', e);
+      _error = 'استجابة غير متوقعة من الخادم';
       return null;
     } on PostgrestException catch (e) {
-      _error = 'Database error: ${e.message} (${e.code})';
+      _error = 'خطأ في قاعدة البيانات: ${e.message}';
       AppLogger.error('Database error adding user', e);
       return null;
     } catch (e) {
-      _error = 'Error adding user: $e';
+      _error = 'خطأ في إضافة المستخدم: $e';
       AppLogger.error('Add user error', e);
       return null;
     } finally {
@@ -733,6 +859,7 @@ class SupabaseProvider with ChangeNotifier {
   }
 
   /// Update user by admin
+  /// Uses RPC function to update both auth.users and profiles
   Future<bool> updateUserByAdmin({
     required String userId,
     required String fullName,
@@ -742,39 +869,44 @@ class SupabaseProvider with ChangeNotifier {
     String? password,
   }) async {
     _isLoading = true;
+    _error = null;
     notifyListeners();
 
     try {
-      // 1. Update profile data
-      final profileData = {
-        'full_name': fullName,
-        'email': email,
-        'phone': phone,
-        'role': role.name,
-        'updated_at': DateTime.now().toIso8601String(),
-      };
+      AppLogger.info('🔄 Updating user via RPC: $userId');
 
-      await Supabase.instance.client
-          .from('profiles')
-          .update(profileData)
-          .eq('id', userId);
+      final response = await Supabase.instance.client.rpc(
+        'admin_update_user',
+        params: {
+          'p_user_id': userId,
+          'new_full_name': fullName,
+          'new_email': email,
+          'new_phone': phone,
+          'new_role': role.value,
+          'new_password': (password != null && password.isNotEmpty)
+              ? password
+              : null,
+        },
+      );
 
-      // 2. If password provided, update it using admin API
-      if (password != null && password.isNotEmpty) {
-        await Supabase.instance.client.auth.admin.updateUserById(
-          userId,
-          attributes: AdminUserAttributes(password: password),
-        );
+      AppLogger.info('📦 Update user response: $response');
+
+      if (response is Map) {
+        if (response['success'] == true) {
+          AppLogger.info('✅ User updated successfully');
+          await fetchAllUsers();
+          return true;
+        } else {
+          _error = response['error']?.toString() ?? 'فشل في تحديث المستخدم';
+          AppLogger.error('Update user failed', Exception(_error));
+          return false;
+        }
       }
 
-      AppLogger.info('User updated: $email');
-
-      // 3. Refresh users list
-      await fetchAllUsers();
-
-      return true;
+      _error = 'استجابة غير متوقعة من الخادم';
+      return false;
     } catch (e) {
-      _error = 'Error updating user: $e';
+      _error = 'خطأ في تحديث المستخدم: $e';
       AppLogger.error('Update user error', e);
       return false;
     } finally {
@@ -784,30 +916,42 @@ class SupabaseProvider with ChangeNotifier {
   }
 
   /// Toggle user active status
+  /// Uses RPC function to ban/unban in auth.users + update profiles
   Future<bool> toggleUserStatus({
     required String userId,
     required bool isActive,
   }) async {
     _isLoading = true;
+    _error = null;
     notifyListeners();
 
     try {
-      await Supabase.instance.client
-          .from('profiles')
-          .update({
-            'is_active': isActive,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', userId);
+      AppLogger.info('🔄 Toggling user status via RPC: $userId -> $isActive');
 
-      AppLogger.info('User status toggled: $userId -> $isActive');
+      final response = await Supabase.instance.client.rpc(
+        'admin_toggle_user_status',
+        params: {'p_user_id': userId, 'p_active': isActive},
+      );
 
-      // Refresh users list
-      await fetchAllUsers();
+      AppLogger.info('📦 Toggle status response: $response');
 
-      return true;
+      if (response is Map) {
+        if (response['success'] == true) {
+          AppLogger.info('✅ User status toggled successfully');
+          await fetchAllUsers();
+          return true;
+        } else {
+          _error =
+              response['error']?.toString() ?? 'فشل في تغيير حالة المستخدم';
+          AppLogger.error('Toggle status failed', Exception(_error));
+          return false;
+        }
+      }
+
+      _error = 'استجابة غير متوقعة من الخادم';
+      return false;
     } catch (e) {
-      _error = 'Error toggling user status: $e';
+      _error = 'خطأ في تغيير حالة المستخدم: $e';
       AppLogger.error('Toggle user status error', e);
       return false;
     } finally {

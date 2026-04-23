@@ -1,8 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:ell_tall_market/utils/location_ui_text.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import '../../providers/store_provider.dart';
+import '../../providers/location_provider.dart';
+import '../../providers/favorites_provider.dart';
+import '../../providers/supabase_provider.dart';
+import '../../providers/category_provider.dart';
 import '../../models/store_model.dart';
 import '../../utils/app_routes.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class StoresScreen extends StatefulWidget {
   final String? categoryId;
@@ -45,15 +53,62 @@ class _StoresScreenState extends State<StoresScreen> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     final storeProvider = Provider.of<StoreProvider>(context, listen: false);
-    await storeProvider.fetchStores();
+    final locationProvider = Provider.of<LocationProvider>(
+      context,
+      listen: false,
+    );
+
+    // جلب المتاجر القريبة بناءً على GPS فقط
+    if (!locationProvider.hasLocation) {
+      await locationProvider.getCurrentLocation();
+    }
+
+    if (locationProvider.hasLocation) {
+      await storeProvider.fetchNearbyStores(
+        latitude: locationProvider.latitude!,
+        longitude: locationProvider.longitude!,
+        maxDistanceKm: 15,
+      );
+    } else {
+      // في حالة عدم توفر الموقع، لا نعرض متاجر (لا يمكن تحديد النطاق)
+      storeProvider.clear();
+    }
+
+    if (!mounted) return;
+
+    // جلب الفئات لربط الأسماء بالمعرفات
+    final categoryProvider = Provider.of<CategoryProvider>(
+      context,
+      listen: false,
+    );
+    if (categoryProvider.categories.isEmpty) {
+      await categoryProvider.fetchCategories();
+    }
+
+    if (!mounted) return;
+
     _updateCategoriesFromStores();
     setState(() => _isLoading = false);
   }
 
   void _updateCategoriesFromStores() {
     final storeProvider = Provider.of<StoreProvider>(context, listen: false);
+    final categoryProvider = Provider.of<CategoryProvider>(
+      context,
+      listen: false,
+    );
+
+    // بناء خريطة للمعرفات والأسماء
+    final mapping = <String, String>{};
+    for (final cat in categoryProvider.categories) {
+      mapping[cat.id] = cat.name;
+    }
+
+    // تحديث خريطة الفئات في الـ Provider لتستفيد منها باقي الشاشات
+    storeProvider.updateCategoryMapping(mapping);
+
     setState(() {
-      _categories = storeProvider.getStoreCategories();
+      _categories = storeProvider.getStoreCategories(categoryMapping: mapping);
     });
   }
 
@@ -79,10 +134,20 @@ class _StoresScreenState extends State<StoresScreen> {
   bool get _hasActiveFilters =>
       _searchQuery.isNotEmpty || _selectedCategoryId != 'all';
 
+  void _checkLoginAndNavigate(Function action) {
+    final authProvider = Provider.of<SupabaseProvider>(context, listen: false);
+    if (authProvider.isLoggedIn) {
+      action();
+    } else {
+      Navigator.pushNamed(context, AppRoutes.login);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final locationProvider = Provider.of<LocationProvider>(context);
 
     return Scaffold(
       body: NestedScrollView(
@@ -99,16 +164,17 @@ class _StoresScreenState extends State<StoresScreen> {
               title: Consumer<StoreProvider>(
                 builder: (context, provider, _) {
                   final filteredCount = provider.filteredStores.length;
-                  final totalCount = provider.stores.length;
+                  final totalCount = provider.nearbyStores.isNotEmpty
+                      ? provider.nearbyStores.length
+                      : provider.stores.length;
 
                   String subtitle;
                   if (_selectedCategoryId != 'all') {
                     final categoryName = _categories[_selectedCategoryId] ?? '';
                     subtitle =
-                        '$categoryName • $filteredCount ${filteredCount == 1 ? 'متجر' : 'متجر'}';
+                        '${categoryName.isNotEmpty ? categoryName : _selectedCategoryId} • $filteredCount متجر';
                   } else {
-                    subtitle =
-                        '$totalCount ${totalCount == 1 ? 'متجر' : 'متجر'}';
+                    subtitle = '$totalCount متجر';
                   }
 
                   return Column(
@@ -203,8 +269,8 @@ class _StoresScreenState extends State<StoresScreen> {
                         children: _categories.entries
                             .map(
                               (entry) => _buildCategoryChip(
-                                entry.key,
-                                entry.value,
+                                entry.key, // categoryId
+                                entry.value, // categoryName (label)
                                 colorScheme,
                               ),
                             )
@@ -219,9 +285,9 @@ class _StoresScreenState extends State<StoresScreen> {
           ];
         },
         body: _isLoading
-            ? Center(
-                child: CircularProgressIndicator(color: colorScheme.primary),
-              )
+            ? _buildStoresShimmer(colorScheme)
+            : !locationProvider.hasLocation
+            ? _buildLocationRequiredState(locationProvider, colorScheme)
             : Consumer<StoreProvider>(
                 builder: (context, storeProvider, _) {
                   final stores = storeProvider.filteredStores;
@@ -234,13 +300,16 @@ class _StoresScreenState extends State<StoresScreen> {
                     onRefresh: _loadData,
                     child: GridView.builder(
                       padding: const EdgeInsets.all(16),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                            childAspectRatio: 0.75,
-                          ),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: context.responsive(
+                          mobile: 3,
+                          tablet: 4,
+                          wide: 6,
+                        ),
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        childAspectRatio: 0.62,
+                      ),
                       itemCount: stores.length,
                       itemBuilder: (context, index) {
                         return _buildStoreCard(
@@ -253,6 +322,188 @@ class _StoresScreenState extends State<StoresScreen> {
                   );
                 },
               ),
+      ),
+    );
+  }
+
+  Widget _buildStoresShimmer(ColorScheme colorScheme) {
+    final placeholderColor = colorScheme.surfaceContainerHighest;
+
+    return AppShimmer.wrap(
+      context,
+      child: GridView.builder(
+        padding: const EdgeInsets.all(16),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: context.responsive(mobile: 3, tablet: 4, wide: 6),
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 0.62,
+        ),
+        itemCount: 9,
+        itemBuilder: (context, index) {
+          return Card(
+            margin: EdgeInsets.zero,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(color: colorScheme.outlineVariant, width: 1),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // image
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(12),
+                    ),
+                    child: Container(color: placeholderColor),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        height: 12,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: placeholderColor,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: placeholderColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            height: 10,
+                            width: 32,
+                            decoration: BoxDecoration(
+                              color: placeholderColor,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: placeholderColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Container(
+                              height: 10,
+                              decoration: BoxDecoration(
+                                color: placeholderColor,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildLocationRequiredState(
+    LocationProvider locationProvider,
+    ColorScheme colorScheme,
+  ) {
+    final theme = Theme.of(context);
+
+    final isDeniedForever = LocationUiText.isDeniedForever(locationProvider);
+    final isServiceOff = LocationUiText.isServiceOff(locationProvider);
+    final message = LocationUiText.message(locationProvider);
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.location_off_rounded,
+              size: 72,
+              color: colorScheme.outline,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              LocationUiText.title,
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: colorScheme.onSurface,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
+              children: [
+                FilledButton.icon(
+                  onPressed: () async {
+                    if (isDeniedForever) {
+                      await Geolocator.openAppSettings();
+                      return;
+                    }
+                    final got = await locationProvider.getCurrentLocation();
+                    if (!mounted) return;
+                    if (got) {
+                      await _loadData();
+                    }
+                  },
+                  icon: Icon(
+                    isDeniedForever
+                        ? Icons.settings_rounded
+                        : Icons.my_location_rounded,
+                  ),
+                  label: Text(
+                    LocationUiText.primaryButtonLabel(locationProvider),
+                  ),
+                ),
+                if (isServiceOff)
+                  OutlinedButton.icon(
+                    onPressed: () => Geolocator.openLocationSettings(),
+                    icon: const Icon(Icons.location_on_outlined),
+                    label: const Text(LocationUiText.secondaryButtonLabel),
+                  ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -335,32 +586,19 @@ class _StoresScreenState extends State<StoresScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Store image with overlay badge
-            Expanded(
+            AspectRatio(
+              aspectRatio: 1,
               child: Stack(
                 children: [
                   ClipRRect(
                     borderRadius: const BorderRadius.vertical(
                       top: Radius.circular(12),
                     ),
-                    child: store.imageUrl != null && store.imageUrl!.isNotEmpty
-                        ? Image.network(
-                            _cacheBustedImageUrl(store.imageUrl!, store),
-                            width: double.infinity,
-                            height: double.infinity,
-                            fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return _buildPlaceholder(
-                                store.category,
-                                categoryName,
-                                colorScheme,
-                              );
-                            },
-                          )
-                        : _buildPlaceholder(
-                            store.category,
-                            categoryName,
-                            colorScheme,
-                          ),
+                    child: _buildStoreCoverImage(
+                      store: store,
+                      categoryName: categoryName,
+                      colorScheme: colorScheme,
+                    ),
                   ),
                   // Status badge positioned on image
                   Positioned(
@@ -410,12 +648,54 @@ class _StoresScreenState extends State<StoresScreen> {
                       ),
                     ),
                   ),
+                  // Favorite Button
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Consumer<FavoritesProvider>(
+                      builder: (context, favProvider, _) {
+                        final isFav = favProvider.isFavoriteStore(store.id);
+                        return GestureDetector(
+                          onTap: () => _checkLoginAndNavigate(() async {
+                            await favProvider.toggleFavoriteStore(store);
+                            if (mounted && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    isFav
+                                        ? 'تمت الإزالة من المفضلة'
+                                        : 'تمت الإضافة للمفضلة',
+                                  ),
+                                  backgroundColor: isFav
+                                      ? Colors.red
+                                      : Colors.green,
+                                  duration: const Duration(seconds: 1),
+                                ),
+                              );
+                            }
+                          }),
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.8),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              isFav ? Icons.favorite : Icons.favorite_border,
+                              color: isFav ? Colors.red : Colors.grey[600],
+                              size: 16,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
                 ],
               ),
             ),
             // Store info
             Padding(
-              padding: const EdgeInsets.all(8),
+              padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
@@ -425,18 +705,18 @@ class _StoresScreenState extends State<StoresScreen> {
                     store.name,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w600,
-                      fontSize: 13,
+                      fontSize: 12,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   // Rating
                   Row(
                     children: [
                       Icon(
                         Icons.star_rounded,
-                        size: 14,
+                        size: 12,
                         color: Colors.amber[700],
                       ),
                       const SizedBox(width: 2),
@@ -444,7 +724,7 @@ class _StoresScreenState extends State<StoresScreen> {
                         store.rating.toStringAsFixed(1),
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           fontWeight: FontWeight.bold,
-                          fontSize: 11,
+                          fontSize: 10,
                           color: colorScheme.onSurface,
                         ),
                       ),
@@ -457,6 +737,39 @@ class _StoresScreenState extends State<StoresScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildStoreCoverImage({
+    required StoreModel store,
+    required String categoryName,
+    required ColorScheme colorScheme,
+  }) {
+    final placeholder = _buildPlaceholder(
+      store.category,
+      categoryName,
+      colorScheme,
+    );
+
+    final directUrl =
+        (store.imageUrl != null && store.imageUrl!.trim().isNotEmpty)
+        ? store.imageUrl!.trim()
+        : null;
+
+    Widget buildImage(String url) {
+      return Image.network(
+        _cacheBustedImageUrl(url, store),
+        width: double.infinity,
+        height: double.infinity,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => placeholder,
+      );
+    }
+
+    if (directUrl != null) {
+      return buildImage(directUrl);
+    }
+
+    return placeholder;
   }
 
   Widget _buildPlaceholder(

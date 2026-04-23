@@ -27,17 +27,8 @@ class Helpers {
       case 'EGP':
         symbol = 'ج.م';
         break;
-      case 'SAR':
-        symbol = 'ر.س';
-        break;
       case 'USD':
         symbol = '\$';
-        break;
-      case 'EUR':
-        symbol = '€';
-        break;
-      case 'AED':
-        symbol = 'د.إ';
         break;
       default:
         symbol = 'ج.م'; // Default to EGP

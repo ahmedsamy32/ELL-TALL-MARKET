@@ -1,7 +1,6 @@
 import 'dart:async';
-import 'dart:io';
-
-import 'package:flutter/foundation.dart';
+// Removed dart:io for Web compatibility
+import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/store_model.dart';
 import 'package:ell_tall_market/core/logger.dart';
@@ -23,14 +22,27 @@ class StoreProvider with ChangeNotifier {
   final Map<String, List<Map<String, dynamic>>> _storeSectionsCache = {};
   final Map<String, StoreDetailBundle> _storeDetailCache = {};
   final Map<String, String?> _storeCoverCache = {};
+  Map<String, String> _categoryMapping = {};
   StreamSubscription<List<Map<String, dynamic>>>? _storeStreamSub;
   Timer? _realtimeRetryTimer;
   bool _realtimeTemporarilyDisabled = false;
   static const Duration _realtimeRetryDelay = Duration(seconds: 45);
 
+  /// عند تفعيل هذا الوضع، تعتمد القوائم على المتاجر القريبة فقط.
+  /// هذا يمنع ظهور "كل المتاجر" ثم اختفائها بعد تطبيق الموقع.
+  bool _nearbyModeEnabled = false;
+
   bool _isLoading = false;
   String? _error;
   StoreModel? _selectedStore;
+
+  bool _hasDisplayableAddress(StoreModel store) {
+    return store.address.trim().isNotEmpty;
+  }
+
+  List<StoreModel> _filterStoresWithAddress(Iterable<StoreModel> stores) {
+    return stores.where(_hasDisplayableAddress).toList(growable: false);
+  }
 
   // ===== Getters =====
   List<StoreModel> get stores => _stores;
@@ -43,12 +55,18 @@ class StoreProvider with ChangeNotifier {
 
   void _setLoading(bool value) {
     _isLoading = value;
-    notifyListeners();
+    // تأجيل notifyListeners إلى ما بعد انتهاء مرحلة البناء لتجنب الأخطاء
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
   }
 
   void _setError(String? value) {
     _error = value;
-    notifyListeners();
+    // تأجيل notifyListeners إلى ما بعد انتهاء مرحلة البناء لتجنب الأخطاء
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
   }
 
   @override
@@ -65,6 +83,9 @@ class StoreProvider with ChangeNotifier {
   Future<void> fetchStores({bool refresh = false}) async {
     if (!refresh && _stores.isNotEmpty) return;
 
+    // العودة للوضع العام (غير مرتبط بالموقع)
+    _nearbyModeEnabled = false;
+
     _setLoading(true);
     _setError(null);
 
@@ -77,9 +98,12 @@ class StoreProvider with ChangeNotifier {
           .eq('is_active', true)
           .order('created_at', ascending: false);
 
-      _stores = (response as List)
+      final fetchedStores = (response as List)
           .map((data) => StoreModel.fromSupabaseMap(data))
           .toList();
+
+      // لا نعرض متاجر بدون عنوان (العنوان مشتق من الحقول التفصيلية أيضاً).
+      _stores = _filterStoresWithAddress(fetchedStores);
 
       if (_stores.isEmpty) {
         AppLogger.info("لا توجد متاجر في قاعدة البيانات");
@@ -104,11 +128,250 @@ class StoreProvider with ChangeNotifier {
     }
   }
 
+  /// جلب المتاجر القريبة من موقع العميل باستخدام PostGIS
+  /// يُستخدم في الصفحة الرئيسية والمتاجر المميزة
+  Future<void> fetchNearbyStores({
+    required double latitude,
+    required double longitude,
+    double maxDistanceKm = 15,
+    String? categoryFilter,
+  }) async {
+    // تفعيل وضع المتاجر القريبة حتى لو كانت النتيجة فارغة.
+    _nearbyModeEnabled = true;
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      AppLogger.info(
+        "جلب المتاجر القريبة من الموقع ($latitude, $longitude)...",
+      );
+
+      final response = await _supabase.rpc(
+        'get_nearby_stores',
+        params: {
+          'customer_lat': latitude,
+          'customer_lng': longitude,
+          'max_distance_km': maxDistanceKm,
+          'category_filter': categoryFilter,
+        },
+      );
+
+      final List<Map<String, dynamic>> nearbyData =
+          List<Map<String, dynamic>>.from(response ?? []);
+
+      if (nearbyData.isEmpty) {
+        _nearbyStores = [];
+        _featuredStores = [];
+        _filteredStores = [];
+        _stores = [];
+        _updateStoresByCategory();
+        AppLogger.info('لا توجد متاجر قريبة ضمن النطاق');
+        notifyListeners();
+        return;
+      }
+
+      // جلب بيانات المتاجر الكاملة من جدول stores حتى نحصل على cover_url والعنوان
+      // (RPC get_nearby_stores لا يُرجع هذه الحقول).
+      final nearbyIds = nearbyData
+          .map((row) => (row['id'] ?? row['store_id'])?.toString())
+          .whereType<String>()
+          .where((id) => id.isNotEmpty)
+          .toList();
+
+      final fullRows = await _supabase
+          .from('stores')
+          .select(
+            'id, merchant_id, name, description, phone, governorate, city, area, street, landmark, address, '
+            'latitude, longitude, delivery_time, is_open, delivery_fee, min_order, delivery_mode, delivery_radius_km, '
+            'rating, review_count, category, opening_hours, image_url, cover_url, is_active, created_at, updated_at',
+          )
+          .inFilter('id', nearbyIds);
+
+      final fullById = <String, StoreModel>{
+        for (final row in (fullRows as List))
+          if ((row as Map)['id'] != null)
+            (row['id'].toString()): StoreModel.fromSupabaseMap(
+              Map<String, dynamic>.from(row),
+            ),
+      };
+
+      // دمج بيانات RPC (المسافة/الوقت المتوقع/… إلخ) مع بيانات المتجر الكاملة.
+      final mergedStores = nearbyData.map((data) {
+        final id = (data['id'] ?? data['store_id'])?.toString() ?? '';
+        final base = fullById[id];
+
+        if (base == null) {
+          // احتياطي: لو لم نستطع جلب صف المتجر من الجدول لأي سبب.
+          return StoreModel(
+            id: id,
+            merchantId: '',
+            name: data['name'] as String? ?? '',
+            description: data['description'] as String?,
+            imageUrl: data['image_url'] as String?,
+            coverUrl: data['cover_url'] as String?,
+            address: (data['address'] as String?)?.trim() ?? '',
+            phone: null,
+            isOpen: data['is_open'] as bool? ?? true,
+            isActive: true,
+            rating: (data['rating'] as num?)?.toDouble() ?? 0.0,
+            deliveryFee: (data['delivery_fee'] as num?)?.toDouble() ?? 0.0,
+            minOrder: (data['min_order_amount'] as num?)?.toDouble() ?? 0.0,
+            deliveryTime: data['estimated_delivery_time'] as int? ?? 30,
+            latitude: (data['latitude'] as num?)?.toDouble(),
+            longitude: (data['longitude'] as num?)?.toDouble(),
+            createdAt: DateTime.now(),
+            deliveryMode: 'store',
+            deliveryRadiusKm:
+                (data['delivery_radius_km'] as num?)?.toDouble() ?? 7.0,
+          );
+        }
+
+        return base.copyWith(
+          // RPC fields (prefer these over base when provided)
+          isOpen: data['is_open'] as bool?,
+          rating: (data['rating'] as num?)?.toDouble(),
+          deliveryFee: (data['delivery_fee'] as num?)?.toDouble(),
+          minOrder: (data['min_order_amount'] as num?)?.toDouble(),
+          deliveryTime: data['estimated_delivery_time'] as int?,
+          latitude: (data['latitude'] as num?)?.toDouble(),
+          longitude: (data['longitude'] as num?)?.toDouble(),
+          // Image URL from RPC might be fresher depending on function
+          imageUrl: data['image_url'] as String?,
+        );
+      }).toList();
+
+      // لا نعرض متاجر بدون عنوان.
+      _nearbyStores = _filterStoresWithAddress(mergedStores);
+
+      if (_nearbyStores.isEmpty) {
+        _featuredStores = [];
+        _filteredStores = [];
+        _stores = [];
+        _updateStoresByCategory();
+        AppLogger.info('⚠️ تم استبعاد كل المتاجر القريبة لعدم وجود عنوان');
+        notifyListeners();
+        return;
+      }
+
+      // لتجنب التعارض بين مصادر البيانات في الشاشات، نجعل _stores تعكس نطاق المتاجر القريبة.
+      _stores = List.from(_nearbyStores);
+      _updateStoresByCategory();
+
+      // تحديث المتاجر المميزة والمفلترة لتكون المتاجر القريبة فقط
+      _featuredStores = List.from(_nearbyStores);
+      _filteredStores = List.from(_nearbyStores);
+
+      AppLogger.info("تم جلب ${_nearbyStores.length} متجر قريب");
+      notifyListeners();
+    } catch (e) {
+      AppLogger.error("خطأ في جلب المتاجر القريبة", e);
+      // في حالة الخطأ لا نعرض كل المتاجر (لمنع ظهورها ثم اختفائها عند تطبيق الموقع)
+      _nearbyStores = [];
+      _featuredStores = [];
+      _filteredStores = [];
+      _setError('تعذر تحميل المتاجر القريبة حالياً');
+      notifyListeners();
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  /// جلب المتاجر حسب المدينة (بدون GPS)
+  /// يُستخدم عند الاعتماد على العنوان المختار من العميل.
+  Future<void> fetchStoresByCity({
+    required String city,
+    String? governorate,
+    String? categoryFilter,
+  }) async {
+    final cityValue = city.trim();
+    final governorateValue = (governorate ?? '').trim();
+
+    if (cityValue.isEmpty) {
+      _nearbyModeEnabled = true;
+      _nearbyStores = [];
+      _featuredStores = [];
+      _filteredStores = [];
+      _stores = [];
+      _updateStoresByCategory();
+      notifyListeners();
+      return;
+    }
+
+    _nearbyModeEnabled = true;
+    _setLoading(true);
+    _setError(null);
+
+    try {
+      AppLogger.info(
+        '🏙️ جلب المتاجر حسب المدينة: $cityValue${governorateValue.isNotEmpty ? ' - $governorateValue' : ''}',
+      );
+
+      var query = _supabase
+          .from('stores')
+          .select(
+            'id, merchant_id, name, description, phone, governorate, city, area, street, landmark, address, '
+            'latitude, longitude, delivery_time, is_open, delivery_fee, min_order, delivery_mode, delivery_radius_km, '
+            'rating, review_count, category, opening_hours, image_url, cover_url, is_active, created_at, updated_at',
+          )
+          .eq('is_active', true)
+          .eq('city', cityValue);
+
+      if (governorateValue.isNotEmpty) {
+        query = query.eq('governorate', governorateValue);
+      }
+
+      if (categoryFilter != null && categoryFilter.trim().isNotEmpty) {
+        query = query.eq('category', categoryFilter.trim());
+      }
+
+      final rows = await query;
+
+      final scopedStores = (rows as List)
+          .map(
+            (row) => StoreModel.fromSupabaseMap(Map<String, dynamic>.from(row)),
+          )
+          .toList(growable: false);
+
+      _nearbyStores = _filterStoresWithAddress(scopedStores);
+      _stores = List.from(_nearbyStores);
+      _featuredStores = List.from(_nearbyStores);
+      _filteredStores = List.from(_nearbyStores);
+      _updateStoresByCategory();
+
+      AppLogger.info('✅ تم جلب ${_nearbyStores.length} متجر ضمن نفس المدينة');
+      notifyListeners();
+    } catch (e) {
+      AppLogger.error('❌ خطأ في جلب المتاجر حسب المدينة', e);
+      _nearbyStores = [];
+      _featuredStores = [];
+      _filteredStores = [];
+      _stores = [];
+      _updateStoresByCategory();
+      _setError('تعذر تحميل المتاجر حسب المدينة حالياً');
+      notifyListeners();
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  /// تحديث المتاجر المميزة بناءً على موقع العميل
+  void updateFeaturedStoresFromLocation() {
+    if (_nearbyStores.isNotEmpty) {
+      _featuredStores = List.from(_nearbyStores);
+    } else {
+      _featuredStores = _stores.where((s) => s.isActive).toList();
+    }
+    notifyListeners();
+  }
+
   /// تحديث تصنيف المتاجر حسب الفئة
   void _updateStoresByCategory() {
     _storesByCategory.clear();
     // Since category doesn't exist, we'll categorize by name for now
-    for (final store in _stores) {
+    final source = _nearbyModeEnabled
+        ? _nearbyStores
+        : (_stores.isNotEmpty ? _stores : _nearbyStores);
+    for (final store in source) {
       final category = _resolveStoreCategoryId(store);
       if (!_storesByCategory.containsKey(category)) {
         _storesByCategory[category] = [];
@@ -117,14 +380,35 @@ class StoreProvider with ChangeNotifier {
     }
   }
 
+  void updateCategoryMapping(Map<String, String> mapping) {
+    _categoryMapping = mapping;
+    // تأجيل notifyListeners إلى ما بعد انتهاء مرحلة البناء
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
+  }
+
   /// بناء قائمة الفئات المتاحة لاستخدامها في واجهة المستخدم
-  Map<String, String> getStoreCategories() {
+  Map<String, String> getStoreCategories({
+    Map<String, String>? categoryMapping,
+  }) {
     final categories = <String, String>{'all': 'الكل'};
 
-    for (final store in _stores) {
+    // If the app is currently scoped to nearby stores only, _stores may be empty.
+    // Fall back to _nearbyStores to keep category chips working.
+    final source = _nearbyModeEnabled
+        ? _nearbyStores
+        : (_stores.isNotEmpty ? _stores : _nearbyStores);
+    for (final store in source) {
       final categoryId = _resolveStoreCategoryId(store);
       if (categoryId.isEmpty) continue;
-      categories[categoryId] = _formatCategoryLabel(categoryId);
+
+      // Use mapping if available to get a human-readable name
+      final categoryName =
+          categoryMapping?[categoryId] ??
+          _categoryMapping[categoryId] ??
+          _formatCategoryLabel(categoryId);
+      categories[categoryId] = categoryName;
     }
 
     return categories;
@@ -156,7 +440,20 @@ class StoreProvider with ChangeNotifier {
             }
           },
           onError: (error) {
-            AppLogger.error('بث المتاجر الفوري توقف بسبب خطأ', error);
+            // Don't log timeout errors as errors - they're expected with slow connections
+            final isTimeoutError =
+                error.toString().contains('timedOut') ||
+                error.toString().contains('RealtimeSubscribeException');
+
+            if (isTimeoutError) {
+              AppLogger.warning(
+                '⏱️ انتهت مهلة الاشتراك في البث الفوري - سيتم إعادة المحاولة',
+                error,
+              );
+            } else {
+              AppLogger.error('بث المتاجر الفوري توقف بسبب خطأ', error);
+            }
+
             _storeStreamSub?.cancel();
             _storeStreamSub = null;
             // تحديث القائمة مرة واحدة بحيث يبقى المستخدم يرى أحدث البيانات
@@ -167,25 +464,31 @@ class StoreProvider with ChangeNotifier {
   }
 
   void _handleRealtimeError(dynamic error) {
-    final isHandshakeFailure =
-        error is WebSocketChannelException || error is HandshakeException;
+    // معالجة أخطاء timeout في Realtime subscription
+    final isTimeoutError =
+        error.toString().contains('timedOut') ||
+        error.toString().contains('RealtimeSubscribeException');
 
-    if (!isHandshakeFailure) {
+    final isHandshakeFailure =
+        error is WebSocketChannelException ||
+        error.toString().contains('HandshakeException');
+
+    // إذا كان timeout أو handshake failure، نعطل البث مؤقتاً
+    if (!isHandshakeFailure && !isTimeoutError) {
       return;
     }
 
     if (_realtimeTemporarilyDisabled) {
-      AppLogger.warning(
-        '⚠️ محاولة أخرى للاتصال بالبث الفوري فشلت، ما زلنا في فترة التهدئة',
-      );
+      // Don't spam logs with repeated retry attempts
       return;
     }
 
     _realtimeTemporarilyDisabled = true;
     _realtimeRetryTimer?.cancel();
 
+    final errorType = isTimeoutError ? 'انتهاء المهلة الزمنية' : 'فشل المصافحة';
     AppLogger.warning(
-      '⏸️ تم تعطيل البث الفوري مؤقتاً بسبب فشل المصافحة (Handshake). سنعيد المحاولة خلال ${_realtimeRetryDelay.inSeconds} ثانية.',
+      '⏸️ تم تعطيل البث الفوري مؤقتاً بسبب $errorType. سنعيد المحاولة خلال ${_realtimeRetryDelay.inSeconds} ثانية.',
       error,
     );
 
@@ -197,11 +500,19 @@ class StoreProvider with ChangeNotifier {
   }
 
   void _applyRealtimeStores(List<StoreModel> stores) {
-    _stores = stores;
+    if (_nearbyModeEnabled) {
+      // لا نسمح للبث الفوري باستبدال القوائم عند الاعتماد على الموقع.
+      return;
+    }
+    // لا نعرض متاجر بدون عنوان.
+    _stores = _filterStoresWithAddress(stores);
     _filteredStores = List.from(_stores);
     _featuredStores = _stores.where((s) => s.isActive).toList();
     _updateStoresByCategory();
-    notifyListeners();
+    // تأجيل notifyListeners إلى ما بعد انتهاء مرحلة البناء
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
   }
 
   /// Helper method to extract category from store name
@@ -235,6 +546,12 @@ class StoreProvider with ChangeNotifier {
     if (categoryId == null || categoryId.isEmpty) {
       return 'غير محدد';
     }
+
+    // Check internal mapping first for performance
+    if (_categoryMapping.containsKey(categoryId)) {
+      return _categoryMapping[categoryId]!;
+    }
+
     final categories = getStoreCategories();
     if (categories.containsKey(categoryId)) {
       return categories[categoryId]!;
@@ -250,8 +567,13 @@ class StoreProvider with ChangeNotifier {
   }
 
   /// تصفية المتاجر محلياً (للأداء الأفضل)
+  /// يستخدم المتاجر القريبة إذا كانت متاحة، وإلا يستخدم جميع المتاجر
   void filterStores(String searchQuery, String category) {
-    List<StoreModel> filtered = List.from(_stores);
+    // استخدام المتاجر القريبة إذا كانت متاحة
+    final sourceStores = _nearbyModeEnabled
+        ? _nearbyStores
+        : (_nearbyStores.isNotEmpty ? _nearbyStores : _stores);
+    List<StoreModel> filtered = List.from(sourceStores);
 
     // تصفية حسب الفئة
     final shouldFilterCategory =
@@ -281,7 +603,10 @@ class StoreProvider with ChangeNotifier {
     }
 
     _filteredStores = filtered;
-    notifyListeners();
+    // تأجيل notifyListeners إلى ما بعد انتهاء مرحلة البناء
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
   }
 
   /// ترتيب المتاجر
@@ -307,13 +632,24 @@ class StoreProvider with ChangeNotifier {
         // الافتراضي - حسب التاريخ
         _filteredStores.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     }
-    notifyListeners();
+    // تأجيل notifyListeners إلى ما بعد انتهاء مرحلة البناء
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
   }
 
   /// إعادة تعيين التصفية
   void resetFilters() {
-    _filteredStores = List.from(_stores);
-    notifyListeners();
+    // استخدام المتاجر القريبة إذا كانت متاحة
+    _filteredStores = _nearbyModeEnabled
+        ? List.from(_nearbyStores)
+        : (_nearbyStores.isNotEmpty
+              ? List.from(_nearbyStores)
+              : List.from(_stores));
+    // تأجيل notifyListeners إلى ما بعد انتهاء مرحلة البناء
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      notifyListeners();
+    });
   }
 
   /// Get store by ID
@@ -327,6 +663,8 @@ class StoreProvider with ChangeNotifier {
 
   /// Clear data
   void clear() {
+    // منع ظهور "كل المتاجر" عبر البث الفوري بعد مسح البيانات.
+    _nearbyModeEnabled = true;
     _stores = [];
     _filteredStores = [];
     _featuredStores = [];

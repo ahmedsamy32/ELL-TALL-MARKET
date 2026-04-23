@@ -1,12 +1,16 @@
 import 'dart:convert';
-import 'dart:io';
+// Removed dart:io for Web compatibility
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ell_tall_market/models/notification_model.dart';
+import 'package:uuid/uuid.dart';
 import '../core/logger.dart';
+import '../utils/navigation_service.dart';
+import '../utils/app_routes.dart';
 
 /// Enhanced NotificationService with comprehensive smart features
 class NotificationServiceEnhanced {
@@ -30,6 +34,16 @@ class NotificationServiceEnhanced {
   String? _fcmToken;
   Map<String, dynamic> _userPreferences = {};
   final List<String> _subscribedTopics = [];
+
+  /// Track roles that have been registered for this device
+  final Set<String> _activeRoles = {};
+
+  /// Expose FCM token availability
+  String? get fcmToken => _fcmToken;
+
+  /// حماية من تكرار الإشعارات - تتبع الإشعارات المعروضة مؤخراً
+  final Set<String> _recentlyShownNotifications = {};
+  static const int _maxRecentNotifications = 50;
 
   // ===== Initialization =====
 
@@ -84,11 +98,22 @@ class NotificationServiceEnhanced {
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
       AppLogger.info('✅ Firebase messaging permissions granted');
 
-      // Get FCM token
+      // Get FCM token (save to memory only; DB save happens after auth)
       _fcmToken = await _firebaseMessaging.getToken();
       if (_fcmToken != null) {
-        await _saveDeviceToken(_fcmToken!);
-        AppLogger.info('FCM Token saved: ${_fcmToken!.substring(0, 20)}...');
+        AppLogger.info('FCM Token acquired: ${_fcmToken!.substring(0, 20)}...');
+        // Try saving if user is already authenticated (e.g. app restart)
+        final userId = _supabase.auth.currentUser?.id;
+        if (userId != null) {
+          await _saveDeviceToken(_fcmToken!);
+          AppLogger.info(
+            'FCM Token saved to DB for already-authenticated user',
+          );
+        } else {
+          AppLogger.info(
+            'User not yet authenticated — token will be saved after login',
+          );
+        }
       }
 
       // Setup token refresh listener
@@ -118,6 +143,33 @@ class NotificationServiceEnhanced {
     await _localNotifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: _onLocalNotificationTapped,
+    );
+
+    // Create Android notification channel (required for Android 8.0+)
+    final androidPlugin = _localNotifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    if (androidPlugin != null) {
+      const channel = AndroidNotificationChannel(
+        'ell_tall_market',
+        'Ell Tall Market',
+        description: 'إشعارات سوق التل',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
+        enableLights: true,
+        showBadge: true,
+      );
+      await androidPlugin.createNotificationChannel(channel);
+      AppLogger.info('✅ Android notification channel created');
+    }
+
+    // iOS foreground notification presentation options
+    await _firebaseMessaging.setForegroundNotificationPresentationOptions(
+      alert: true,
+      badge: true,
+      sound: true,
     );
   }
 
@@ -151,6 +203,7 @@ class NotificationServiceEnhanced {
     DateTime? scheduledTime,
     List<String>? tags,
     String? campaignId,
+    String? targetRole,
   }) async {
     try {
       AppLogger.info('Sending smart notification to client: $clientId');
@@ -181,32 +234,37 @@ class NotificationServiceEnhanced {
         createdAt: DateTime.now(),
       );
 
-      // Save to database
+      // Merge targetRole into data if provided
+      final finalData = Map<String, dynamic>.from(data ?? {});
+      if (targetRole != null) {
+        finalData['target_role'] = targetRole;
+      }
+
+      // Save to database → DB trigger sends FCM push automatically
+      // NO local notification here! The target device receives via FCM.
       await _saveNotificationToDatabase(
         notification,
-        data,
+        finalData,
         imageUrl,
         actionUrl,
         priority,
         tags,
         campaignId,
+        targetRole: targetRole,
       );
 
-      // Schedule or send immediately
+      // Schedule if needed (future implementation)
       if (scheduledTime != null && scheduledTime.isAfter(DateTime.now())) {
-        await _scheduleNotification(notification, scheduledTime, data);
-      } else {
-        await _deliverNotification(
-          notification,
-          data,
-          imageUrl,
-          actionUrl,
-          priority,
-        );
+        await _scheduleNotification(notification, scheduledTime, finalData);
       }
 
-      // Track analytics
-      await _trackNotificationSent(notification, campaignId);
+      // Track analytics (fail silently if RLS blocks it)
+      try {
+        await _trackNotificationSent(notification, campaignId);
+      } catch (e) {
+        AppLogger.warning('⚠️ Analytics tracking failed (RLS policy): $e');
+        // Don't fail the entire notification flow
+      }
 
       return true;
     } catch (e) {
@@ -225,6 +283,7 @@ class NotificationServiceEnhanced {
     String? imageUrl,
     String? actionUrl,
     String? campaignId,
+    String? targetRole,
     int batchSize = 100,
   }) async {
     final results = <String, dynamic>{
@@ -254,6 +313,7 @@ class NotificationServiceEnhanced {
               imageUrl: imageUrl,
               actionUrl: actionUrl,
               campaignId: campaignId,
+              targetRole: targetRole,
             ),
           ),
         );
@@ -740,17 +800,15 @@ class NotificationServiceEnhanced {
   /// Get user notification preferences
   Future<Map<String, dynamic>> getUserPreferences(String clientId) async {
     try {
-      final response = await _supabase
-          .from('client_notification_preferences')
-          .select('preferences')
-          .eq('client_id', clientId)
-          .maybeSingle();
+      // ❌ العمود 'preferences' لا يوجد في الجدول
+      // بدلاً من محاولة جلبه - استخدم التفضيلات الافتراضية
+      // final response = await _supabase
+      //     .from('client_notification_preferences')
+      //     .select('preferences')
+      //     .eq('client_id', clientId)
+      //     .maybeSingle();
 
-      if (response != null && response['preferences'] != null) {
-        return jsonDecode(response['preferences']);
-      }
-
-      // Return default preferences
+      // Return default preferences (since column doesn't exist)
       return _getDefaultPreferences();
     } catch (e) {
       AppLogger.warning('⚠️ Failed to get preferences', e);
@@ -801,7 +859,7 @@ class NotificationServiceEnhanced {
             table: 'notifications',
             filter: PostgresChangeFilter(
               type: PostgresChangeFilterType.eq,
-              column: 'client_id',
+              column: 'user_id', // العمود الصحيح في جدول notifications
               value: userId,
             ),
             callback: _handleRealtimeNotification,
@@ -815,31 +873,30 @@ class NotificationServiceEnhanced {
   }
 
   /// Handle real-time notification updates
+  /// ⚠️ لا نعرض إشعار محلي هنا - FCM push بيتكفل بالعرض
+  /// Realtime يُستخدم فقط لتحديث واجهة المستخدم (badge, list refresh)
   void _handleRealtimeNotification(PostgresChangePayload payload) {
     try {
       final notification = NotificationModel.fromMap(payload.newRecord);
 
-      // Show local notification for real-time updates
-      _showLocalNotification(
-        notification.id,
-        notification.title,
-        notification.body,
-        payload: jsonEncode({
-          'id': notification.id,
-          'user_id': notification.userId,
-          'title': notification.title,
-          'body': notification.body,
-          'type': notification.type?.value,
-          'data': notification.data,
-        }),
-      );
+      // إبلاغ المستمعين بوجود إشعار جديد (لتحديث UI فقط)
+      // لا نعرض local notification لأن FCM push هيوصل الإشعار
+      _onNewNotificationCallback?.call(notification);
 
       AppLogger.info(
-        '📱 Real-time notification received: ${notification.title}',
+        '📱 Real-time notification received (UI update only): ${notification.title}',
       );
     } catch (e) {
       AppLogger.error('❌ Failed to handle real-time notification', e);
     }
+  }
+
+  /// Callback for new notifications (UI updates)
+  Function(NotificationModel)? _onNewNotificationCallback;
+
+  /// Set callback for new notification events (for UI updates like badge count)
+  void onNewNotification(Function(NotificationModel) callback) {
+    _onNewNotificationCallback = callback;
   }
 
   // ===== Analytics & Tracking =====
@@ -851,6 +908,21 @@ class NotificationServiceEnhanced {
     Map<String, dynamic>? additionalData,
   }) async {
     try {
+      // Validate UUID format (notification_analytics.notification_id expects UUID)
+      // FCM message IDs like "0:1770409046999692%d1912ae5d1912ae5" are not valid UUIDs
+      final uuidRegex = RegExp(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+        caseSensitive: false,
+      );
+
+      if (!uuidRegex.hasMatch(notificationId)) {
+        // Skip analytics for non-UUID notification IDs (FCM message IDs)
+        AppLogger.info(
+          '⏭️ Skipped analytics for non-UUID notification: $notificationId',
+        );
+        return;
+      }
+
       await _supabase.from('notification_analytics').insert({
         'notification_id': notificationId,
         'action': action,
@@ -936,7 +1008,7 @@ class NotificationServiceEnhanced {
 
   /// Generate unique notification ID
   String _generateNotificationId() {
-    return 'notif_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(9999)}';
+    return const Uuid().v4();
   }
 
   /// Generate unique campaign ID
@@ -948,56 +1020,196 @@ class NotificationServiceEnhanced {
   Map<String, dynamic> _getDefaultPreferences() {
     return {
       'enabled': true,
-      'types': {
-        'order_update': true,
-        'promotion': true,
-        'system': true,
-        'message': true,
-      },
+      'types': {'order': true, 'promotion': true, 'system': true},
       'channels': {'push': true, 'local': true, 'in_app': true},
       'quiet_hours': {'enabled': false, 'start': '22:00', 'end': '08:00'},
       'frequency_limits': {'daily_max': 10, 'weekly_max': 50},
     };
   }
 
-  /// Save device token to database
-  Future<void> _saveDeviceToken(String token) async {
+  /// Save device token to database with role separation
+  /// Each user can register their token for different roles:
+  /// - client: for customer notifications (default)
+  /// - merchant: for store order notifications (uses store_id)
+  /// - admin: for system/admin notifications
+  /// - captain: for delivery notifications
+  Future<void> _saveDeviceToken(
+    String token, {
+    String role = 'client',
+    String? storeId,
+  }) async {
     try {
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) return;
 
-      await _supabase.from('device_tokens').upsert({
+      final deviceType = kIsWeb ? 'web' : 'mobile';
+
+      // حذف أي سجلات قديمة لنفس التوكن من مستخدمين آخرين
+      // لمنع وصول إشعارات مستخدم سابق على نفس الجهاز
+      await _supabase
+          .from('device_tokens')
+          .delete()
+          .neq('client_id', userId)
+          .eq('token', token);
+
+      final tokenData = <String, dynamic>{
         'client_id': userId,
         'token': token,
-        'platform': Platform.isIOS ? 'ios' : 'android',
-        'app_version': '1.0.0', // Note: Get from package info
+        'platform': deviceType,
+        'role': role,
+        'app_version': '1.0.0',
         'updated_at': DateTime.now().toIso8601String(),
-      });
+      };
+
+      if (storeId != null) {
+        tokenData['store_id'] = storeId;
+      }
+
+      await _supabase
+          .from('device_tokens')
+          .upsert(
+            tokenData,
+            onConflict: storeId != null
+                ? 'store_id,token'
+                : 'client_id,token,role',
+          );
     } catch (e) {
-      AppLogger.warning('⚠️ Failed to save device token', e);
+      AppLogger.warning('⚠️ Failed to save device token (role: $role)', e);
     }
   }
 
-  /// Handle token refresh
+  /// حفظ device token للمستخدم الحالي مع الدور المناسب
+  /// يتم استدعاؤها بعد تسجيل الدخول أو عند تغير حالة المصادقة
+  Future<void> saveTokenForCurrentUser({String role = 'client'}) async {
+    try {
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) {
+        AppLogger.warning('⚠️ Cannot save token: no authenticated user');
+        return;
+      }
+
+      // If FCM token not yet available, try to get it
+      _fcmToken ??= await _firebaseMessaging.getToken();
+
+      if (_fcmToken == null) {
+        AppLogger.warning('⚠️ Cannot save token: FCM token unavailable');
+        return;
+      }
+
+      await _saveDeviceToken(_fcmToken!, role: role);
+      _activeRoles.add(role);
+      AppLogger.info('✅ Device token saved for user $userId with role: $role');
+    } catch (e) {
+      AppLogger.error(
+        '❌ Failed to save token for current user (role: $role)',
+        e,
+      );
+    }
+  }
+
+  /// تسجيل device token للمتجر (إشعارات الطلبات)
+  Future<void> saveDeviceTokenForStore(String storeId) async {
+    try {
+      final token = _fcmToken;
+      if (token == null) {
+        AppLogger.warning('⚠️ No FCM token available');
+        return;
+      }
+
+      await _saveDeviceToken(token, role: 'merchant', storeId: storeId);
+      _activeRoles.add('merchant');
+      AppLogger.info('✅ Device token saved for store: $storeId');
+    } catch (e) {
+      AppLogger.error('❌ Failed to save device token for store', e);
+    }
+  }
+
+  /// تسجيل device token لدور معين (admin / captain)
+  Future<void> saveDeviceTokenForRole(String role) async {
+    try {
+      final token = _fcmToken;
+      if (token == null) {
+        AppLogger.warning('⚠️ No FCM token available');
+        return;
+      }
+
+      await _saveDeviceToken(token, role: role);
+      _activeRoles.add(role);
+      AppLogger.info('✅ Device token saved for role: $role');
+    } catch (e) {
+      AppLogger.error('❌ Failed to save device token for role: $role', e);
+    }
+  }
+
+  /// حذف device token للمستخدم الحالي من قاعدة البيانات عند تسجيل الخروج
+  /// يمنع وصول إشعارات المستخدم القديم للمستخدم الجديد على نفس الجهاز
+  Future<void> removeDeviceTokenForCurrentUser() async {
+    try {
+      final userId = _supabase.auth.currentUser?.id;
+      final token = _fcmToken;
+
+      if (userId == null || token == null) {
+        AppLogger.warning(
+          '⚠️ Cannot remove token: missing userId or FCM token',
+        );
+        return;
+      }
+
+      // حذف كل سجلات هذا التوكن لهذا المستخدم (كل الأدوار)
+      await _supabase
+          .from('device_tokens')
+          .delete()
+          .eq('client_id', userId)
+          .eq('token', token);
+
+      // مسح الأدوار المسجلة محلياً
+      _activeRoles.clear();
+
+      AppLogger.info('✅ Device tokens removed for user $userId on logout');
+    } catch (e) {
+      AppLogger.warning('⚠️ Failed to remove device token on logout', e);
+    }
+  }
+
+  /// إلغاء الاشتراك من جميع المواضيع عند تسجيل الخروج
+  Future<void> unsubscribeFromAllTopics() async {
+    try {
+      for (final topic in List<String>.from(_subscribedTopics)) {
+        await _firebaseMessaging.unsubscribeFromTopic(topic);
+      }
+      _subscribedTopics.clear();
+      AppLogger.info('✅ Unsubscribed from all topics on logout');
+    } catch (e) {
+      AppLogger.warning('⚠️ Failed to unsubscribe from topics', e);
+    }
+  }
+
+  /// Handle token refresh — re-save for ALL active roles
   void _onTokenRefresh(String token) {
     _fcmToken = token;
-    _saveDeviceToken(token);
-    AppLogger.info('🔄 FCM Token refreshed');
+    AppLogger.info(
+      '🔄 FCM Token refreshed — updating ${_activeRoles.length} active role(s)',
+    );
+
+    if (_activeRoles.isEmpty) {
+      // Fallback: save as client if no roles registered yet
+      _saveDeviceToken(token);
+    } else {
+      // Re-save for every role the user has registered
+      for (final role in _activeRoles) {
+        _saveDeviceToken(token, role: role);
+      }
+    }
   }
 
   /// Handle foreground messages
+  /// على Android، إشعارات FCM لا تظهر تلقائياً عندما التطبيق مفتوح
+  /// لذلك نعرضها كـ Local Notification
   void _handleForegroundMessage(RemoteMessage message) {
-    if (kDebugMode) {
-      AppLogger.info('📱 Foreground message: ${message.notification?.title}');
-    }
+    AppLogger.info('📱 Foreground message: ${message.notification?.title}');
 
-    // Show local notification for foreground messages
-    _showLocalNotification(
-      message.messageId ?? DateTime.now().millisecondsSinceEpoch.toString(),
-      message.notification?.title ?? '',
-      message.notification?.body ?? '',
-      payload: jsonEncode(message.data),
-    );
+    // عرض إشعار محلي لأن Android لا يعرض FCM notifications في foreground
+    _showLocalNotification(message);
 
     // Track analytics
     trackNotificationInteraction(
@@ -1005,6 +1217,68 @@ class NotificationServiceEnhanced {
       action: 'received_foreground',
       additionalData: message.data,
     );
+  }
+
+  /// عرض إشعار محلي من رسالة FCM
+  Future<void> _showLocalNotification(RemoteMessage message) async {
+    try {
+      final notification = message.notification;
+      if (notification == null) return;
+
+      // إنشاء مفتاح فريد للإشعار لمنع التكرار
+      final notifKey =
+          message.data['notification_id'] ??
+          message.messageId ??
+          '${notification.title}_${notification.body}';
+
+      // تحقق من عدم عرض نفس الإشعار مسبقاً
+      if (_recentlyShownNotifications.contains(notifKey)) {
+        AppLogger.info('⏭️ تم تخطي إشعار مكرر: $notifKey');
+        return;
+      }
+
+      // إضافة للقائمة وتنظيف القديم
+      _recentlyShownNotifications.add(notifKey);
+      if (_recentlyShownNotifications.length > _maxRecentNotifications) {
+        _recentlyShownNotifications.remove(_recentlyShownNotifications.first);
+      }
+
+      // استخدام ID ثابت من بيانات الإشعار لمنع التكرار من النظام
+      final notifId = notifKey.hashCode & 0x7FFFFFFF;
+
+      const androidDetails = AndroidNotificationDetails(
+        'ell_tall_market',
+        'Ell Tall Market',
+        channelDescription: 'إشعارات سوق التل',
+        importance: Importance.high,
+        priority: Priority.high,
+        playSound: true,
+        enableVibration: true,
+        showWhen: true,
+        icon: '@mipmap/ic_launcher',
+      );
+
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+
+      const details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      await _localNotifications.show(
+        notifId,
+        notification.title ?? 'سوق التل',
+        notification.body ?? '',
+        details,
+        payload: message.data.isNotEmpty ? jsonEncode(message.data) : null,
+      );
+    } catch (e) {
+      AppLogger.error('❌ Failed to show local notification', e);
+    }
   }
 
   /// Handle background message tap
@@ -1059,74 +1333,12 @@ class NotificationServiceEnhanced {
   /// Handle notification actions (navigation, etc.)
   void _handleNotificationAction(Map<String, dynamic> data) {
     try {
-      // Handle different action types
-      final actionType = data['action_type'] as String?;
-      final actionData = data['action_data'] as Map<String, dynamic>?;
-
-      switch (actionType) {
-        case 'navigate':
-          // Note: Implement navigation logic
-          AppLogger.info('Navigate to: ${actionData?['route']}');
-          break;
-        case 'open_url':
-          // Note: Implement URL opening logic
-          AppLogger.info('Open URL: ${actionData?['url']}');
-          break;
-        case 'show_dialog':
-          // Note: Implement dialog showing logic
-          AppLogger.info('Show dialog: ${actionData?['message']}');
-          break;
-        default:
-          AppLogger.warning('Unknown action type: $actionType');
-      }
+      AppLogger.info('$_logTag Navigating to notifications screen');
+      // Always navigate to the notifications screen when a notification is tapped
+      NavigationService.navigateTo(AppRoutes.notifications);
     } catch (e) {
       if (kDebugMode) {
         AppLogger.warning('⚠️ Failed to handle notification action', e);
-      }
-    }
-  }
-
-  /// Show local notification
-  Future<void> _showLocalNotification(
-    String id,
-    String title,
-    String body, {
-    String? payload,
-  }) async {
-    try {
-      const androidDetails = AndroidNotificationDetails(
-        'ell_tall_market',
-        'Ell Tall Market',
-        channelDescription: 'Ell Tall Market notifications',
-        importance: Importance.high,
-        priority: Priority.high,
-        showWhen: true,
-        enableVibration: true,
-        enableLights: true,
-      );
-
-      const iosDetails = DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-        interruptionLevel: InterruptionLevel.active,
-      );
-
-      const notificationDetails = NotificationDetails(
-        android: androidDetails,
-        iOS: iosDetails,
-      );
-
-      await _localNotifications.show(
-        id.hashCode,
-        title,
-        body,
-        notificationDetails,
-        payload: payload,
-      );
-    } catch (e) {
-      if (kDebugMode) {
-        AppLogger.warning('⚠️ Failed to show local notification', e);
       }
     }
   }
@@ -1254,9 +1466,41 @@ class NotificationServiceEnhanced {
     String? actionUrl,
     NotificationPriority priority,
     List<String>? tags,
-    String? campaignId,
-  ) async {
-    // Implementation for saving notification to database
+    String? campaignId, {
+    String? targetRole,
+    String? storeId,
+  }) async {
+    try {
+      final finalData = Map<String, dynamic>.from(data ?? {});
+      if (imageUrl != null) finalData['image_url'] = imageUrl;
+      if (actionUrl != null) finalData['action_url'] = actionUrl;
+      finalData['priority'] = priority.name;
+      if (tags != null) finalData['tags'] = tags;
+      if (campaignId != null) finalData['campaign_id'] = campaignId;
+
+      final insertData = <String, dynamic>{
+        'id': notification.id,
+        'title': notification.title,
+        'body': notification.body,
+        'type': notification.type?.value,
+        'data': finalData,
+        'is_read': notification.isRead,
+        'created_at': notification.createdAt.toIso8601String(),
+        'target_role': targetRole ?? 'client',
+      };
+
+      // إشعارات المتجر تستخدم store_id بدل user_id
+      if (storeId != null) {
+        insertData['store_id'] = storeId;
+      } else {
+        insertData['user_id'] = notification.userId;
+      }
+
+      await _supabase.from('notifications').insert(insertData);
+      AppLogger.info('✅ Notification saved to database: ${notification.id}');
+    } catch (e) {
+      AppLogger.warning('⚠️ Failed to save notification to database', e);
+    }
   }
 
   Future<void> _scheduleNotification(
@@ -1267,21 +1511,35 @@ class NotificationServiceEnhanced {
     // Implementation for scheduling notification
   }
 
-  Future<void> _deliverNotification(
-    NotificationModel notification,
-    Map<String, dynamic>? data,
-    String? imageUrl,
-    String? actionUrl,
-    NotificationPriority priority,
-  ) async {
-    // Implementation for delivering notification
-  }
-
   Future<void> _trackNotificationSent(
     NotificationModel notification,
     String? campaignId,
   ) async {
-    // Implementation for tracking sent notifications
+    try {
+      final deviceType = kIsWeb ? 'web' : 'mobile';
+      // Use deviceType for analytics insert if needed
+      await _supabase.from('notification_analytics').insert({
+        'notification_id': notification.id,
+        'user_id': notification.userId,
+        'campaign_id': campaignId,
+        'device_type': deviceType,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    } on PostgrestException catch (e) {
+      if (e.code == '42501') {
+        // RLS policy blocks insert - this is expected if user doesn't have permission
+        AppLogger.warning(
+          '⚠️ RLS policy blocks notification analytics insert: ${e.message}',
+        );
+      } else {
+        AppLogger.warning(
+          '⚠️ Failed to track notification analytics: ${e.message}',
+          e,
+        );
+      }
+    } catch (e) {
+      AppLogger.warning('⚠️ Failed to track notification analytics', e);
+    }
   }
 
   Map<String, List<String>> _splitClientsForABTesting(
@@ -1353,6 +1611,375 @@ class NotificationServiceEnhanced {
   ) async {
     // Implementation for getting daily notification breakdown
     return {};
+  }
+
+  // ===== Merchant Notification Helpers =====
+
+  /// إرسال إشعار للتاجر عند استلام طلب جديد
+  Future<bool> notifyMerchantOfNewOrder({
+    required String storeId,
+    required String orderId,
+    required double totalAmount,
+    String? clientName,
+  }) async {
+    try {
+      AppLogger.info('Sending new order notification to store: $storeId');
+
+      // جلب معلومات المتجر
+      final storeResponse = await _supabase
+          .from('stores')
+          .select('name')
+          .eq('id', storeId)
+          .maybeSingle();
+
+      if (storeResponse == null) {
+        AppLogger.warning('Store not found: $storeId');
+        return false;
+      }
+
+      final storeName = storeResponse['name'] as String? ?? 'متجرك';
+      final bodyText =
+          'لديك طلب جديد بقيمة ${totalAmount.toStringAsFixed(0)} ج.م${clientName != null ? ' من $clientName' : ''}';
+
+      // إشعار المتجر: يستخدم store_id بدل user_id
+      // الـ trigger بيبعت store_id للـ Edge Function
+      // الـ Edge Function بيدور على device_tokens WHERE store_id = X
+      await _supabase.from('notifications').insert({
+        'title': '🛒 طلب جديد!',
+        'body': bodyText,
+        'type': NotificationType.order.value,
+        'target_role': 'merchant',
+        'store_id': storeId,
+        'data': {
+          'type': 'new_order',
+          'target_role': 'merchant',
+          'order_id': orderId,
+          'store_id': storeId,
+          'store_name': storeName,
+          'total_amount': totalAmount,
+          'action_url': '/merchant/orders/$orderId',
+        },
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      AppLogger.info('✅ Notification sent to store: $storeId');
+      return true;
+    } catch (e) {
+      AppLogger.error('❌ Failed to send store notification', e);
+      return false;
+    }
+  }
+
+  // ===== Admin Notification Helpers =====
+
+  /// إرسال إشعار للمديرين عند استلام طلب جديد في النظام
+  Future<bool> notifyAdminOfNewOrder({
+    required String orderId,
+    required String storeName,
+    required double totalAmount,
+  }) async {
+    try {
+      AppLogger.info(
+        'Sending new order notification to admins for order: $orderId',
+      );
+
+      // جلب جميع المستخدمين الأدمن من جدول profiles
+      final adminsResponse = await _supabase
+          .from('profiles')
+          .select('id')
+          .eq('role', 'admin');
+
+      final admins = adminsResponse as List;
+      if (admins.isEmpty) {
+        AppLogger.warning('⚠️ No admin users found to notify');
+        return false;
+      }
+
+      bool anySent = false;
+      for (final admin in admins) {
+        final adminId = admin['id'] as String?;
+        if (adminId == null) continue;
+
+        final sent = await sendSmartNotification(
+          clientId: adminId,
+          title: '📊 طلب جديد في النظام',
+          message:
+              'طلب جديد من متجر $storeName بقيمة ${totalAmount.toStringAsFixed(0)} ج.م',
+          type: NotificationType.order,
+          priority: NotificationPriority.normal,
+          targetRole: 'admin',
+          data: {
+            'type': 'new_order',
+            'target_role': 'admin',
+            'order_id': orderId,
+            'store_name': storeName,
+            'total_amount': totalAmount,
+          },
+          actionUrl: '/admin/orders/$orderId',
+        );
+        if (sent) anySent = true;
+      }
+
+      AppLogger.info('✅ Admin notifications sent to ${admins.length} admins');
+      return anySent;
+    } catch (e) {
+      AppLogger.error('❌ Failed to send admin notification', e);
+      return false;
+    }
+  }
+
+  // ===== Captain Notification Helpers =====
+
+  /// إرسال إشعار للكباتن عن طلب متاح للتوصيل
+  Future<bool> notifyCaptainsOfAvailableOrder({
+    required String orderId,
+    required String storeName,
+    String? area,
+  }) async {
+    try {
+      AppLogger.info('Sending available order notification to captains');
+
+      // جلب الكباتن المتصلين حالياً
+      final captainsResponse = await _supabase
+          .from('captains')
+          .select('id')
+          .eq('status', 'online')
+          .eq('is_active', true)
+          .eq('is_available', true);
+
+      final captains = captainsResponse as List;
+      if (captains.isEmpty) {
+        AppLogger.warning('⚠️ No online captains found to notify');
+        return false;
+      }
+
+      final areaText = area != null ? ' في منطقة $area' : '';
+      bool anySent = false;
+
+      for (final captain in captains) {
+        final captainId = captain['id'] as String?;
+        if (captainId == null) continue;
+
+        final sent = await sendSmartNotification(
+          clientId: captainId,
+          title: '🚗 طلب جديد متاح للتوصيل',
+          message: 'طلب جديد من متجر $storeName$areaText متاح للاستلام',
+          type: NotificationType.order,
+          priority: NotificationPriority.high,
+          targetRole: 'captain',
+          data: {
+            'type': 'available_order',
+            'target_role': 'captain',
+            'order_id': orderId,
+            'store_name': storeName,
+            if (area != null) 'area': area,
+          },
+        );
+        if (sent) anySent = true;
+      }
+
+      AppLogger.info(
+        '✅ Available order notification sent to ${captains.length} captains',
+      );
+      return anySent;
+    } catch (e) {
+      AppLogger.error('❌ Failed to send captains notification', e);
+      return false;
+    }
+  }
+
+  /// إرسال إشعار لكابتن معين عند تعيين طلب له
+  Future<bool> notifyCaptainOfOrderAssignment({
+    required String captainId,
+    required String orderId,
+    required String storeName,
+  }) async {
+    return await sendSmartNotification(
+      clientId: captainId,
+      title: '📦 تم تعيين طلب لك',
+      message: 'تم تعيين طلب جديد لك من متجر $storeName. يرجى استلام الطلب.',
+      type: NotificationType.order,
+      priority: NotificationPriority.high,
+      targetRole: 'captain',
+      data: {
+        'type': 'order_assigned',
+        'target_role': 'captain',
+        'order_id': orderId,
+        'store_name': storeName,
+      },
+    );
+  }
+
+  /// إرسال إشعار للتاجر عند تغيير حالة الطلب
+  Future<bool> notifyMerchantOfOrderStatusChange({
+    required String storeId,
+    required String orderId,
+    required String newStatus,
+    String? clientName,
+  }) async {
+    try {
+      // جلب معلومات المتجر والتاجر
+      final storeResponse = await _supabase
+          .from('stores')
+          .select('merchant_id, name')
+          .eq('id', storeId)
+          .maybeSingle();
+
+      if (storeResponse == null) return false;
+
+      final merchantId = storeResponse['merchant_id'] as String?;
+      if (merchantId == null) return false;
+
+      // تحديد الرسالة حسب الحالة
+      String statusMessage;
+      switch (newStatus) {
+        case 'preparing':
+          statusMessage = 'تم قبول الطلب وبدأ التحضير 👨‍🍳';
+          break;
+        case 'in_transit':
+          statusMessage = 'الطلب جاهز وخرج للتوصيل 🚗';
+          break;
+        case 'delivered':
+          statusMessage = 'تم تسليم الطلب بنجاح ✅';
+          break;
+        case 'cancelled':
+          statusMessage = 'تم إلغاء الطلب ❌';
+          break;
+        case 'on_the_way':
+          statusMessage = 'الطلب في الطريق 🚗';
+          break;
+        default:
+          statusMessage = 'تم تحديث حالة الطلب';
+      }
+
+      return await sendSmartNotification(
+        clientId: merchantId,
+        title: 'تحديث الطلب',
+        message: statusMessage,
+        type: NotificationType.order,
+        targetRole: 'merchant',
+        data: {
+          'type': 'order_status_change',
+          'target_role': 'merchant',
+          'order_id': orderId,
+          'store_id': storeId,
+          'new_status': newStatus,
+        },
+      );
+    } catch (e) {
+      AppLogger.error('❌ Failed to send order status notification', e);
+      return false;
+    }
+  }
+
+  /// إرسال إشعار للعميل عند تغيير حالة طلبه
+  Future<bool> notifyClientOfOrderStatusChange({
+    required String clientId,
+    required String orderId,
+    required String newStatus,
+    String? storeName,
+  }) async {
+    try {
+      // تحميل إعدادات الإشعارات للمستخدم
+      final prefs = await SharedPreferences.getInstance();
+      final notificationLevelIndex =
+          prefs.getInt('notification_level') ?? 1; // default: important
+
+      // تحديد مستوى الإشعار من الإعدادات
+      // 0 = all, 1 = important, 2 = deliveryOnly
+      final shouldSkip = _shouldSkipNotification(
+        newStatus,
+        notificationLevelIndex,
+      );
+      if (shouldSkip) {
+        AppLogger.info(
+          '⏭️ تم تخطي إشعار الحالة $newStatus بناءً على تفضيلات المستخدم',
+        );
+        return true; // Not an error, just skipped
+      }
+
+      // دمج الإشعارات الذكي (للمستويات important و all)
+      String statusMessage;
+      String title;
+
+      switch (newStatus) {
+        case 'confirmed':
+          // دمج Confirmed + Preparing في إشعار واحد
+          title = 'تم قبول طلبك وجاري تحضيره ✅👨‍🍳';
+          statusMessage =
+              'تم تأكيد طلبك${storeName != null ? ' من $storeName' : ''} وبدأ التحضير الآن';
+          break;
+        case 'preparing':
+          // التاجر قبل وبدأ التحضير مباشرة (التدفق الجديد المبسط)
+          title = 'تم قبول طلبك وجاري تحضيره ✅👨‍🍳';
+          statusMessage =
+              'تم قبول طلبك${storeName != null ? ' من $storeName' : ''} وبدأ التحضير الآن';
+          break;
+        case 'ready':
+          title = 'طلبك جاهز 📦';
+          statusMessage =
+              'طلبك جاهز${storeName != null ? ' من $storeName' : ''} وسيتم التوصيل قريباً';
+          break;
+        case 'on_the_way':
+        case 'in_transit':
+          title = 'طلبك في الطريق! 🚗';
+          statusMessage = 'الطلب في طريقه إليك الآن';
+          break;
+        case 'delivered':
+          title = 'تم التوصيل! 🎉';
+          statusMessage = 'تم توصيل طلبك بنجاح. نتمنى لك تجربة ممتعة!';
+          break;
+        case 'cancelled':
+          title = 'تم إلغاء الطلب ❌';
+          statusMessage =
+              'تم إلغاء طلبك${storeName != null ? ' من $storeName' : ''}';
+          break;
+        default:
+          title = 'تحديث الطلب';
+          statusMessage = 'تم تحديث حالة طلبك';
+      }
+
+      return await sendSmartNotification(
+        clientId: clientId,
+        title: title,
+        message: statusMessage,
+        type: NotificationType.order,
+        priority: NotificationPriority.high,
+        targetRole: 'client',
+        data: {
+          'type': 'order_status_change',
+          'target_role': 'client',
+          'order_id': orderId,
+          'new_status': newStatus,
+        },
+        actionUrl: '/orders/$orderId',
+      );
+    } catch (e) {
+      AppLogger.error('❌ Failed to send client order notification', e);
+      return false;
+    }
+  }
+
+  /// تحديد ما إذا كان يجب تخطي الإشعار بناءً على تفضيلات المستخدم
+  bool _shouldSkipNotification(String status, int notificationLevel) {
+    // Level 0 (all): لا تخطي أي إشعار
+    if (notificationLevel == 0) return false;
+
+    // Level 2 (deliveryOnly): فقط in_transit, delivered و cancelled
+    if (notificationLevel == 2) {
+      return !(status == 'in_transit' ||
+          status == 'on_the_way' ||
+          status == 'delivered' ||
+          status == 'cancelled');
+    }
+
+    // Level 1 (important): preparing, in_transit, delivered, cancelled
+    // تخطي: pending, confirmed, ready (حالات وسيطة مدمجة)
+    if (notificationLevel == 1) {
+      return status == 'pending' || status == 'confirmed' || status == 'ready';
+    }
+
+    return false;
   }
 
   /// Cleanup resources

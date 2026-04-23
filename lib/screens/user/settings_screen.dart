@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/models/settings_model.dart';
 import 'package:ell_tall_market/providers/locale_provider.dart';
-import 'package:ell_tall_market/providers/settings_provider.dart';
+import 'package:ell_tall_market/providers/client_settings_provider.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
+import 'package:ell_tall_market/screens/user/notification_settings_screen.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -18,17 +21,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      context.read<SettingsProvider>().loadSettings();
+      context.read<ClientSettingsProvider>().loadSettings();
     });
   }
 
   Future<void> _handleRefresh() async {
-    await context.read<SettingsProvider>().loadSettings();
+    await context.read<ClientSettingsProvider>().loadSettings();
   }
 
   Future<bool> _updateSettings(AppSettingsModel settings) async {
     try {
-      await context.read<SettingsProvider>().updateAppSettings(settings);
+      await context.read<ClientSettingsProvider>().updateSettings(settings);
       return true;
     } catch (e) {
       if (!mounted) return false;
@@ -43,8 +46,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _showQuickActionsSheet() {
-    final settingsProvider = context.read<SettingsProvider>();
-    var sheetSettings = settingsProvider.appSettings;
+    final settingsProvider = context.read<ClientSettingsProvider>();
+    var sheetSettings = settingsProvider.clientSettings;
 
     showModalBottomSheet(
       context: context,
@@ -85,6 +88,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
+                    /* 
                     SwitchListTile.adaptive(
                       contentPadding: EdgeInsets.zero,
                       value: sheetSettings.darkMode,
@@ -95,6 +99,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         (current) => current.copyWith(darkMode: value),
                       ),
                     ),
+                    */
+                    /* 
                     SwitchListTile.adaptive(
                       contentPadding: EdgeInsets.zero,
                       value: sheetSettings.biometricAuth,
@@ -105,6 +111,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         (current) => current.copyWith(biometricAuth: value),
                       ),
                     ),
+                    */
                     SwitchListTile.adaptive(
                       contentPadding: EdgeInsets.zero,
                       value: sheetSettings.savePaymentMethods,
@@ -155,7 +162,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final localeProvider = Provider.of<LocaleProvider>(context);
-    final settingsProvider = Provider.of<SettingsProvider>(context);
+    final settingsProvider = Provider.of<ClientSettingsProvider>(context);
     final isArabic = localeProvider.locale.languageCode == 'ar';
 
     final listChildren = <Widget>[
@@ -180,28 +187,30 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       _buildSettingItem(
         context,
-        title: 'تغيير البريد الإلكتروني',
-        onTap: () => _showComingSoonDialog(context, 'تغيير البريد الإلكتروني'),
-      ),
-      _buildSettingItem(
-        context,
         title: 'الإشعارات',
         trailing: Text(
-          settingsProvider.appSettings.notificationsEnabled ? 'مفعلة' : 'معطلة',
+          settingsProvider.clientSettings.notificationsEnabled
+              ? 'مفعلة'
+              : 'معطلة',
           style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
         ),
-        onTap: () => _showNotificationsDialog(context, settingsProvider),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const NotificationSettingsScreen(),
+          ),
+        ),
       ),
       _buildSettingItem(
         context,
         title: 'معلومات الدفع',
-        onTap: () => _showComingSoonDialog(context, 'معلومات الدفع'),
+        onTap: () => _showPaymentMethodDialog(context),
       ),
       _buildSettingItem(
         context,
         title: 'اللغة',
         trailing: Text(
-          localeProvider.locale.languageCode == 'ar' ? 'العربية' : 'English',
+          'العربية',
           style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
         ),
         onTap: () => _showLanguageDialog(context, localeProvider),
@@ -213,7 +222,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           'مصر',
           style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
         ),
-        onTap: () => _showComingSoonDialog(context, 'تغيير الدولة'),
+        onTap: () => _showCountryDialog(context),
       ),
     ];
 
@@ -237,28 +246,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
           icon: const Icon(Icons.tune_rounded),
           label: const Text('إجراءات سريعة'),
         ),
-        body: SafeArea(
-          child: RefreshIndicator(
-            onRefresh: _handleRefresh,
-            color: colorScheme.primary,
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(
-                parent: BouncingScrollPhysics(),
+        body: ResponsiveCenter(
+          maxWidth: 700,
+          child: SafeArea(
+            child: RefreshIndicator(
+              onRefresh: _handleRefresh,
+              color: colorScheme.primary,
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                children: [
+                  if (settingsProvider.isLoading)
+                    SizedBox(
+                      height: 180,
+                      child: AppShimmer.centeredLines(context),
+                    )
+                  else
+                    ...listChildren,
+                ],
               ),
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              children: [
-                if (settingsProvider.isLoading)
-                  SizedBox(
-                    height: 180,
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        valueColor: AlwaysStoppedAnimation(colorScheme.primary),
-                      ),
-                    ),
-                  )
-                else
-                  ...listChildren,
-              ],
             ),
           ),
         ),
@@ -360,99 +368,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showNotificationsDialog(
-    BuildContext context,
-    SettingsProvider settingsProvider,
-  ) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: StatefulBuilder(
-            builder: (context, setState) {
-              final settings = settingsProvider.appSettings;
-              return Padding(
-                padding: EdgeInsets.only(
-                  left: 20,
-                  right: 20,
-                  top: 16,
-                  bottom: 16 + MediaQuery.of(sheetContext).viewInsets.bottom,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'إعدادات الإشعارات',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SwitchListTile.adaptive(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('تفعيل الإشعارات'),
-                      subtitle: const Text('استقبال إشعارات التطبيق'),
-                      secondary: const Icon(Icons.notifications_rounded),
-                      value: settings.notificationsEnabled,
-                      onChanged: (value) {
-                        setState(() {
-                          settingsProvider.updateAppSettings(
-                            settings.copyWith(notificationsEnabled: value),
-                          );
-                        });
-                      },
-                    ),
-                    SwitchListTile.adaptive(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('إشعارات البريد الإلكتروني'),
-                      subtitle: const Text('استقبال تحديثات عبر البريد'),
-                      secondary: const Icon(Icons.email_rounded),
-                      value: settings.emailNotifications,
-                      onChanged: (value) {
-                        setState(() {
-                          settingsProvider.updateAppSettings(
-                            settings.copyWith(emailNotifications: value),
-                          );
-                        });
-                      },
-                    ),
-                    SwitchListTile.adaptive(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('الإشعارات النصية'),
-                      subtitle: const Text('استقبال رسائل SMS'),
-                      secondary: const Icon(Icons.sms_rounded),
-                      value: settings.smsNotifications,
-                      onChanged: (value) {
-                        setState(() {
-                          settingsProvider.updateAppSettings(
-                            settings.copyWith(smsNotifications: value),
-                          );
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    FilledButton.icon(
-                      onPressed: () => Navigator.pop(sheetContext),
-                      icon: const Icon(Icons.check_circle_outline),
-                      label: const Text('تم'),
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(48),
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
-
   void _showLanguageDialog(
     BuildContext context,
     LocaleProvider localeProvider,
@@ -496,19 +411,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     Navigator.pop(sheetContext);
                   },
                 ),
-                RadioListTile<String>(
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showCountryDialog(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 16,
+              bottom: 16 + MediaQuery.of(sheetContext).viewInsets.bottom,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'اختر الدولة',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ListTile(
                   contentPadding: EdgeInsets.zero,
-                  value: 'en',
-                  // ignore: deprecated_member_use
-                  groupValue: localeProvider.locale.languageCode,
-                  title: const Text('English'),
-                  subtitle: const Text('الإنجليزية'),
-                  secondary: const Icon(Icons.language_rounded),
-                  // ignore: deprecated_member_use
-                  onChanged: (value) {
-                    localeProvider.setLocale(value!);
-                    Navigator.pop(sheetContext);
-                  },
+                  title: const Text('مصر'),
+                  subtitle: const Text('Egypt'),
+                  leading: const Icon(Icons.public_rounded),
+                  onTap: () => Navigator.pop(sheetContext),
                 ),
                 const SizedBox(height: 8),
               ],
@@ -519,19 +462,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  void _showComingSoonDialog(BuildContext context, String feature) {
-    showDialog(
+  void _showPaymentMethodDialog(BuildContext context) {
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('قريباً'),
-        content: Text('سيتم إضافة $feature قريباً'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('حسناً'),
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 16,
+              bottom: 16 + MediaQuery.of(sheetContext).viewInsets.bottom,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'معلومات الدفع',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('الدفع عند الاستلام'),
+                  subtitle: const Text('Cash on Delivery'),
+                  leading: const Icon(Icons.payments_outlined),
+                  onTap: () => Navigator.pop(sheetContext),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

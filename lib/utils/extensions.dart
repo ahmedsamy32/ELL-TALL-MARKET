@@ -131,9 +131,13 @@ class AppRoutes {
         return MaterialPageRoute(builder: (_) => OrderHistoryScreen());
       case orderTracking:
         if (args is Map<String, dynamic>) {
-          final String orderId = args['orderId'] ?? '';
+          final String? orderId = args['orderId'] as String?;
+          final String? orderGroupId = args['orderGroupId'] as String?;
           return MaterialPageRoute(
-            builder: (_) => OrderTrackingScreen(orderId: orderId),
+            builder: (_) => OrderTrackingScreen(
+              orderId: orderId,
+              orderGroupId: orderGroupId,
+            ),
           );
         }
         return _errorRoute('Order not provided');
@@ -189,7 +193,7 @@ class AppRoutes {
 
       // ==== Admin ====
       case adminDashboard:
-        return MaterialPageRoute(builder: (_) => AdminDashboard());
+        return MaterialPageRoute(builder: (_) => AdminDashboardScreen());
       case manageUsers:
         return MaterialPageRoute(builder: (_) => ManageUsersScreen());
       case manageProducts:

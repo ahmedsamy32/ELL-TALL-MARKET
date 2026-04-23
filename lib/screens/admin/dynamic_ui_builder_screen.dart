@@ -1,6 +1,8 @@
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/dynamic_ui_provider.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class DynamicUIBuilderScreen extends StatefulWidget {
   const DynamicUIBuilderScreen({super.key});
@@ -33,9 +35,12 @@ class _DynamicUIBuilderScreenState extends State<DynamicUIBuilderScreen> {
           IconButton(icon: Icon(Icons.refresh), onPressed: _resetUIConfig),
         ],
       ),
-      body: uiProvider.isLoading
-          ? Center(child: CircularProgressIndicator())
-          : _buildUIBuilder(uiProvider),
+      body: ResponsiveCenter(
+        maxWidth: 800,
+        child: uiProvider.isLoading
+            ? AppShimmer.centeredLines(context)
+            : _buildUIBuilder(uiProvider),
+      ),
     );
   }
 

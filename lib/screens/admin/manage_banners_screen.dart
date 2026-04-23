@@ -2,12 +2,19 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:ell_tall_market/services/permission_service.dart';
 import 'package:uuid/uuid.dart';
-import 'dart:io';
+import 'dart:typed_data'; // For Uint8List
+// removed dart:io
 import '../../models/banner_model.dart';
 import '../../providers/banner_provider.dart';
 import '../../providers/supabase_provider.dart';
+import '../../providers/product_provider.dart';
+import '../../providers/store_provider.dart';
+import '../../providers/category_provider.dart';
 import '../../services/banner_service.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class ManageBannersScreen extends StatefulWidget {
   const ManageBannersScreen({super.key});
@@ -28,8 +35,27 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
     );
   }
 
-  Future<String?> _pickImage(ImageSource source) async {
+  Future<XFile?> _pickImage(ImageSource source) async {
     try {
+      // التحقق من الأذونات أولاً
+      final permissionService = PermissionService();
+      final result = await permissionService.requestImagePermissions(
+        useCamera: source == ImageSource.camera,
+        useGallery: source == ImageSource.gallery,
+      );
+
+      if (!result.granted) {
+        if (result.permanentlyDenied) {
+          _showSnackBar(
+            result.message ?? 'تم رفض الإذن بشكل دائم. افتح الإعدادات للتفعيل.',
+            isError: true,
+          );
+        } else {
+          _showSnackBar(result.message ?? 'تم رفض الإذن', isError: true);
+        }
+        return null;
+      }
+
       final XFile? pickedFile = await _picker.pickImage(
         source: source,
         maxWidth: 1600,
@@ -37,7 +63,7 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
         imageQuality: 85,
       );
       if (pickedFile != null) {
-        return pickedFile.path;
+        return pickedFile;
       }
     } catch (e) {
       _showSnackBar('خطأ في اختيار الصورة: $e', isError: true);
@@ -62,52 +88,45 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
     final bannerProvider = Provider.of<BannerProvider>(context);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
       appBar: AppBar(
-        title: const Text(
-          'إدارة البانرات',
-          style: TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF262626),
-          ),
-        ),
+        title: const Text('إدارة البانرات'),
         centerTitle: true,
-        backgroundColor: Colors.white,
         elevation: 0,
-        shadowColor: Colors.black.withValues(alpha: 0.08),
       ),
-      body: SafeArea(
-        child: Stack(
-          children: [
-            // Main content
-            Positioned.fill(
-              child: bannerProvider.isLoading
-                  ? const _LoadingState()
-                  : bannerProvider.banners.isEmpty
-                  ? const _EmptyState()
-                  : _BannersList(
-                      bannerProvider: bannerProvider,
-                      parentState: this,
-                    ),
-            ),
-            // Side floating add button
-            Align(
-              alignment: AlignmentDirectional.centerEnd,
-              child: Padding(
-                padding: const EdgeInsetsDirectional.only(end: 16),
-                child: FloatingActionButton.small(
-                  heroTag: 'addBannerSideFab',
-                  backgroundColor: const Color(0xFF1890FF),
-                  foregroundColor: Colors.white,
-                  tooltip: 'إضافة بانر',
-                  onPressed: () =>
-                      _showAddBannerDialog(context, bannerProvider),
-                  child: const Icon(Icons.add),
+      body: ResponsiveCenter(
+        maxWidth: 1000,
+        child: SafeArea(
+          child: Stack(
+            children: [
+              // Main content
+              Positioned.fill(
+                child: bannerProvider.isLoading
+                    ? const _LoadingState()
+                    : bannerProvider.banners.isEmpty
+                    ? const _EmptyState()
+                    : _BannersList(
+                        bannerProvider: bannerProvider,
+                        parentState: this,
+                      ),
+              ),
+              // Side floating add button
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: Padding(
+                  padding: const EdgeInsetsDirectional.only(end: 16),
+                  child: FloatingActionButton.small(
+                    heroTag: 'addBannerSideFab',
+                    backgroundColor: const Color(0xFF1890FF),
+                    foregroundColor: Colors.white,
+                    tooltip: 'إضافة بانر',
+                    onPressed: () =>
+                        _showAddBannerDialog(context, bannerProvider),
+                    child: const Icon(Icons.add),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -116,8 +135,15 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
   void _showAddBannerDialog(BuildContext context, BannerProvider provider) {
     final titleController = TextEditingController();
     final imageUrlController = TextEditingController();
-    String? selectedImagePath;
+    XFile? selectedImageFile;
+    Uint8List? selectedImageBytes;
     bool isUploading = false;
+
+    // Target linking fields
+    BannerType? selectedTargetType;
+    String? selectedTargetId;
+    String? selectedTargetName;
+    String targetSearchQuery = '';
 
     showDialog(
       context: context,
@@ -175,11 +201,50 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                     ),
                     const SizedBox(height: 16),
 
+                    // === Target Type Selector ===
+                    _buildTargetTypeSelector(
+                      selectedType: selectedTargetType,
+                      onChanged: (type) {
+                        setState(() {
+                          selectedTargetType = type;
+                          selectedTargetId = null;
+                          selectedTargetName = null;
+                          targetSearchQuery = '';
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // === Target Picker ===
+                    if (selectedTargetType != null &&
+                        selectedTargetType != BannerType.promotion)
+                      _buildTargetPicker(
+                        context: context,
+                        targetType: selectedTargetType!,
+                        selectedTargetId: selectedTargetId,
+                        selectedTargetName: selectedTargetName,
+                        searchQuery: targetSearchQuery,
+                        onSelected: (id, name) {
+                          setState(() {
+                            selectedTargetId = id;
+                            selectedTargetName = name;
+                          });
+                        },
+                        onSearchChanged: (query) {
+                          setState(() {
+                            targetSearchQuery = query;
+                          });
+                        },
+                      ),
+                    if (selectedTargetType != null &&
+                        selectedTargetType != BannerType.promotion)
+                      const SizedBox(height: 16),
+
                     _buildTextField(
                       controller: imageUrlController,
                       label: 'رابط الصورة',
                       hint: 'أو أدخل رابط الصورة مباشرة',
-                      enabled: selectedImagePath == null && !isUploading,
+                      enabled: selectedImageBytes == null && !isUploading,
                     ),
                     const SizedBox(height: 16),
 
@@ -200,12 +265,15 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                                   onPressed: isUploading
                                       ? null
                                       : () async {
-                                          final imagePath = await _pickImage(
+                                          final pickedFile = await _pickImage(
                                             ImageSource.gallery,
                                           );
-                                          if (imagePath != null) {
+                                          if (pickedFile != null) {
+                                            final bytes = await pickedFile
+                                                .readAsBytes();
                                             setState(() {
-                                              selectedImagePath = imagePath;
+                                              selectedImageFile = pickedFile;
+                                              selectedImageBytes = bytes;
                                               imageUrlController.clear();
                                             });
                                           }
@@ -232,14 +300,15 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                                   ),
                                 ),
                               ),
-                              if (selectedImagePath != null) ...[
+                              if (selectedImageBytes != null) ...[
                                 const SizedBox(width: 8),
                                 IconButton(
                                   onPressed: isUploading
                                       ? null
                                       : () {
                                           setState(() {
-                                            selectedImagePath = null;
+                                            selectedImageFile = null;
+                                            selectedImageBytes = null;
                                           });
                                         },
                                   icon: const Icon(
@@ -258,7 +327,7 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                           ),
 
                           // Image Preview
-                          if (selectedImagePath != null) ...[
+                          if (selectedImageBytes != null) ...[
                             const SizedBox(height: 16),
                             Container(
                               height: 120,
@@ -271,8 +340,8 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                               ),
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: Image.file(
-                                  File(selectedImagePath!),
+                                child: Image.memory(
+                                  selectedImageBytes!,
                                   fit: BoxFit.cover,
                                 ),
                               ),
@@ -294,16 +363,7 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                               child: const Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Color(0xFF1890FF),
-                                      ),
-                                    ),
-                                  ),
+                                  SizedBox(width: 20, height: 20),
                                   SizedBox(width: 12),
                                   Text(
                                     'جاري رفع الصورة...',
@@ -370,12 +430,13 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                                   String? finalImageUrl;
 
                                   // إذا تم اختيار صورة من المعرض، ارفعها أولاً
-                                  if (selectedImagePath != null) {
+                                  if (selectedImageBytes != null) {
                                     setState(() => isUploading = true);
                                     try {
                                       finalImageUrl =
-                                          await BannerService.uploadBannerImage(
-                                            selectedImagePath!,
+                                          await BannerService.uploadBannerImageBytes(
+                                            selectedImageBytes!,
+                                            selectedImageFile!.name,
                                           );
                                       if (!context.mounted) return;
                                       setState(() => isUploading = false);
@@ -408,6 +469,11 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                                         id: _uuid.v4(),
                                         title: titleController.text.trim(),
                                         imageUrl: finalImageUrl,
+                                        targetType: selectedTargetType,
+                                        targetId:
+                                            (selectedTargetId?.isEmpty ?? true)
+                                            ? null
+                                            : selectedTargetId,
                                         displayOrder: 0,
                                         isActive: true,
                                         startDate: DateTime.now(),
@@ -431,15 +497,9 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                             ),
                           ),
                           child: isUploading
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.white,
-                                    ),
-                                  ),
+                              ? AppShimmer.wrap(
+                                  context,
+                                  child: AppShimmer.circle(context, size: 20),
                                 )
                               : const Text('حفظ'),
                         ),
@@ -462,8 +522,24 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
   ) {
     final titleController = TextEditingController(text: banner.title);
     final imageUrlController = TextEditingController(text: banner.imageUrl);
-    String? selectedImagePath;
+    XFile? selectedImageFile;
+    Uint8List? selectedImageBytes;
     bool isUploading = false;
+
+    // Target linking fields - initialize with existing values
+    BannerType? selectedTargetType = banner.targetType;
+    String? selectedTargetId = banner.targetId;
+    String? selectedTargetName;
+    String targetSearchQuery = '';
+
+    // Resolve existing target name for display
+    if (selectedTargetType != null && selectedTargetId != null) {
+      _resolveTargetName(selectedTargetType, selectedTargetId).then((name) {
+        if (name != null) {
+          selectedTargetName = name;
+        }
+      });
+    }
 
     showDialog(
       context: context,
@@ -521,11 +597,50 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                     ),
                     const SizedBox(height: 16),
 
+                    // === Target Type Selector ===
+                    _buildTargetTypeSelector(
+                      selectedType: selectedTargetType,
+                      onChanged: (type) {
+                        setState(() {
+                          selectedTargetType = type;
+                          selectedTargetId = null;
+                          selectedTargetName = null;
+                          targetSearchQuery = '';
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // === Target Picker ===
+                    if (selectedTargetType != null &&
+                        selectedTargetType != BannerType.promotion)
+                      _buildTargetPicker(
+                        context: context,
+                        targetType: selectedTargetType!,
+                        selectedTargetId: selectedTargetId,
+                        selectedTargetName: selectedTargetName,
+                        searchQuery: targetSearchQuery,
+                        onSelected: (id, name) {
+                          setState(() {
+                            selectedTargetId = id;
+                            selectedTargetName = name;
+                          });
+                        },
+                        onSearchChanged: (query) {
+                          setState(() {
+                            targetSearchQuery = query;
+                          });
+                        },
+                      ),
+                    if (selectedTargetType != null &&
+                        selectedTargetType != BannerType.promotion)
+                      const SizedBox(height: 16),
+
                     _buildTextField(
                       controller: imageUrlController,
                       label: 'رابط الصورة',
                       hint: 'أو أدخل رابط الصورة مباشرة',
-                      enabled: selectedImagePath == null && !isUploading,
+                      enabled: selectedImageBytes == null && !isUploading,
                     ),
                     const SizedBox(height: 16),
 
@@ -546,12 +661,15 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                                   onPressed: isUploading
                                       ? null
                                       : () async {
-                                          final imagePath = await _pickImage(
+                                          final pickedFile = await _pickImage(
                                             ImageSource.gallery,
                                           );
-                                          if (imagePath != null) {
+                                          if (pickedFile != null) {
+                                            final bytes = await pickedFile
+                                                .readAsBytes();
                                             setState(() {
-                                              selectedImagePath = imagePath;
+                                              selectedImageFile = pickedFile;
+                                              selectedImageBytes = bytes;
                                               imageUrlController.clear();
                                             });
                                           }
@@ -578,14 +696,15 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                                   ),
                                 ),
                               ),
-                              if (selectedImagePath != null) ...[
+                              if (selectedImageBytes != null) ...[
                                 const SizedBox(width: 8),
                                 IconButton(
                                   onPressed: isUploading
                                       ? null
                                       : () {
                                           setState(() {
-                                            selectedImagePath = null;
+                                            selectedImageFile = null;
+                                            selectedImageBytes = null;
                                           });
                                         },
                                   icon: const Icon(
@@ -604,7 +723,7 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                           ),
 
                           // Current Image Preview
-                          if (selectedImagePath == null) ...[
+                          if (selectedImageBytes == null) ...[
                             const SizedBox(height: 16),
                             Container(
                               height: 80,
@@ -638,7 +757,7 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                           ],
 
                           // New Image Preview
-                          if (selectedImagePath != null) ...[
+                          if (selectedImageBytes != null) ...[
                             const SizedBox(height: 16),
                             Container(
                               height: 120,
@@ -651,8 +770,8 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                               ),
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: Image.file(
-                                  File(selectedImagePath!),
+                                child: Image.memory(
+                                  selectedImageBytes!,
                                   fit: BoxFit.cover,
                                 ),
                               ),
@@ -680,21 +799,22 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                                   color: const Color(0xFF91D5FF),
                                 ),
                               ),
-                              child: const Row(
+                              child: Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   SizedBox(
                                     width: 20,
                                     height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Color(0xFF1890FF),
+                                    child: AppShimmer.wrap(
+                                      context,
+                                      child: AppShimmer.circle(
+                                        context,
+                                        size: 20,
                                       ),
                                     ),
                                   ),
-                                  SizedBox(width: 12),
-                                  Text(
+                                  const SizedBox(width: 12),
+                                  const Text(
                                     'جاري رفع الصورة...',
                                     style: TextStyle(
                                       color: Color(0xFF1890FF),
@@ -759,12 +879,13 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                                   String? finalImageUrl = banner.imageUrl;
 
                                   // إذا تم اختيار صورة جديدة من المعرض، ارفعها أولاً
-                                  if (selectedImagePath != null) {
+                                  if (selectedImageBytes != null) {
                                     setState(() => isUploading = true);
                                     try {
                                       finalImageUrl =
-                                          await BannerService.uploadBannerImage(
-                                            selectedImagePath!,
+                                          await BannerService.uploadBannerImageBytes(
+                                            selectedImageBytes!,
+                                            selectedImageFile!.name,
                                           );
                                       if (!context.mounted) return;
                                       setState(() => isUploading = false);
@@ -791,6 +912,11 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                                         id: banner.id,
                                         title: titleController.text.trim(),
                                         imageUrl: finalImageUrl,
+                                        targetType: selectedTargetType,
+                                        targetId:
+                                            (selectedTargetId?.isEmpty ?? true)
+                                            ? null
+                                            : selectedTargetId,
                                         displayOrder: banner.displayOrder,
                                         isActive: banner.isActive,
                                         startDate: banner.startDate,
@@ -816,15 +942,9 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
                             ),
                           ),
                           child: isUploading
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.white,
-                                    ),
-                                  ),
+                              ? AppShimmer.wrap(
+                                  context,
+                                  child: AppShimmer.circle(context, size: 20),
                                 )
                               : const Text('تحديث'),
                         ),
@@ -838,6 +958,170 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
         ),
       ),
     );
+  }
+
+  // ====================================================================
+  // Target Type & Target Picker Widgets
+  // ====================================================================
+
+  /// Resolve the name of a target (product/store/category) by its ID
+  Future<String?> _resolveTargetName(BannerType type, String targetId) async {
+    try {
+      switch (type) {
+        case BannerType.product:
+          final productProvider = Provider.of<ProductProvider>(
+            context,
+            listen: false,
+          );
+          final product = await productProvider.getProductById(targetId);
+          return product?.name;
+        case BannerType.store:
+          final storeProvider = Provider.of<StoreProvider>(
+            context,
+            listen: false,
+          );
+          final store = storeProvider.getStoreById(targetId);
+          return store?.name;
+        case BannerType.category:
+          final categoryProvider = Provider.of<CategoryProvider>(
+            context,
+            listen: false,
+          );
+          final category = await categoryProvider.getCategoryById(targetId);
+          return category?.name;
+        case BannerType.promotion:
+          return null;
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Target Type Selector dropdown
+  Widget _buildTargetTypeSelector({
+    required BannerType? selectedType,
+    required ValueChanged<BannerType?> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Row(
+          children: [
+            Text(
+              'نوع الإعلان',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF262626),
+              ),
+            ),
+            SizedBox(width: 4),
+            Text(
+              '*',
+              style: TextStyle(
+                color: Color(0xFFFF4D4F),
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        DropdownButtonFormField<BannerType>(
+          initialValue: selectedType,
+          decoration: InputDecoration(
+            hintText: 'اختر نوع الإعلان',
+            hintStyle: const TextStyle(color: Color(0xFF8C8C8C)),
+            filled: true,
+            fillColor: Colors.white,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: Color(0xFFD9D9D9)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: Color(0xFFD9D9D9)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: Color(0xFF1890FF), width: 2),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 10,
+            ),
+          ),
+          items: BannerType.values.map((type) {
+            IconData icon;
+            switch (type) {
+              case BannerType.product:
+                icon = Icons.shopping_bag_outlined;
+              case BannerType.store:
+                icon = Icons.storefront_outlined;
+              case BannerType.category:
+                icon = Icons.category_outlined;
+              case BannerType.promotion:
+                icon = Icons.local_offer_outlined;
+            }
+            return DropdownMenuItem(
+              value: type,
+              child: Row(
+                children: [
+                  Icon(icon, size: 18, color: const Color(0xFF1890FF)),
+                  const SizedBox(width: 8),
+                  Text(type.displayName),
+                ],
+              ),
+            );
+          }).toList(),
+          onChanged: onChanged,
+        ),
+      ],
+    );
+  }
+
+  /// Target Picker - delegates to the stateful widget
+  Widget _buildTargetPicker({
+    required BuildContext context,
+    required BannerType targetType,
+    required String? selectedTargetId,
+    required String? selectedTargetName,
+    required String searchQuery,
+    required void Function(String id, String name) onSelected,
+    required ValueChanged<String> onSearchChanged,
+  }) {
+    return _TargetPickerWidget(
+      targetType: targetType,
+      selectedTargetId: selectedTargetId,
+      selectedTargetName: selectedTargetName,
+      onSelected: onSelected,
+      getTargetIcon: _getTargetIcon,
+    );
+  }
+
+  static Widget _buildEmptyListMsg(String message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          message,
+          style: const TextStyle(color: Color(0xFF8C8C8C), fontSize: 13),
+        ),
+      ),
+    );
+  }
+
+  IconData _getTargetIcon(BannerType type) {
+    switch (type) {
+      case BannerType.product:
+        return Icons.shopping_bag_outlined;
+      case BannerType.store:
+        return Icons.storefront_outlined;
+      case BannerType.category:
+        return Icons.category_outlined;
+      case BannerType.promotion:
+        return Icons.local_offer_outlined;
+    }
   }
 
   Widget _buildTextField({
@@ -910,26 +1194,407 @@ class _ManageBannersScreenState extends State<ManageBannersScreen> {
   }
 }
 
+// ====================================================================
+// Target Picker Widget - StatefulWidget with its own search controller
+// ====================================================================
+
+class _TargetResultsList extends StatelessWidget {
+  const _TargetResultsList({
+    required this.targetType,
+    required this.searchQuery,
+    required this.selectedTargetId,
+    required this.onSelected,
+  });
+
+  final BannerType targetType;
+  final String searchQuery;
+  final String? selectedTargetId;
+  final void Function(String id, String name) onSelected;
+
+  Widget _emptyMsg(String msg) =>
+      _ManageBannersScreenState._buildEmptyListMsg(msg);
+
+  @override
+  Widget build(BuildContext context) {
+    final query = searchQuery.toLowerCase().trim();
+
+    switch (targetType) {
+      case BannerType.product:
+        final productProvider = Provider.of<ProductProvider>(
+          context,
+          listen: false,
+        );
+        return FutureBuilder<void>(
+          future: productProvider.products.isEmpty
+              ? productProvider.fetchProducts()
+              : Future.value(),
+          builder: (ctx, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const _TargetLoadingIndicator();
+            }
+            var products = productProvider.products;
+            if (query.isNotEmpty) {
+              products = products
+                  .where((p) => p.name.toLowerCase().contains(query))
+                  .toList();
+            }
+            if (products.isEmpty) return _emptyMsg('لا توجد منتجات');
+            return ListView.builder(
+              shrinkWrap: true,
+              itemCount: products.length,
+              itemBuilder: (_, i) {
+                final p = products[i];
+                final isSelected = p.id == selectedTargetId;
+                return ListTile(
+                  dense: true,
+                  selected: isSelected,
+                  selectedTileColor: const Color(0xFFE6F7FF),
+                  leading: const Icon(Icons.shopping_bag_outlined, size: 20),
+                  title: Text(
+                    p.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                  subtitle: Text(
+                    '${p.price} ج.م',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF8C8C8C),
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? const Icon(
+                          Icons.check_circle,
+                          color: Color(0xFF52C41A),
+                          size: 20,
+                        )
+                      : null,
+                  onTap: () => onSelected(p.id, p.name),
+                );
+              },
+            );
+          },
+        );
+
+      case BannerType.store:
+        final storeProvider = Provider.of<StoreProvider>(
+          context,
+          listen: false,
+        );
+        return FutureBuilder<void>(
+          future: storeProvider.stores.isEmpty
+              ? storeProvider.fetchStores()
+              : Future.value(),
+          builder: (ctx, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const _TargetLoadingIndicator();
+            }
+            var stores = storeProvider.stores;
+            if (query.isNotEmpty) {
+              stores = stores
+                  .where((s) => s.name.toLowerCase().contains(query))
+                  .toList();
+            }
+            if (stores.isEmpty) return _emptyMsg('لا توجد متاجر');
+            return ListView.builder(
+              shrinkWrap: true,
+              itemCount: stores.length,
+              itemBuilder: (_, i) {
+                final s = stores[i];
+                final isSelected = s.id == selectedTargetId;
+                return ListTile(
+                  dense: true,
+                  selected: isSelected,
+                  selectedTileColor: const Color(0xFFE6F7FF),
+                  leading: const Icon(Icons.storefront_outlined, size: 20),
+                  title: Text(
+                    s.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? const Icon(
+                          Icons.check_circle,
+                          color: Color(0xFF52C41A),
+                          size: 20,
+                        )
+                      : null,
+                  onTap: () => onSelected(s.id, s.name),
+                );
+              },
+            );
+          },
+        );
+
+      case BannerType.category:
+        final categoryProvider = Provider.of<CategoryProvider>(
+          context,
+          listen: false,
+        );
+        return FutureBuilder<void>(
+          future: categoryProvider.categories.isEmpty
+              ? categoryProvider.fetchCategories()
+              : Future.value(),
+          builder: (ctx, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const _TargetLoadingIndicator();
+            }
+            var categories = categoryProvider.categories;
+            if (query.isNotEmpty) {
+              categories = categories
+                  .where((c) => c.name.toLowerCase().contains(query))
+                  .toList();
+            }
+            if (categories.isEmpty) return _emptyMsg('لا توجد فئات');
+            return ListView.builder(
+              shrinkWrap: true,
+              itemCount: categories.length,
+              itemBuilder: (_, i) {
+                final c = categories[i];
+                final isSelected = c.id == selectedTargetId;
+                return ListTile(
+                  dense: true,
+                  selected: isSelected,
+                  selectedTileColor: const Color(0xFFE6F7FF),
+                  leading: const Icon(Icons.category_outlined, size: 20),
+                  title: Text(
+                    c.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
+                  ),
+                  trailing: isSelected
+                      ? const Icon(
+                          Icons.check_circle,
+                          color: Color(0xFF52C41A),
+                          size: 20,
+                        )
+                      : null,
+                  onTap: () => onSelected(c.id, c.name),
+                );
+              },
+            );
+          },
+        );
+
+      case BannerType.promotion:
+        return _emptyMsg('العروض لا تحتاج لاختيار هدف');
+    }
+  }
+}
+// ====================================================================
+
+class _TargetPickerWidget extends StatefulWidget {
+  const _TargetPickerWidget({
+    required this.targetType,
+    required this.selectedTargetId,
+    required this.selectedTargetName,
+    required this.onSelected,
+    required this.getTargetIcon,
+  });
+
+  final BannerType targetType;
+  final String? selectedTargetId;
+  final String? selectedTargetName;
+  final void Function(String id, String name) onSelected;
+  final IconData Function(BannerType) getTargetIcon;
+
+  @override
+  State<_TargetPickerWidget> createState() => _TargetPickerWidgetState();
+}
+
+class _TargetPickerWidgetState extends State<_TargetPickerWidget> {
+  late final TextEditingController _searchController;
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'اختر ${widget.targetType.displayName}',
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+                color: Color(0xFF262626),
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Text(
+              '*',
+              style: TextStyle(
+                color: Color(0xFFFF4D4F),
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        // Selected item display
+        if (widget.selectedTargetId != null &&
+            widget.selectedTargetId!.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE6F7FF),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF91D5FF)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  widget.getTargetIcon(widget.targetType),
+                  color: const Color(0xFF1890FF),
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    widget.selectedTargetName ?? 'جاري التحميل...',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w500,
+                      color: Color(0xFF262626),
+                    ),
+                  ),
+                ),
+                InkWell(
+                  onTap: () => widget.onSelected('', ''),
+                  child: const Icon(
+                    Icons.close,
+                    size: 18,
+                    color: Color(0xFF8C8C8C),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+
+        // Search field - with explicit controller to prevent browser autofill
+        TextField(
+          controller: _searchController,
+          autofillHints: const [],
+          autocorrect: false,
+          onChanged: (value) {
+            setState(() => _searchQuery = value);
+          },
+          decoration: InputDecoration(
+            hintText: 'ابحث عن ${widget.targetType.displayName}...',
+            hintStyle: const TextStyle(color: Color(0xFF8C8C8C)),
+            prefixIcon: const Icon(Icons.search, color: Color(0xFF8C8C8C)),
+            filled: true,
+            fillColor: Colors.white,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: Color(0xFFD9D9D9)),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: Color(0xFFD9D9D9)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(6),
+              borderSide: const BorderSide(color: Color(0xFF1890FF), width: 2),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 10,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+
+        // Results list
+        Container(
+          constraints: const BoxConstraints(maxHeight: 180),
+          decoration: BoxDecoration(
+            border: Border.all(color: const Color(0xFFD9D9D9)),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: _TargetResultsList(
+            targetType: widget.targetType,
+            searchQuery: _searchQuery,
+            selectedTargetId: widget.selectedTargetId,
+            onSelected: widget.onSelected,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TargetLoadingIndicator extends StatelessWidget {
+  const _TargetLoadingIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      height: 60,
+      child: Center(
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Color(0xFF1890FF),
+              ),
+            ),
+            SizedBox(width: 10),
+            Text(
+              'جارٍ تحميل البيانات...',
+              style: TextStyle(fontSize: 13, color: Color(0xFF8C8C8C)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _LoadingState extends StatelessWidget {
   const _LoadingState();
 
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          CircularProgressIndicator(
-            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF1890FF)),
-          ),
-          SizedBox(height: 16),
-          Text(
-            'جاري تحميل البانرات...',
-            style: TextStyle(color: Color(0xFF8C8C8C), fontSize: 14),
-          ),
-        ],
-      ),
-    );
+    return AppShimmer.centeredLines(context, lines: 2);
   }
 }
 
@@ -1095,32 +1760,97 @@ class _BannerCardState extends State<_BannerCard> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: widget.banner.isActive
-                            ? const Color(0xFFF6FFED)
-                            : const Color(0xFFFFF2F0),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: widget.banner.isActive
-                              ? const Color(0xFFB7EB8F)
-                              : const Color(0xFFFFCCC7),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: widget.banner.isActive
+                                ? const Color(0xFFF6FFED)
+                                : const Color(0xFFFFF2F0),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: widget.banner.isActive
+                                  ? const Color(0xFFB7EB8F)
+                                  : const Color(0xFFFFCCC7),
+                            ),
+                          ),
+                          child: Text(
+                            widget.banner.isActive ? 'نشط' : 'غير نشط',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: widget.banner.isActive
+                                  ? const Color(0xFF52C41A)
+                                  : const Color(0xFFFF4D4F),
+                            ),
+                          ),
                         ),
-                      ),
-                      child: Text(
-                        widget.banner.isActive ? 'نشط' : 'غير نشط',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: widget.banner.isActive
-                              ? const Color(0xFF52C41A)
-                              : const Color(0xFFFF4D4F),
-                        ),
-                      ),
+                        if (widget.banner.targetType != null) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE6F7FF),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFF91D5FF),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _getTargetIconStatic(
+                                    widget.banner.targetType!,
+                                  ),
+                                  size: 12,
+                                  color: const Color(0xFF1890FF),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  widget.banner.targetTypeDisplayName,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w500,
+                                    color: Color(0xFF1890FF),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        if (widget.banner.targetType == null) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF7E6),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: const Color(0xFFFFD591),
+                              ),
+                            ),
+                            child: const Text(
+                              'بدون رابط',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                                color: Color(0xFFFA8C16),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ),
@@ -1223,6 +1953,19 @@ class _BannerCardState extends State<_BannerCard> {
         ),
       ),
     );
+  }
+
+  static IconData _getTargetIconStatic(BannerType type) {
+    switch (type) {
+      case BannerType.product:
+        return Icons.shopping_bag_outlined;
+      case BannerType.store:
+        return Icons.storefront_outlined;
+      case BannerType.category:
+        return Icons.category_outlined;
+      case BannerType.promotion:
+        return Icons.local_offer_outlined;
+    }
   }
 
   Widget _buildActionButton({

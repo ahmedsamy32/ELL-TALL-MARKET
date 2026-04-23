@@ -1,4 +1,4 @@
-import 'dart:io';
+// Removed dart:io for Web compatibility
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/category_model.dart';
@@ -17,6 +17,11 @@ class CategoryProvider with ChangeNotifier {
   List<CategoryModel> _mainCategories = [];
   final List<CategoryModel> _featuredCategories = [];
 
+  bool _availabilityScopeActive = false;
+  Set<String> _availableCategoryIds = <String>{};
+  Set<String> _availableCategoryNamesFromStores = <String>{};
+  Set<String> _availableCategoryIdsFromProducts = <String>{};
+
   bool _isLoading = false;
   String? _error;
   CategoryModel? _selectedCategory;
@@ -25,6 +30,24 @@ class CategoryProvider with ChangeNotifier {
   List<CategoryModel> get categories => _categories;
   List<CategoryModel> get mainCategories => _mainCategories;
   List<CategoryModel> get featuredCategories => _featuredCategories;
+
+  bool get availabilityScopeActive => _availabilityScopeActive;
+  Set<String> get availableCategoryIds => _availableCategoryIds;
+  List<CategoryModel> get availableCategories => !_availabilityScopeActive
+      ? _categories
+      : _categories.where((c) => _availableCategoryIds.contains(c.id)).toList();
+  List<CategoryModel> get availableMainCategories => !_availabilityScopeActive
+      ? _mainCategories
+      : _mainCategories
+            .where((c) => _availableCategoryIds.contains(c.id))
+            .toList();
+  List<CategoryModel> get availableFeaturedCategories =>
+      !_availabilityScopeActive
+      ? _featuredCategories
+      : _featuredCategories
+            .where((c) => _availableCategoryIds.contains(c.id))
+            .toList();
+
   bool get isLoading => _isLoading;
   String? get error => _error;
   CategoryModel? get selectedCategory => _selectedCategory;
@@ -55,6 +78,13 @@ class CategoryProvider with ChangeNotifier {
   Future<void> fetchCategories({bool refresh = false}) async {
     if (!refresh && _categories.isNotEmpty) return;
 
+    if (refresh) {
+      _categories = [];
+      _mainCategories = [];
+      _featuredCategories.clear();
+      notifyListeners();
+    }
+
     _setLoading(true);
     _setError(null);
 
@@ -67,7 +97,7 @@ class CategoryProvider with ChangeNotifier {
           "جلب الفئات من Supabase... (محاولة $attempt/$maxRetries)",
         );
 
-        // جلب البيانات من قاعدة البيانات باستخدام Supabase Client مع timeout أطول
+        // جلب البيانات من قاعدة البيانات باستخدام Supabase Client
         final response = await _supabase
             .from('categories')
             .select('*')
@@ -79,11 +109,6 @@ class CategoryProvider with ChangeNotifier {
             .order('name', ascending: true) // ثم حسب الاسم
             .timeout(
               const Duration(seconds: 30), // مهلة أطول للشبكات البطيئة
-              onTimeout: () {
-                throw SocketException(
-                  'انتهت مهلة الاتصال بالخادم عند جلب الفئات',
-                );
-              },
             );
 
         AppLogger.debug("استجابة Supabase: ${response.length} فئة");
@@ -106,51 +131,62 @@ class CategoryProvider with ChangeNotifier {
           _featuredCategories.addAll(
             _categories.take(6).toList(),
           ); // أول 6 كفئات مميزة
+
+          if (_availabilityScopeActive) {
+            _recomputeAvailableCategoryIds();
+          }
+
           _setError(null);
           AppLogger.info("تم جلب ${_categories.length} فئة من قاعدة البيانات");
         }
 
         _setLoading(false); // إيقاف حالة التحميل عند النجاح
         return; // نجحت العملية، اخرج من الحلقة
-      } on SocketException catch (e) {
-        AppLogger.error(
-          "خطأ في الشبكة عند جلب الفئات (محاولة $attempt/$maxRetries)",
-          e,
-        );
+      } catch (e) {
+        final isNetworkError = e.toString().contains('SocketException');
+        final isTimeoutError =
+            e.toString().contains('TimeoutException') ||
+            e.toString().contains('انتهت مهلة الاتصال');
 
-        if (attempt == maxRetries) {
-          // في حالة فشل جميع المحاولات
+        if (isNetworkError || isTimeoutError) {
+          final errorType = isTimeoutError ? 'انتهاء المهلة' : 'خطأ في الشبكة';
           AppLogger.error(
-            "فشل جلب الفئات من الخادم نهائياً بعد $maxRetries محاولات",
+            "$errorType عند جلب الفئات (محاولة $attempt/$maxRetries)",
             e,
           );
-          _categories = [];
-          _mainCategories = [];
-          _featuredCategories.clear();
-          _setError(
-            'لا يمكن جلب الفئات - تحقق من اتصال الإنترنت وأعد المحاولة',
-          );
-          return;
+
+          if (attempt == maxRetries) {
+            // في حالة فشل جميع المحاولات
+            AppLogger.error(
+              "فشل جلب الفئات من الخادم نهائياً بعد $maxRetries محاولات",
+              e,
+            );
+            _categories = [];
+            _mainCategories = [];
+            _featuredCategories.clear();
+            _setError(
+              'لا يمكن جلب الفئات - تحقق من اتصال الإنترنت وأعد المحاولة',
+            );
+            return;
+          }
+        } else {
+          AppLogger.error("خطأ في جلب الفئات (محاولة $attempt/$maxRetries)", e);
+
+          if (attempt == maxRetries) {
+            // في حالة فشل الـ API نهائياً
+            AppLogger.error(
+              "فشل جلب الفئات نهائياً بعد $maxRetries محاولات",
+              e,
+            );
+            _categories = [];
+            _mainCategories = [];
+            _featuredCategories.clear();
+            _setError('حدث خطأ في الخادم - أعد المحاولة لاحقاً');
+            return;
+          }
         }
 
-        // انتظار متزايد بين المحاولات
-        final delay = Duration(seconds: baseDelay.inSeconds * attempt);
-        AppLogger.info('⏳ إعادة المحاولة خلال ${delay.inSeconds} ثانية...');
-        await Future.delayed(delay);
-      } catch (e) {
-        AppLogger.error("خطأ في جلب الفئات (محاولة $attempt/$maxRetries)", e);
-
-        if (attempt == maxRetries) {
-          // في حالة فشل الـ API نهائياً
-          AppLogger.error("فشل جلب الفئات نهائياً بعد $maxRetries محاولات", e);
-          _categories = [];
-          _mainCategories = [];
-          _featuredCategories.clear();
-          _setError('حدث خطأ في الخادم - أعد المحاولة لاحقاً');
-          return;
-        }
-
-        // انتظار متزايد بين المحاولات للأخطاء الأخرى أيضاً
+        // انتظار متزايد بين المحاولات (exponential backoff)
         final delay = Duration(seconds: baseDelay.inSeconds * attempt);
         AppLogger.info('⏳ إعادة المحاولة خلال ${delay.inSeconds} ثانية...');
         await Future.delayed(delay);
@@ -159,6 +195,109 @@ class CategoryProvider with ChangeNotifier {
 
     // التأكد من إعادة تعيين حالة التحميل
     _setLoading(false);
+  }
+
+  /// تفعيل/تحديث نطاق الفئات المتاحة بناءً على المتاجر القريبة
+  /// القاعدة: الفئة تظهر فقط إذا كان لها (منتجات) داخل allowedStoreIds
+  /// أو (متاجر) داخل allowedStoreIds مرتبطة بالاسم (stores.category)
+  Future<void> applyAvailabilityScope({List<String>? allowedStoreIds}) async {
+    if (allowedStoreIds == null) {
+      clearAvailabilityScope();
+      return;
+    }
+
+    _availabilityScopeActive = true;
+
+    if (allowedStoreIds.isEmpty) {
+      _availableCategoryNamesFromStores = <String>{};
+      _availableCategoryIdsFromProducts = <String>{};
+      _availableCategoryIds = <String>{};
+      notifyListeners();
+      return;
+    }
+
+    try {
+      final results = await Future.wait<Set<String>>([
+        _fetchAvailableStoreCategoryNames(allowedStoreIds),
+        _fetchAvailableProductCategoryIds(allowedStoreIds),
+      ]);
+
+      _availableCategoryNamesFromStores = results[0];
+      _availableCategoryIdsFromProducts = results[1];
+      _recomputeAvailableCategoryIds();
+      notifyListeners();
+    } catch (e) {
+      AppLogger.error('خطأ في تطبيق نطاق الفئات المتاحة', e);
+      // في حال فشل حساب النطاق، نعود للوضع الافتراضي (عرض كل الفئات)
+      _availabilityScopeActive = false;
+      _availableCategoryIds = <String>{};
+      _availableCategoryNamesFromStores = <String>{};
+      _availableCategoryIdsFromProducts = <String>{};
+      notifyListeners();
+    }
+  }
+
+  void clearAvailabilityScope() {
+    if (!_availabilityScopeActive) return;
+    _availabilityScopeActive = false;
+    _availableCategoryIds = <String>{};
+    _availableCategoryNamesFromStores = <String>{};
+    _availableCategoryIdsFromProducts = <String>{};
+    notifyListeners();
+  }
+
+  void _recomputeAvailableCategoryIds() {
+    final available = <String>{..._availableCategoryIdsFromProducts};
+    if (_availableCategoryNamesFromStores.isNotEmpty) {
+      for (final category in _categories) {
+        if (_availableCategoryNamesFromStores.contains(category.name)) {
+          available.add(category.id);
+        }
+      }
+    }
+    _availableCategoryIds = available;
+  }
+
+  Future<Set<String>> _fetchAvailableStoreCategoryNames(
+    List<String> allowedStoreIds,
+  ) async {
+    final response = await _supabase
+        .from('stores')
+        .select('category')
+        .eq('is_active', true)
+        .inFilter('id', allowedStoreIds);
+
+    final rows = (response as List).cast<dynamic>();
+    final names = <String>{};
+    for (final row in rows) {
+      final map = (row as Map).cast<String, dynamic>();
+      final value = map['category']?.toString().trim();
+      if (value != null && value.isNotEmpty) {
+        names.add(value);
+      }
+    }
+    return names;
+  }
+
+  Future<Set<String>> _fetchAvailableProductCategoryIds(
+    List<String> allowedStoreIds,
+  ) async {
+    final response = await _supabase
+        .from('products')
+        .select('category_id')
+        .eq('is_active', true)
+        .inFilter('store_id', allowedStoreIds);
+
+    final rows = (response as List).cast<dynamic>();
+    final ids = <String>{};
+    for (final row in rows) {
+      final map = (row as Map).cast<String, dynamic>();
+      final value = map['category_id']?.toString().trim();
+      if (value != null && value.isNotEmpty) {
+        ids.add(value);
+      }
+    }
+    return ids;
   }
 
   /// جلب الفئات المميزة من Supabase

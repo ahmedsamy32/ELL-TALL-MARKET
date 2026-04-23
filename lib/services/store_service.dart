@@ -540,15 +540,19 @@ class StoreService {
     String? name,
     String? description,
     String? phone,
-    String? address,
-    String? city,
     String? governorate,
+    String? city,
+    String? area,
+    String? street,
+    String? landmark,
+    String? address,
     double? latitude,
     double? longitude,
     int? deliveryTime,
     bool? isOpen,
     double? deliveryFee,
     double? minOrder,
+    double? deliveryRadiusKm,
     String? category,
     Map<String, dynamic>? openingHours,
     String? imageUrl,
@@ -563,15 +567,21 @@ class StoreService {
       if (name != null) data['name'] = name;
       if (description != null) data['description'] = description;
       if (phone != null) data['phone'] = phone;
-      if (address != null) data['address'] = address;
-      if (city != null) data['city'] = city;
       if (governorate != null) data['governorate'] = governorate;
+      if (city != null) data['city'] = city;
+      if (area != null) data['area'] = area;
+      if (street != null) data['street'] = street;
+      if (landmark != null) data['landmark'] = landmark;
+      if (address != null) data['address'] = address;
       if (latitude != null) data['latitude'] = latitude;
       if (longitude != null) data['longitude'] = longitude;
       if (deliveryTime != null) data['delivery_time'] = deliveryTime;
       if (isOpen != null) data['is_open'] = isOpen;
       if (deliveryFee != null) data['delivery_fee'] = deliveryFee;
       if (minOrder != null) data['min_order'] = minOrder;
+      if (deliveryRadiusKm != null) {
+        data['delivery_radius_km'] = deliveryRadiusKm;
+      }
       if (category != null) data['category'] = category;
       if (openingHours != null) data['opening_hours'] = openingHours;
       if (imageUrl != null) data['image_url'] = imageUrl;
@@ -584,6 +594,23 @@ class StoreService {
           .eq('id', storeId)
           .select('*')
           .single();
+
+      // تحديث حقل location (PostGIS) إذا تم تحديث الإحداثيات
+      if (latitude != null && longitude != null) {
+        try {
+          await _supabase.rpc(
+            'sync_store_location',
+            params: {
+              'store_id_param': storeId,
+              'lat': latitude,
+              'lng': longitude,
+            },
+          );
+          AppLogger.info('✅ تم تحديث موقع PostGIS للمتجر');
+        } catch (e) {
+          AppLogger.warning('⚠️ فشل تحديث موقع PostGIS: $e');
+        }
+      }
 
       AppLogger.info('✅ تم تحديث المتجر (V2): ${response['name']}');
       return StoreModel.fromSupabaseMap(response);
@@ -839,76 +866,6 @@ class StoreService {
 
   static Future<void> deleteStoreBranch(String id) async {
     await _supabase.from('store_branches').delete().eq('id', id);
-  }
-
-  // ---- Delivery Areas ----
-  static Future<List<Map<String, dynamic>>> getStoreDeliveryAreas(
-    String storeId,
-  ) async {
-    try {
-      final res = await _supabase
-          .from('store_delivery_areas')
-          .select('*')
-          .eq('store_id', storeId)
-          .order('created_at', ascending: false);
-      return List<Map<String, dynamic>>.from(res as List);
-    } on PostgrestException catch (e) {
-      AppLogger.error('خطأ في جلب مناطق التوصيل: ${e.message}', e);
-      return [];
-    }
-  }
-
-  static Future<Map<String, dynamic>?> addDeliveryArea({
-    required String storeId,
-    required String areaName,
-    required double fee,
-    required double minOrder,
-    bool isActive = true,
-  }) async {
-    try {
-      final payload = {
-        'store_id': storeId,
-        'area_name': areaName,
-        'fee': fee,
-        'min_order': minOrder,
-        'is_active': isActive,
-      };
-      final res = await _supabase
-          .from('store_delivery_areas')
-          .insert(payload)
-          .select('*')
-          .single();
-      return Map<String, dynamic>.from(res);
-    } on PostgrestException catch (e) {
-      AppLogger.error('خطأ في إضافة منطقة التوصيل: ${e.message}', e);
-      rethrow;
-    }
-  }
-
-  static Future<Map<String, dynamic>?> updateDeliveryArea(
-    String id,
-    Map<String, dynamic> changes,
-  ) async {
-    try {
-      final payload = {
-        ...changes,
-        'updated_at': DateTime.now().toIso8601String(),
-      };
-      final res = await _supabase
-          .from('store_delivery_areas')
-          .update(payload)
-          .eq('id', id)
-          .select('*')
-          .single();
-      return Map<String, dynamic>.from(res);
-    } on PostgrestException catch (e) {
-      AppLogger.error('خطأ في تعديل منطقة التوصيل: ${e.message}', e);
-      rethrow;
-    }
-  }
-
-  static Future<void> deleteDeliveryArea(String id) async {
-    await _supabase.from('store_delivery_areas').delete().eq('id', id);
   }
 
   // ---- Payment Methods ----

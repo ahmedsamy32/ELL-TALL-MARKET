@@ -22,23 +22,43 @@ class SearchResult {
 class UniversalSearchService {
   final _supabase = Supabase.instance.client;
 
-  Future<SearchResult> search(String query) async {
+  Future<SearchResult> search(
+    String query, {
+    List<String>? allowedStoreIds,
+  }) async {
     if (query.trim().isEmpty) {
       return SearchResult(products: [], stores: [], categories: []);
     }
 
     try {
+      // إذا تم تمرير نطاق متاجر فارغ: لا نعرض أي نتائج (حتى الفئات) لأن الفئات سيتم
+      // إخفاؤها عند عدم وجود متاجر/منتجات داخل النطاق.
+      if (allowedStoreIds != null && allowedStoreIds.isEmpty) {
+        return SearchResult(products: [], stores: [], categories: []);
+      }
+
       // البحث المتوازي في جميع الجداول
-      final results = await Future.wait([
-        _searchProducts(query),
-        _searchStores(query),
-        _searchCategories(query),
-      ]);
+      // ملاحظة: Future.wait يتطلب نفس نوع الـ Future. بما أن الأنواع هنا مختلفة
+      // (Products/Stores/Categories)، نبدأ الـ futures أولاً ثم ننتظرها منفصلة.
+      // هذا يظل تنفيذًا متوازيًا لأنه يتم إنشاء الـ futures قبل await.
+      final productsFuture = _searchProducts(
+        query,
+        allowedStoreIds: allowedStoreIds,
+      );
+      final storesFuture = _searchStores(
+        query,
+        allowedStoreIds: allowedStoreIds,
+      );
+      final categoriesFuture = _searchCategories(query);
+
+      final products = await productsFuture;
+      final stores = await storesFuture;
+      final categories = await categoriesFuture;
 
       return SearchResult(
-        products: results[0] as List<ProductModel>,
-        stores: results[1] as List<StoreModel>,
-        categories: results[2] as List<CategoryModel>,
+        products: products,
+        stores: stores,
+        categories: categories,
       );
     } catch (e) {
       AppLogger.error('❌ خطأ في البحث الشامل', e);
@@ -46,16 +66,24 @@ class UniversalSearchService {
     }
   }
 
-  Future<List<ProductModel>> _searchProducts(String query) async {
+  Future<List<ProductModel>> _searchProducts(
+    String query, {
+    List<String>? allowedStoreIds,
+  }) async {
     try {
       final searchPattern = '%$query%';
-      final response = await _supabase
+
+      var dbQuery = _supabase
           .from('products')
           .select()
           .eq('is_active', true)
-          .or('name.ilike.$searchPattern,description.ilike.$searchPattern')
-          .order('name')
-          .limit(20);
+          .or('name.ilike.$searchPattern,description.ilike.$searchPattern');
+
+      if (allowedStoreIds != null) {
+        dbQuery = dbQuery.inFilter('store_id', allowedStoreIds);
+      }
+
+      final response = await dbQuery.order('name').limit(20);
 
       AppLogger.debug('🔍 نتائج بحث المنتجات: ${(response as List).length}');
       return (response as List)
@@ -67,16 +95,24 @@ class UniversalSearchService {
     }
   }
 
-  Future<List<StoreModel>> _searchStores(String query) async {
+  Future<List<StoreModel>> _searchStores(
+    String query, {
+    List<String>? allowedStoreIds,
+  }) async {
     try {
       final searchPattern = '%$query%';
-      final response = await _supabase
+
+      var dbQuery = _supabase
           .from('stores')
           .select()
           .eq('is_active', true)
-          .or('name.ilike.$searchPattern,description.ilike.$searchPattern')
-          .order('name')
-          .limit(10);
+          .or('name.ilike.$searchPattern,description.ilike.$searchPattern');
+
+      if (allowedStoreIds != null) {
+        dbQuery = dbQuery.inFilter('id', allowedStoreIds);
+      }
+
+      final response = await dbQuery.order('name').limit(10);
 
       AppLogger.debug('🔍 نتائج بحث المتاجر: ${(response as List).length}');
       return (response as List)

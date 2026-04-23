@@ -13,7 +13,7 @@ class NearbyStoresWidget extends StatefulWidget {
     super.key,
     required this.customerLatitude,
     required this.customerLongitude,
-    this.maxDistanceKm = 20,
+    this.maxDistanceKm = 15,
     this.categoryFilter,
     this.onStoreTap,
   });

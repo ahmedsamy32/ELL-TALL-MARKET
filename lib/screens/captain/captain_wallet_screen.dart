@@ -1,11 +1,14 @@
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
-import 'package:ell_tall_market/providers/settings_provider.dart';
+import 'package:ell_tall_market/providers/app_settings_provider.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:intl/intl.dart' as intl;
+import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:ell_tall_market/utils/captain_order_helpers.dart';
 
 class CaptainWalletScreen extends StatefulWidget {
   const CaptainWalletScreen({super.key});
@@ -20,12 +23,15 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
   bool _isLoading = true;
   double _currentBalance = 0;
   List<OrderModel> _completedOrders = [];
-  late SettingsProvider _settingsProvider;
+  late AppSettingsProvider _settingsProvider;
 
   @override
   void initState() {
     super.initState();
-    _settingsProvider = Provider.of<SettingsProvider>(context, listen: false);
+    _settingsProvider = Provider.of<AppSettingsProvider>(
+      context,
+      listen: false,
+    );
     _loadData();
   }
 
@@ -44,14 +50,14 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
       await orderProvider.fetchCaptainOrders(captainId);
 
       // فلترة الطلبات المكتملة
-      final completedOrders = orderProvider.pastOrders
+      final completedOrders = orderProvider.captainOrders
           .where((order) => order.status == OrderStatus.delivered)
           .toList();
 
-      // حساب الرصيد (10% عمولة من كل طلب مكتمل)
+      // حساب الرصيد
       double balance = 0;
       for (var order in completedOrders) {
-        balance += order.totalAmount * 0.1;
+        balance += CaptainOrderHelpers.calculateCommission(order.totalAmount);
       }
 
       setState(() {
@@ -78,18 +84,21 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
         centerTitle: true,
         actions: [IconButton(icon: Icon(Icons.refresh), onPressed: _loadData)],
       ),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadData,
-              child: Column(
-                children: [
-                  _buildBalanceCard(),
-                  _buildFilters(),
-                  Expanded(child: _buildOrdersList()),
-                ],
+      body: ResponsiveCenter(
+        maxWidth: 800,
+        child: _isLoading
+            ? AppShimmer.centeredLines(context)
+            : RefreshIndicator(
+                onRefresh: _loadData,
+                child: Column(
+                  children: [
+                    _buildBalanceCard(),
+                    _buildFilters(),
+                    Expanded(child: _buildOrdersList()),
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
 
@@ -186,9 +195,15 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
       padding: EdgeInsets.all(16),
       itemBuilder: (context, index) {
         final order = filteredOrders[index];
-        final commission = order.totalAmount * 0.1;
+        final commission = CaptainOrderHelpers.calculateCommission(
+          order.totalAmount,
+        );
 
         return Card(
+          clipBehavior: Clip.antiAlias,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           child: ListTile(
             leading: CircleAvatar(
               backgroundColor: Colors.green,
@@ -204,16 +219,16 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '+${commission.toStringAsFixed(2)} ر.س',
-                  style: TextStyle(
+                  '+${_settingsProvider.formatCurrency(commission)}',
+                  style: const TextStyle(
                     color: Colors.green,
                     fontWeight: FontWeight.bold,
                     fontSize: 16,
                   ),
                 ),
                 Text(
-                  'من ${order.totalAmount.toStringAsFixed(2)}',
-                  style: TextStyle(fontSize: 10, color: Colors.grey),
+                  'من ${_settingsProvider.formatCurrency(order.totalAmount)}',
+                  style: const TextStyle(fontSize: 10, color: Colors.grey),
                 ),
               ],
             ),
@@ -225,7 +240,9 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
   }
 
   void _showOrderDetails(OrderModel order) {
-    final commission = order.totalAmount * 0.1;
+    final commission = CaptainOrderHelpers.calculateCommission(
+      order.totalAmount,
+    );
 
     showDialog(
       context: context,
@@ -239,11 +256,11 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen> {
             _buildDetailRow('التاريخ:', _formatDate(order.createdAt)),
             _buildDetailRow(
               'قيمة الطلب:',
-              '${order.totalAmount.toStringAsFixed(2)} ر.س',
+              _settingsProvider.formatCurrency(order.totalAmount),
             ),
             _buildDetailRow(
-              'عمولتك (10%):',
-              '${commission.toStringAsFixed(2)} ر.س',
+              'عمولتك (${(CaptainOrderHelpers.commissionRate * 100).toStringAsFixed(0)}%):',
+              _settingsProvider.formatCurrency(commission),
             ),
             _buildDetailRow('الحالة:', 'تم التوصيل'),
           ],

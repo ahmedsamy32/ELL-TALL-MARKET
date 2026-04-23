@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../core/logger.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
+import 'package:ell_tall_market/utils/navigation_service.dart';
 
 /// خدمة التعامل مع Deep Links للمصادقة
 /// تتعامل مع روابط التأكيد والتوجيه المناسب للمستخدم
@@ -11,6 +13,34 @@ class AuthDeepLinkHandler {
   static const MethodChannel _channel = MethodChannel('auth_deep_link');
   static final SupabaseClient _supabase = Supabase.instance.client;
   static bool _isInitialized = false;
+
+  static Map<String, String> _extractAllParams(Uri uri) {
+    final params = <String, String>{};
+
+    // Standard query params (?a=b)
+    params.addAll(uri.queryParameters);
+
+    // Some Supabase flows return tokens in the fragment (#access_token=...)
+    final fragment = uri.fragment;
+    if (fragment.isNotEmpty) {
+      try {
+        params.addAll(Uri.splitQueryString(fragment));
+      } catch (_) {
+        // Ignore malformed fragments.
+      }
+    }
+
+    return params;
+  }
+
+  static bool _isAuthCallbackUri(Uri uri) {
+    if (uri.scheme != 'elltallmarket') return false;
+
+    // Expected: elltallmarket://auth/callback
+    final isAuthHost = uri.host == 'auth';
+    final isCallbackPath = uri.path == '/callback' || uri.path == 'callback';
+    return isAuthHost && isCallbackPath;
+  }
 
   /// تهيئة معالج Deep Links - الخدمة الأساسية
   static void initialize() {
@@ -23,8 +53,10 @@ class AuthDeepLinkHandler {
       // مراقبة تغيرات حالة المصادقة
       _listenToAuthChanges();
 
-      // مراقبة Deep Links من النظام
-      _channel.setMethodCallHandler(_handleMethodCall);
+      if (!kIsWeb) {
+        // مراقبة Deep Links من النظام (للموبايل فقط)
+        _channel.setMethodCallHandler(_handleMethodCall);
+      }
 
       _isInitialized = true;
       AppLogger.info('✅ AuthDeepLinkHandler: تم تفعيل الخدمة الأساسية بنجاح');
@@ -101,30 +133,65 @@ class AuthDeepLinkHandler {
     try {
       AppLogger.info('🔗 استقبال Deep Link: $url');
 
-      // فحص ما إذا كان الرابط يحتوي على معاملات المصادقة
       final uri = Uri.parse(url);
 
-      if (uri.scheme == 'elltallmarket' &&
-          uri.host == 'auth' &&
-          uri.path == '/callback') {
-        // استخراج معاملات المصادقة
-        final accessToken = uri.queryParameters['access_token'];
-        final refreshToken = uri.queryParameters['refresh_token'];
-
-        if (accessToken != null && refreshToken != null) {
-          AppLogger.info('✅ تم العثور على رموز المصادقة في Deep Link');
-
-          // إنشاء جلسة Supabase من الرموز
-          await _supabase.auth.setSession(refreshToken);
-
-          // فحص حالة تأكيد البريد
-          await _checkAndHandleEmailVerification();
-        } else {
-          AppLogger.warning('❌ رموز المصادقة مفقودة في Deep Link');
-        }
-      } else {
+      if (!_isAuthCallbackUri(uri)) {
         AppLogger.warning('⚠️ Deep Link غير متعرف عليه: $url');
+        return;
       }
+
+      final params = _extractAllParams(uri);
+
+      // Extract common params (support query or fragment)
+      final code = params['code'];
+      final accessToken = params['access_token'];
+      final refreshToken = params['refresh_token'];
+      final error = params['error'];
+      final errorDescription = params['error_description'];
+
+      // If the link contains an error, route the user to the confirmation screen
+      if (error != null || errorDescription != null) {
+        AppLogger.error('❌ رابط غير صالح: $error - $errorDescription');
+        NavigationService.replaceWith(
+          AppRoutes.emailConfirmation,
+          arguments: {
+            'email': '',
+            'expired_link': true,
+            'error_message': errorDescription ?? 'رابط التأكيد غير صالح',
+          },
+        );
+        return;
+      }
+
+      // New flow: PKCE code exchange
+      if (code != null && code.isNotEmpty) {
+        AppLogger.info('✅ تم العثور على code في Deep Link (PKCE)');
+
+        final route =
+            '${AppRoutes.callback}?code=${Uri.encodeQueryComponent(code)}';
+        final nav = NavigationService.navigatorKey.currentState;
+        if (nav == null) {
+          AppLogger.warning('NavigationService: navigatorState is null');
+          return;
+        }
+        nav.pushNamedAndRemoveUntil(route, (r) => false);
+        return;
+      }
+
+      // Old flow: tokens
+      if (accessToken != null && refreshToken != null) {
+        AppLogger.info('✅ تم العثور على رموز المصادقة في Deep Link');
+
+        // Create Supabase session from refresh token (implicit flow)
+        await _supabase.auth.setSession(refreshToken);
+
+        await _checkAndHandleEmailVerification();
+        return;
+      }
+
+      AppLogger.warning(
+        '❌ معاملات المصادقة مفقودة في Deep Link (لا يوجد code ولا tokens)',
+      );
     } catch (e) {
       AppLogger.error('❌ خطأ في معالجة Deep Link', e);
     }
@@ -163,9 +230,7 @@ class AuthDeepLinkHandler {
   static bool isAuthDeepLink(String url) {
     try {
       final uri = Uri.parse(url);
-      return uri.scheme == 'elltallmarket' &&
-          uri.host == 'auth' &&
-          uri.path == '/callback';
+      return _isAuthCallbackUri(uri);
     } catch (e) {
       return false;
     }
@@ -186,12 +251,13 @@ class AuthDeepLinkHandler {
 
       AppLogger.info('✅ الرابط صالح - استخراج المعاملات...');
 
-      // استخراج الرموز من الرابط
       final uri = Uri.parse(url);
-      final accessToken = uri.queryParameters['access_token'];
-      final refreshToken = uri.queryParameters['refresh_token'];
-      final error = uri.queryParameters['error'];
-      final errorDescription = uri.queryParameters['error_description'];
+      final params = _extractAllParams(uri);
+      final code = params['code'];
+      final accessToken = params['access_token'];
+      final refreshToken = params['refresh_token'];
+      final error = params['error'];
+      final errorDescription = params['error_description'];
 
       AppLogger.info('📋 معاملات الرابط:');
       AppLogger.info(
@@ -200,6 +266,7 @@ class AuthDeepLinkHandler {
       AppLogger.info(
         '   - refresh_token: ${refreshToken != null ? "موجود" : "مفقود"}',
       );
+      AppLogger.info('   - code: ${code != null ? "موجود" : "مفقود"}');
       AppLogger.info('   - error: ${error ?? "لا يوجد"}');
       AppLogger.info(
         '   - error_description: ${errorDescription ?? "لا يوجد"}',
@@ -223,6 +290,38 @@ class AuthDeepLinkHandler {
         return;
       }
 
+      // New flow: PKCE code exchange
+      if (code != null && code.isNotEmpty) {
+        AppLogger.info('🔄 معالجة code exchange من Deep Link...');
+
+        try {
+          await _supabase.auth.exchangeCodeForSession(code);
+          AppLogger.info('✅ تم إنشاء الجلسة عبر code exchange');
+        } catch (sessionError) {
+          AppLogger.error('❌ فشل code exchange', sessionError);
+
+          if (context.mounted) {
+            Navigator.of(context).pushReplacementNamed(
+              AppRoutes.emailConfirmation,
+              arguments: {
+                'email': '',
+                'expired_link': true,
+                'error_message': 'انتهت صلاحية رابط التأكيد',
+              },
+            );
+          }
+          return;
+        }
+
+        if (context.mounted) {
+          Navigator.of(
+            context,
+          ).pushNamedAndRemoveUntil(AppRoutes.home, (route) => false);
+        }
+        return;
+      }
+
+      // Old flow: tokens
       if (accessToken != null && refreshToken != null) {
         AppLogger.info('🔐 محاولة إنشاء جلسة Supabase...');
 
@@ -327,7 +426,7 @@ class AuthDeepLinkHandler {
           }
         }
       } else {
-        AppLogger.error('❌ رموز المصادقة مفقودة في Deep Link');
+        AppLogger.error('❌ معاملات المصادقة مفقودة في Deep Link');
 
         // رابط غير صالح - لا يحتوي على الرموز المطلوبة
         if (context.mounted) {

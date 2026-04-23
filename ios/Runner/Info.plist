@@ -93,5 +93,15 @@
 		<string>fbauth2</string>
 		<string>fbshareextension</string>
 	</array>
+
+	<!-- Usage Descriptions for Permissions -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>نحتاج للوصول لموقعك لتحديد أقرب المتاجر وخدمات التوصيل إليك.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>نحتاج للوصول لموقعك لتوفير أفضل تجربة تصفح وتوصيل دقيقة.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>نحتاج لاستخدام الكاميرا لتصوير منتجاتك ورفعها للمتجر.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>نحتاج للوصول لمعرض الصور لاختيار صور المنتجات التي ترغب في عرضها.</string>
 </dict>
 </plist>

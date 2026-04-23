@@ -1,5 +1,5 @@
 import 'dart:typed_data';
-import 'dart:io';
+// Removed dart:io for Web compatibility
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/logger.dart';
 import '../models/order_enums.dart';
@@ -55,9 +55,6 @@ class MerchantService {
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في تسجيل التاجر: ${e.message}', e);
       throw Exception('فشل تسجيل التاجر: ${e.message}');
-    } on SocketException catch (e) {
-      AppLogger.error('لا يوجد اتصال بالشبكة أثناء تسجيل التاجر', e);
-      throw NetworkException('NETWORK_UNAVAILABLE');
     } catch (e) {
       AppLogger.error('خطأ في تسجيل التاجر', e);
       throw Exception('فشل تسجيل التاجر: ${e.toString()}');
@@ -77,9 +74,6 @@ class MerchantService {
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في جلب التاجر: ${e.message}', e);
       return null;
-    } on SocketException catch (e) {
-      AppLogger.error('لا يوجد اتصال بالشبكة أثناء جلب التاجر', e);
-      throw NetworkException('NETWORK_UNAVAILABLE');
     } catch (e) {
       AppLogger.error('خطأ في جلب التاجر', e);
       return null;
@@ -104,9 +98,6 @@ class MerchantService {
         e,
       );
       return null;
-    } on SocketException catch (e) {
-      AppLogger.error('لا يوجد اتصال بالشبكة أثناء جلب التاجر بالبروفايل', e);
-      throw NetworkException('NETWORK_UNAVAILABLE');
     } catch (e) {
       AppLogger.error('خطأ في جلب التاجر بالبروفايل', e);
       return null;
@@ -346,12 +337,14 @@ class MerchantService {
             (sum, o) => sum + (o['total_amount'] as num).toDouble(),
           );
 
-      // جلب التقييمات
-      final reviews = await _supabase
-          .from('reviews')
-          .select('rating')
-          .eq('target_type', 'store')
-          .eq('target_id', merchantId);
+      // جلب التقييمات (من تقييمات المنتجات الخاصة بمتاجر التاجر)
+      final productIds = products.map((p) => p['id'] as String).toList();
+      final reviews = productIds.isEmpty
+          ? <dynamic>[]
+          : await _supabase
+                .from('reviews')
+                .select('rating')
+                .inFilter('product_id', productIds);
 
       final averageRating = reviews.isNotEmpty
           ? reviews.fold<double>(

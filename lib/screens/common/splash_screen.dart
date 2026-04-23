@@ -6,6 +6,9 @@ import 'package:ell_tall_market/utils/app_routes.dart';
 
 import '../../models/profile_model.dart';
 
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
+
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -14,12 +17,24 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
+  String _appVersion = '';
+
   @override
   void initState() {
     super.initState();
+    _initPackageInfo();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkAuthAndRedirect();
     });
+  }
+
+  Future<void> _initPackageInfo() async {
+    final info = await PackageInfo.fromPlatform();
+    if (mounted) {
+      setState(() {
+        _appVersion = info.version;
+      });
+    }
   }
 
   Future<void> _checkAuthAndRedirect() async {
@@ -58,6 +73,13 @@ class _SplashScreenState extends State<SplashScreen> {
             AppLogger.info('🔄 SplashScreen: توجيه إلى لوحة تحكم الأدمن');
             Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
             break;
+          case UserRole.deliveryCompanyAdmin:
+            AppLogger.info('🔄 SplashScreen: توجيه إلى لوحة شركة التوصيل');
+            Navigator.pushReplacementNamed(
+              context,
+              AppRoutes.deliveryCompanyDashboard,
+            );
+            break;
           case UserRole.merchant:
             AppLogger.info('🔄 SplashScreen: توجيه إلى لوحة تحكم التاجر');
             Navigator.pushReplacementNamed(
@@ -95,29 +117,55 @@ class _SplashScreenState extends State<SplashScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Image.asset(
-              'assets/images/icon.png',
-              width: 150,
-              height: 150,
-              fit: BoxFit.contain,
+      body: Stack(
+        children: [
+          Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Image.asset(
+                  'assets/icons/icon2.png',
+                  width: context.responsive(
+                    mobile: 150.0,
+                    tablet: 200.0,
+                    wide: 250.0,
+                  ),
+                  height: 150,
+                  fit: BoxFit.contain,
+                ),
+                const SizedBox(height: 20),
+                Text(
+                  'سوق التل',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).primaryColor,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    Theme.of(context).primaryColor,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 20),
-            Text(
-              'التل ماركت',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Theme.of(context).primaryColor,
+          ),
+          if (_appVersion.isNotEmpty)
+            Positioned(
+              top: 50,
+              right: 20,
+              child: Text(
+                'إصدار $_appVersion',
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontSize: 12,
+                  letterSpacing: 1.1,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
-            const SizedBox(height: 20),
-            CircularProgressIndicator(color: Theme.of(context).primaryColor),
-          ],
-        ),
+        ],
       ),
     );
   }

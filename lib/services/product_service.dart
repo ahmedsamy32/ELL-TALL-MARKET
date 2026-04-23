@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:uuid/uuid.dart';
 import '../core/logger.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 
@@ -350,6 +351,40 @@ class ProductService {
       // لا نرمي الخطأ حتى لا نعطل حذف المنتج بالكامل
     } catch (e) {
       AppLogger.error('خطأ في حذف صور المنتج من التخزين', e);
+    }
+  }
+
+  // ===== نسخ منتج =====
+  /// Creates a duplicate of an existing product with a new ID
+  /// Appends "(نسخة)" to the name and resets sales data
+  static Future<ProductModel?> duplicateProduct(ProductModel product) async {
+    try {
+      // Create a copy of the product with modifications
+      final now = DateTime.now();
+      final duplicatedProduct = product.copyWith(
+        id: const Uuid().v4(), // Generate new UUID
+        name: '${product.name} (نسخة)', // Append copy indicator
+        rating: 0.0, // Reset rating
+        reviewCount: 0, // Reset review count
+        stockQuantity: 0, // Reset stock to 0
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      // Use addProduct to insert the duplicated product
+      final result = await addProduct(duplicatedProduct);
+
+      if (result != null) {
+        AppLogger.info('تم نسخ المنتج: ${product.name} → ${result.name}');
+      }
+
+      return result;
+    } on PostgrestException catch (e) {
+      AppLogger.error('PostgreSQL خطأ في نسخ المنتج: ${e.message}', e);
+      throw Exception('فشل نسخ المنتج: ${e.message}');
+    } catch (e) {
+      AppLogger.error('خطأ في نسخ المنتج', e);
+      throw Exception('فشل نسخ المنتج: ${e.toString()}');
     }
   }
 
@@ -726,7 +761,7 @@ class ProductService {
 
       // عدد المراجعات
       final reviewsResponse = await _supabase
-          .from('product_reviews')
+          .from('reviews')
           .select('rating')
           .eq('product_id', productId);
 
@@ -1222,7 +1257,7 @@ class ProductService {
     String? comment,
   }) async {
     try {
-      await _supabase.from('product_reviews').insert({
+      await _supabase.from('reviews').insert({
         'product_id': productId,
         'user_id': userId,
         'rating': rating,
@@ -1248,7 +1283,7 @@ class ProductService {
   }) async {
     try {
       final response = await _supabase
-          .from('product_reviews')
+          .from('reviews')
           .select('*, profiles(full_name, avatar_url)')
           .eq('product_id', productId)
           .order('created_at', ascending: false)
@@ -1271,7 +1306,7 @@ class ProductService {
   ) async {
     try {
       final reviewsResponse = await _supabase
-          .from('product_reviews')
+          .from('reviews')
           .select('rating')
           .eq('product_id', productId);
 
@@ -1496,42 +1531,16 @@ class ProductService {
     List<ProductVariantGroup> variantGroups,
   ) async {
     try {
-      // حذف المجموعات القديمة أولاً
       await _supabase
-          .from('product_variant_groups')
-          .delete()
-          .eq('product_id', productId);
-
-      // إدراج المجموعات الجديدة
-      final groupsData = variantGroups
-          .map(
-            (group) => {
-              'id': group.id,
-              'product_id': productId,
-              'name': group.name,
-              'type': group.type,
-              'options': group.options
-                  .map(
-                    (option) => {
-                      'id': option.id,
-                      'name': option.name,
-                      'value': option.value,
-                      'sort_order': option.sortOrder,
-                    },
-                  )
-                  .toList(),
-              'is_required': group.isRequired,
-              'sort_order': group.sortOrder,
-              'is_active': group.isActive,
-              'created_at': group.createdAt.toIso8601String(),
-            },
-          )
-          .toList();
-
-      await _supabase.from('product_variant_groups').insert(groupsData);
+          .from('products')
+          .update({
+            'variant_groups': variantGroups.map((e) => e.toJson()).toList(),
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', productId);
 
       AppLogger.info(
-        'تم حفظ ${variantGroups.length} مجموعة متغيرات للمنتج $productId',
+        'تم حفظ ${variantGroups.length} مجموعة متغيرات للمنتج $productId في جدول المنتجات',
       );
     } on PostgrestException catch (e) {
       AppLogger.error(
@@ -1551,39 +1560,17 @@ class ProductService {
     List<ProductVariant> variants,
   ) async {
     try {
-      // حذف المتغيرات القديمة
       await _supabase
-          .from('product_variants')
-          .delete()
-          .eq('product_id', productId);
+          .from('products')
+          .update({
+            'variants': variants.map((e) => e.toJson()).toList(),
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', productId);
 
-      // إدراج المتغيرات الجديدة
-      final variantsData = variants
-          .map(
-            (variant) => {
-              'id': variant.id,
-              'product_id': productId,
-              'selected_options': variant.selectedOptions
-                  .map(
-                    (option) => {
-                      'id': option.id,
-                      'name': option.name,
-                      'value': option.value,
-                    },
-                  )
-                  .toList(),
-              'sku': variant.sku,
-              'price': variant.price,
-              'stock_quantity': variant.stockQuantity,
-              'is_active': variant.isActive,
-              'created_at': variant.createdAt.toIso8601String(),
-            },
-          )
-          .toList();
-
-      await _supabase.from('product_variants').insert(variantsData);
-
-      AppLogger.info('تم حفظ ${variants.length} متغير للمنتج $productId');
+      AppLogger.info(
+        'تم حفظ ${variants.length} متغير للمنتج $productId في جدول المنتجات',
+      );
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في حفظ المتغيرات: ${e.message}', e);
       throw Exception('فشل حفظ المتغيرات: ${e.message}');
@@ -1708,45 +1695,95 @@ class ProductService {
   }
 
   /// حفظ الخصومات الترويجية
-  static Future<void> savePromotionalDiscounts(
+  static Future<List<PromotionalDiscount>> getPromotionalDiscounts(
     String productId,
-    List<PromotionalDiscount> discounts,
   ) async {
     try {
-      await _supabase
+      final response = await _supabase
           .from('promotional_discounts')
-          .delete()
-          .eq('product_id', productId);
+          .select()
+          .eq('product_id', productId)
+          .eq('is_active', true);
 
-      final discountsData = discounts
-          .map(
-            (discount) => {
-              'product_id': productId,
-              'title': discount.title,
-              'description': discount.description,
-              'discount_percentage': discount.discountPercentage,
-              'fixed_discount': discount.fixedDiscount,
-              'max_discount_amount': discount.maxDiscountAmount,
-              'usage_limit': discount.usageLimit,
-              'start_date': discount.startDate?.toIso8601String(),
-              'end_date': discount.endDate?.toIso8601String(),
-              'created_at': discount.createdAt.toIso8601String(),
-            },
-          )
+      return (response as List)
+          .map((e) => PromotionalDiscount.fromMap(e))
           .toList();
-
-      await _supabase.from('promotional_discounts').insert(discountsData);
-
-      AppLogger.info('تم حفظ ${discounts.length} خصم ترويجي للمنتج $productId');
-    } on PostgrestException catch (e) {
-      AppLogger.error(
-        'PostgreSQL خطأ في حفظ الخصومات الترويجية: ${e.message}',
-        e,
-      );
-      throw Exception('فشل حفظ الخصومات الترويجية: ${e.message}');
     } catch (e) {
-      AppLogger.error('خطأ في حفظ الخصومات الترويجية', e);
-      throw Exception('فشل حفظ الخصومات الترويجية: ${e.toString()}');
+      AppLogger.error('Error fetching promotional discounts', e);
+      return [];
+    }
+  }
+
+  /// جلب مجموعات المتغيرات للمنتج
+  static Future<List<ProductVariantGroup>> getProductVariantGroups(
+    String productId,
+  ) async {
+    try {
+      final response = await _supabase
+          .from('products')
+          .select('variant_groups')
+          .eq('id', productId)
+          .single();
+
+      final groups = response['variant_groups'] as List?;
+      if (groups == null) return [];
+
+      return groups
+          .map((e) => ProductVariantGroup.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      AppLogger.error('Error fetching product variant groups', e);
+      return [];
+    }
+  }
+
+  /// جلب المنتجات المحددة للمنتج
+  static Future<List<ProductVariant>> getProductVariants(
+    String productId,
+  ) async {
+    try {
+      final response = await _supabase
+          .from('products')
+          .select('variants')
+          .eq('id', productId)
+          .single();
+
+      final variants = response['variants'] as List?;
+      if (variants == null) return [];
+
+      return variants
+          .map((e) => ProductVariant.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } catch (e) {
+      AppLogger.error('Error fetching product variants', e);
+      return [];
+    }
+  }
+
+  /// جلب منتجات مشابهة (من نفس القسم)
+  static Future<List<ProductModel>> getRelatedProducts({
+    required String productId,
+    String? categoryId,
+    int limit = 4,
+  }) async {
+    try {
+      if (categoryId == null) return [];
+
+      final response = await _supabase
+          .from('products')
+          .select('*, categories(*), stores(*)')
+          .eq('category_id', categoryId)
+          .neq('id', productId)
+          .eq('is_active', true)
+          .order('rating', ascending: false)
+          .limit(limit);
+
+      return (response as List)
+          .map((data) => ProductModel.fromMap(data))
+          .toList();
+    } catch (e) {
+      AppLogger.error('Error fetching related products', e);
+      return [];
     }
   }
 }

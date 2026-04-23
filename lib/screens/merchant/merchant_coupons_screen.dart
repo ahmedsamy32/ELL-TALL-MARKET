@@ -3,11 +3,14 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import 'package:ell_tall_market/models/coupon_model.dart';
+import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/providers/merchant_coupons_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/services/coupon_service.dart';
-import 'package:shimmer/shimmer.dart';
+import 'package:ell_tall_market/services/product_service.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class MerchantCouponsScreen extends StatefulWidget {
   const MerchantCouponsScreen({super.key});
@@ -94,18 +97,7 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
           final textTheme = Theme.of(context).textTheme;
 
           return Scaffold(
-            appBar: AppBar(
-              title: const Text('كوبونات المتجر'),
-              actions: [
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'تحديث',
-                  onPressed: _isBootstrapping
-                      ? null
-                      : () => couponsProvider.refresh(),
-                ),
-              ],
-            ),
+            appBar: AppBar(title: const Text('كوبونات المتجر')),
             floatingActionButton: FloatingActionButton.extended(
               onPressed: !_couponsProvider.hasStore || _isBootstrapping
                   ? null
@@ -115,8 +107,11 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
             ),
             floatingActionButtonLocation:
                 FloatingActionButtonLocation.startFloat,
-            body: SafeArea(
-              child: _buildBody(couponsProvider, colorScheme, textTheme),
+            body: ResponsiveCenter(
+              maxWidth: 800,
+              child: SafeArea(
+                child: _buildBody(couponsProvider, colorScheme, textTheme),
+              ),
             ),
           );
         },
@@ -130,6 +125,10 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
     TextTheme textTheme,
   ) {
     if (_isBootstrapping && provider.coupons.isEmpty) {
+      return _buildShimmerList();
+    }
+
+    if (provider.isLoading) {
       return _buildShimmerList();
     }
 
@@ -182,9 +181,7 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
                 style: textTheme.bodyMedium?.copyWith(color: colorScheme.error),
               ),
             ),
-          if (provider.isLoading && coupons.isEmpty)
-            _buildShimmerList()
-          else if (coupons.isEmpty)
+          if (coupons.isEmpty)
             _buildEmptyState(colorScheme)
           else
             ...coupons.map((coupon) => _buildCouponCard(coupon, provider)),
@@ -194,18 +191,20 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
   }
 
   Widget _buildShimmerList() {
-    return ListView.separated(
-      padding: const EdgeInsets.all(16),
-      physics: const AlwaysScrollableScrollPhysics(),
-      itemCount: 5,
-      separatorBuilder: (_, index) => const SizedBox(height: 12),
-      itemBuilder: (_, index) => Shimmer.fromColors(
-        baseColor: Colors.grey.shade300,
-        highlightColor: Colors.grey.shade100,
-        child: Container(
+    final cs = Theme.of(context).colorScheme;
+    return AppShimmer.wrap(
+      context,
+      child: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        physics: const AlwaysScrollableScrollPhysics(),
+        shrinkWrap: true,
+        primary: false,
+        itemCount: 5,
+        separatorBuilder: (_, index) => const SizedBox(height: 12),
+        itemBuilder: (_, index) => Container(
           height: 120,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: cs.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(12),
           ),
         ),
@@ -586,6 +585,19 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
     DateTime? validUntil = coupon?.validUntil;
     bool isActive = coupon?.isActive ?? true;
 
+    // ── متغيرات الأنواع الجديدة ──
+    List<String> selectedProductIds = List<String>.from(
+      coupon?.productIds ?? [],
+    );
+    List<QuantityTier> quantityTiers = List<QuantityTier>.from(
+      coupon?.quantityTiers ?? [],
+    );
+    int? activeHoursStart = coupon?.activeHoursStart;
+    int? activeHoursEnd = coupon?.activeHoursEnd;
+    List<ProductModel> storeProducts = [];
+    bool loadingProducts = false;
+    String productSearchQuery = '';
+
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -686,11 +698,646 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
                                           setModalState(
                                             () => selectedType = value,
                                           );
+                                          // تحميل المنتجات عند اختيار كوبون منتجات محددة
+                                          if (value ==
+                                                  CouponType.productSpecific &&
+                                              storeProducts.isEmpty) {
+                                            loadingProducts = true;
+                                            setModalState(() {});
+                                            ProductService.getProductsByStore(
+                                                  _couponsProvider.storeId!,
+                                                  activeOnly: true,
+                                                )
+                                                .then((products) {
+                                                  storeProducts = products;
+                                                  loadingProducts = false;
+                                                  setModalState(() {});
+                                                })
+                                                .catchError((_) {
+                                                  loadingProducts = false;
+                                                  setModalState(() {});
+                                                });
+                                          }
                                         }
                                         FocusScope.of(context).nextFocus();
                                       },
                                     ),
                                   ),
+                                  // ── وصف النوع ──
+                                  if (selectedType.typeDescription.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        top: 4,
+                                        bottom: 4,
+                                      ),
+                                      child: Text(
+                                        selectedType.typeDescription,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.primary,
+                                            ),
+                                      ),
+                                    ),
+
+                                  // ═══════════════════════════════════════
+                                  // ██  كوبون المنتجات المحددة  ██
+                                  // ═══════════════════════════════════════
+                                  if (selectedType ==
+                                      CouponType.productSpecific) ...[
+                                    const SizedBox(height: 8),
+                                    Card(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(12),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                const Icon(
+                                                  Icons.inventory_2_outlined,
+                                                  size: 20,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  'اختر المنتجات المستهدفة',
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.titleSmall,
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 8),
+                                            if (loadingProducts)
+                                              const Padding(
+                                                padding: EdgeInsets.symmetric(
+                                                  vertical: 16,
+                                                ),
+                                                child: Center(
+                                                  child:
+                                                      CircularProgressIndicator(),
+                                                ),
+                                              )
+                                            else if (storeProducts.isEmpty)
+                                              const Padding(
+                                                padding: EdgeInsets.symmetric(
+                                                  vertical: 8,
+                                                ),
+                                                child: Text(
+                                                  'لا توجد منتجات في متجرك',
+                                                ),
+                                              )
+                                            else ...[
+                                              // ── شريط الحالة + زر الكل ──
+                                              Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(
+                                                      'تم اختيار ${selectedProductIds.length} من ${storeProducts.length} منتج',
+                                                      style: Theme.of(context)
+                                                          .textTheme
+                                                          .bodySmall
+                                                          ?.copyWith(
+                                                            color:
+                                                                selectedProductIds
+                                                                    .isEmpty
+                                                                ? Theme.of(
+                                                                        context,
+                                                                      )
+                                                                      .colorScheme
+                                                                      .onSurfaceVariant
+                                                                : Theme.of(
+                                                                        context,
+                                                                      )
+                                                                      .colorScheme
+                                                                      .primary,
+                                                            fontWeight:
+                                                                selectedProductIds
+                                                                    .isEmpty
+                                                                ? FontWeight
+                                                                      .normal
+                                                                : FontWeight
+                                                                      .w600,
+                                                          ),
+                                                    ),
+                                                  ),
+                                                  if (selectedProductIds
+                                                      .isNotEmpty)
+                                                    TextButton(
+                                                      style: TextButton.styleFrom(
+                                                        padding:
+                                                            const EdgeInsets.symmetric(
+                                                              horizontal: 8,
+                                                            ),
+                                                        minimumSize: Size.zero,
+                                                        tapTargetSize:
+                                                            MaterialTapTargetSize
+                                                                .shrinkWrap,
+                                                      ),
+                                                      onPressed: () =>
+                                                          setModalState(
+                                                            () =>
+                                                                selectedProductIds
+                                                                    .clear(),
+                                                          ),
+                                                      child: Text(
+                                                        'إلغاء الكل',
+                                                        style: TextStyle(
+                                                          fontSize: 12,
+                                                          color: Theme.of(
+                                                            context,
+                                                          ).colorScheme.error,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  TextButton(
+                                                    style: TextButton.styleFrom(
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 8,
+                                                          ),
+                                                      minimumSize: Size.zero,
+                                                      tapTargetSize:
+                                                          MaterialTapTargetSize
+                                                              .shrinkWrap,
+                                                    ),
+                                                    onPressed: () =>
+                                                        setModalState(() {
+                                                          final allIds =
+                                                              storeProducts
+                                                                  .map(
+                                                                    (p) => p.id,
+                                                                  )
+                                                                  .toList();
+                                                          if (selectedProductIds
+                                                                  .length ==
+                                                              storeProducts
+                                                                  .length) {
+                                                            selectedProductIds
+                                                                .clear();
+                                                          } else {
+                                                            selectedProductIds
+                                                              ..clear()
+                                                              ..addAll(allIds);
+                                                          }
+                                                        }),
+                                                    child: Text(
+                                                      selectedProductIds
+                                                                  .length ==
+                                                              storeProducts
+                                                                  .length
+                                                          ? 'إلغاء الكل'
+                                                          : 'تحديد الكل',
+                                                      style: const TextStyle(
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 8),
+                                              // ── خانة البحث ──
+                                              TextField(
+                                                autofillHints: const [],
+                                                autocorrect: false,
+                                                onChanged: (v) => setModalState(
+                                                  () => productSearchQuery = v,
+                                                ),
+                                                decoration: InputDecoration(
+                                                  isDense: true,
+                                                  hintText:
+                                                      'ابحث في المنتجات...',
+                                                  prefixIcon: const Icon(
+                                                    Icons.search,
+                                                    size: 20,
+                                                  ),
+                                                  suffixIcon:
+                                                      productSearchQuery
+                                                          .isNotEmpty
+                                                      ? IconButton(
+                                                          icon: const Icon(
+                                                            Icons.clear,
+                                                            size: 18,
+                                                          ),
+                                                          onPressed: () =>
+                                                              setModalState(
+                                                                () =>
+                                                                    productSearchQuery =
+                                                                        '',
+                                                              ),
+                                                        )
+                                                      : null,
+                                                  border: OutlineInputBorder(
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          8,
+                                                        ),
+                                                  ),
+                                                  contentPadding:
+                                                      const EdgeInsets.symmetric(
+                                                        horizontal: 12,
+                                                        vertical: 8,
+                                                      ),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 8),
+                                              // ── القائمة المفلترة ──
+                                              Builder(
+                                                builder: (context) {
+                                                  final filtered =
+                                                      productSearchQuery.isEmpty
+                                                      ? storeProducts
+                                                      : storeProducts
+                                                            .where(
+                                                              (p) => p.name
+                                                                  .toLowerCase()
+                                                                  .contains(
+                                                                    productSearchQuery
+                                                                        .toLowerCase(),
+                                                                  ),
+                                                            )
+                                                            .toList();
+                                                  if (filtered.isEmpty) {
+                                                    return Padding(
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            vertical: 12,
+                                                          ),
+                                                      child: Center(
+                                                        child: Text(
+                                                          'لا توجد نتائج لـ "$productSearchQuery"',
+                                                          style: TextStyle(
+                                                            color: Theme.of(context)
+                                                                .colorScheme
+                                                                .onSurfaceVariant,
+                                                            fontSize: 13,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    );
+                                                  }
+                                                  return SizedBox(
+                                                    height: 220,
+                                                    child: ListView.builder(
+                                                      itemCount:
+                                                          filtered.length,
+                                                      itemBuilder: (context, index) {
+                                                        final product =
+                                                            filtered[index];
+                                                        final isSelected =
+                                                            selectedProductIds
+                                                                .contains(
+                                                                  product.id,
+                                                                );
+                                                        return CheckboxListTile(
+                                                          dense: true,
+                                                          controlAffinity:
+                                                              ListTileControlAffinity
+                                                                  .leading,
+                                                          selected: isSelected,
+                                                          selectedTileColor:
+                                                              Theme.of(context)
+                                                                  .colorScheme
+                                                                  .primary
+                                                                  .withValues(
+                                                                    alpha: 0.08,
+                                                                  ),
+                                                          title: Text(
+                                                            product.name,
+                                                            maxLines: 1,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
+                                                            style: TextStyle(
+                                                              fontWeight:
+                                                                  isSelected
+                                                                  ? FontWeight
+                                                                        .w600
+                                                                  : FontWeight
+                                                                        .normal,
+                                                            ),
+                                                          ),
+                                                          subtitle: Text(
+                                                            '${product.price.toStringAsFixed(2)} ج.م',
+                                                            style: TextStyle(
+                                                              fontSize: 12,
+                                                              color: Theme.of(context)
+                                                                  .colorScheme
+                                                                  .onSurfaceVariant,
+                                                            ),
+                                                          ),
+                                                          secondary: isSelected
+                                                              ? Icon(
+                                                                  Icons
+                                                                      .check_circle,
+                                                                  color: Theme.of(
+                                                                    context,
+                                                                  ).colorScheme.primary,
+                                                                  size: 20,
+                                                                )
+                                                              : null,
+                                                          value: isSelected,
+                                                          onChanged: (checked) {
+                                                            setModalState(() {
+                                                              if (checked ==
+                                                                  true) {
+                                                                selectedProductIds
+                                                                    .add(
+                                                                      product
+                                                                          .id,
+                                                                    );
+                                                              } else {
+                                                                selectedProductIds
+                                                                    .remove(
+                                                                      product
+                                                                          .id,
+                                                                    );
+                                                              }
+                                                            });
+                                                          },
+                                                        );
+                                                      },
+                                                    ),
+                                                  );
+                                                },
+                                              ),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+
+                                  // ═══════════════════════════════════════
+                                  // ██  شرائح الكمية  ██
+                                  // ═══════════════════════════════════════
+                                  if (selectedType ==
+                                      CouponType.tieredQuantity) ...[
+                                    const SizedBox(height: 8),
+                                    Card(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(12),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                const Icon(
+                                                  Icons.stacked_bar_chart,
+                                                  size: 20,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  'شرائح الكمية',
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.titleSmall,
+                                                ),
+                                                const Spacer(),
+                                                TextButton.icon(
+                                                  icon: const Icon(
+                                                    Icons.add,
+                                                    size: 18,
+                                                  ),
+                                                  label: const Text('إضافة'),
+                                                  onPressed: () {
+                                                    setModalState(() {
+                                                      quantityTiers.add(
+                                                        const QuantityTier(
+                                                          minQuantity: 2,
+                                                          discountPercent: 5,
+                                                        ),
+                                                      );
+                                                    });
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                            if (quantityTiers.isEmpty)
+                                              const Padding(
+                                                padding: EdgeInsets.symmetric(
+                                                  vertical: 8,
+                                                ),
+                                                child: Text(
+                                                  'أضف شرائح: مثال — 2 قطع → 10%، 3 قطع → 20%',
+                                                ),
+                                              ),
+                                            ...quantityTiers.asMap().entries.map((
+                                              entry,
+                                            ) {
+                                              final i = entry.key;
+                                              final tier = entry.value;
+                                              return Padding(
+                                                padding: const EdgeInsets.only(
+                                                  top: 8,
+                                                ),
+                                                child: Row(
+                                                  children: [
+                                                    Expanded(
+                                                      child: TextFormField(
+                                                        initialValue: tier
+                                                            .minQuantity
+                                                            .toString(),
+                                                        keyboardType:
+                                                            TextInputType
+                                                                .number,
+                                                        decoration:
+                                                            const InputDecoration(
+                                                              labelText:
+                                                                  'الحد الأدنى للكمية',
+                                                              isDense: true,
+                                                            ),
+                                                        onChanged: (val) {
+                                                          final parsed =
+                                                              int.tryParse(val);
+                                                          if (parsed != null) {
+                                                            setModalState(() {
+                                                              quantityTiers[i] =
+                                                                  QuantityTier(
+                                                                    minQuantity:
+                                                                        parsed,
+                                                                    discountPercent:
+                                                                        tier.discountPercent,
+                                                                  );
+                                                            });
+                                                          }
+                                                        },
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    Expanded(
+                                                      child: TextFormField(
+                                                        initialValue: tier
+                                                            .discountPercent
+                                                            .toStringAsFixed(0),
+                                                        keyboardType:
+                                                            TextInputType
+                                                                .number,
+                                                        decoration:
+                                                            const InputDecoration(
+                                                              labelText:
+                                                                  '% خصم',
+                                                              isDense: true,
+                                                            ),
+                                                        onChanged: (val) {
+                                                          final parsed =
+                                                              double.tryParse(
+                                                                val,
+                                                              );
+                                                          if (parsed != null) {
+                                                            setModalState(() {
+                                                              quantityTiers[i] =
+                                                                  QuantityTier(
+                                                                    minQuantity:
+                                                                        tier.minQuantity,
+                                                                    discountPercent:
+                                                                        parsed,
+                                                                  );
+                                                            });
+                                                          }
+                                                        },
+                                                      ),
+                                                    ),
+                                                    IconButton(
+                                                      icon: const Icon(
+                                                        Icons
+                                                            .remove_circle_outline,
+                                                        color: Colors.red,
+                                                      ),
+                                                      onPressed: () {
+                                                        setModalState(() {
+                                                          quantityTiers
+                                                              .removeAt(i);
+                                                        });
+                                                      },
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                            }),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+
+                                  // ═══════════════════════════════════════
+                                  // ██  ساعات التفعيل (Flash Sale)  ██
+                                  // ═══════════════════════════════════════
+                                  if (selectedType == CouponType.flashSale) ...[
+                                    const SizedBox(height: 8),
+                                    Card(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(12),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                const Icon(
+                                                  Icons.access_time,
+                                                  size: 20,
+                                                ),
+                                                const SizedBox(width: 8),
+                                                Text(
+                                                  'ساعات التفعيل',
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.titleSmall,
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 12),
+                                            Row(
+                                              children: [
+                                                Expanded(
+                                                  child: DropdownButtonFormField<int>(
+                                                    initialValue:
+                                                        activeHoursStart,
+                                                    decoration:
+                                                        const InputDecoration(
+                                                          labelText:
+                                                              'من الساعة',
+                                                          isDense: true,
+                                                        ),
+                                                    items: List.generate(24, (
+                                                      h,
+                                                    ) {
+                                                      final label = h == 0
+                                                          ? '12 ص'
+                                                          : h < 12
+                                                          ? '$h ص'
+                                                          : h == 12
+                                                          ? '12 م'
+                                                          : '${h - 12} م';
+                                                      return DropdownMenuItem(
+                                                        value: h,
+                                                        child: Text(label),
+                                                      );
+                                                    }),
+                                                    onChanged: (val) =>
+                                                        setModalState(
+                                                          () =>
+                                                              activeHoursStart =
+                                                                  val,
+                                                        ),
+                                                    validator: (val) =>
+                                                        val == null
+                                                        ? 'مطلوب'
+                                                        : null,
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 12),
+                                                Expanded(
+                                                  child: DropdownButtonFormField<int>(
+                                                    initialValue:
+                                                        activeHoursEnd,
+                                                    decoration:
+                                                        const InputDecoration(
+                                                          labelText:
+                                                              'إلى الساعة',
+                                                          isDense: true,
+                                                        ),
+                                                    items: List.generate(24, (
+                                                      h,
+                                                    ) {
+                                                      final label = h == 0
+                                                          ? '12 ص'
+                                                          : h < 12
+                                                          ? '$h ص'
+                                                          : h == 12
+                                                          ? '12 م'
+                                                          : '${h - 12} م';
+                                                      return DropdownMenuItem(
+                                                        value: h,
+                                                        child: Text(label),
+                                                      );
+                                                    }),
+                                                    onChanged: (val) =>
+                                                        setModalState(
+                                                          () => activeHoursEnd =
+                                                              val,
+                                                        ),
+                                                    validator: (val) =>
+                                                        val == null
+                                                        ? 'مطلوب'
+                                                        : null,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+
                                   const SizedBox(height: 12),
                                   FocusTraversalOrder(
                                     order: const NumericFocusOrder(4),
@@ -703,11 +1350,28 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
                                       textInputAction: TextInputAction.next,
                                       onFieldSubmitted: (_) =>
                                           FocusScope.of(context).nextFocus(),
-                                      decoration: const InputDecoration(
-                                        labelText: 'قيمة الخصم',
-                                        suffixText: '% أو ج.م',
+                                      decoration: InputDecoration(
+                                        labelText:
+                                            selectedType ==
+                                                CouponType.tieredQuantity
+                                            ? 'قيمة الخصم الافتراضية (اختياري)'
+                                            : 'قيمة الخصم',
+                                        suffixText:
+                                            selectedType ==
+                                                CouponType.fixedAmount
+                                            ? 'ج.م'
+                                            : '%',
                                       ),
                                       validator: (value) {
+                                        // شرائح الكمية لا تحتاج قيمة خصم إلزامية
+                                        if (selectedType ==
+                                            CouponType.tieredQuantity) {
+                                          return null;
+                                        }
+                                        if (selectedType ==
+                                            CouponType.freeDelivery) {
+                                          return null;
+                                        }
                                         final parsed = double.tryParse(
                                           value ?? '',
                                         );
@@ -857,9 +1521,11 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
                                 name: nameController.text.trim(),
                                 code: codeController.text.trim(),
                                 couponType: selectedType,
-                                discountValue: double.parse(
-                                  discountController.text.trim(),
-                                ),
+                                discountValue:
+                                    double.tryParse(
+                                      discountController.text.trim(),
+                                    ) ??
+                                    0,
                                 minimumOrderAmount:
                                     double.tryParse(
                                       minOrderController.text.trim(),
@@ -889,6 +1555,10 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
                                     descriptionController.text.trim().isEmpty
                                     ? null
                                     : descriptionController.text.trim(),
+                                productIds: selectedProductIds,
+                                quantityTiers: quantityTiers,
+                                activeHoursStart: activeHoursStart,
+                                activeHoursEnd: activeHoursEnd,
                               );
 
                               final navigator = Navigator.of(context);

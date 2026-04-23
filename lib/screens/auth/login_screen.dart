@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -7,6 +9,8 @@ import 'package:ell_tall_market/utils/snackbar_helper.dart';
 import 'package:ell_tall_market/utils/validators.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -253,6 +257,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
         if (role == UserRole.admin) {
           Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
+        } else if (role == UserRole.deliveryCompanyAdmin) {
+          Navigator.pushReplacementNamed(
+            context,
+            AppRoutes.deliveryCompanyDashboard,
+          );
         } else if (role == UserRole.merchant) {
           Navigator.pushReplacementNamed(context, AppRoutes.merchantDashboard);
         } else if (role == UserRole.captain) {
@@ -355,7 +364,7 @@ class _LoginScreenState extends State<LoginScreen> {
               duration: const Duration(seconds: 5),
             );
           } else {
-            SnackBarHelper.showError(context, error);
+            SnackBarHelper.showError(context, _getAuthErrorMessage(error));
           }
         }
       }
@@ -410,7 +419,10 @@ class _LoginScreenState extends State<LoginScreen> {
     final lowerError = errorMessage.toLowerCase();
 
     if (lowerError.contains('invalid_credentials') ||
-        lowerError.contains('invalid login credentials')) {
+        lowerError.contains('invalid login credentials') ||
+        lowerError.contains('invalid login cred') ||
+        lowerError.contains('invalid login') ||
+        lowerError.contains('invalid_grant')) {
       return '🔐 البريد الإلكتروني أو كلمة المرور غير صحيحة';
     } else if (lowerError.contains('email_not_confirmed') ||
         lowerError.contains('email not confirmed')) {
@@ -452,8 +464,12 @@ class _LoginScreenState extends State<LoginScreen> {
         // to navigate automatically.
 
         // Set up a one-time listener for auth state changes
-        final subscription = authProvider.authStateChanges.listen((user) {
+        StreamSubscription<User?>? subscription;
+        subscription = authProvider.authStateChanges.listen((user) {
           if (user != null && mounted) {
+            // Cancel immediately to prevent multiple calls
+            subscription?.cancel();
+
             // User signed in successfully via OAuth callback
             SnackBarHelper.showSuccess(
               context,
@@ -470,6 +486,12 @@ class _LoginScreenState extends State<LoginScreen> {
                   Navigator.pushReplacementNamed(
                     context,
                     AppRoutes.adminDashboard,
+                  );
+                  break;
+                case UserRole.deliveryCompanyAdmin:
+                  Navigator.pushReplacementNamed(
+                    context,
+                    AppRoutes.deliveryCompanyDashboard,
                   );
                   break;
                 case UserRole.merchant:
@@ -494,8 +516,8 @@ class _LoginScreenState extends State<LoginScreen> {
         });
 
         // Cancel subscription after 60 seconds (timeout)
-        Future.delayed(Duration(seconds: 60), () {
-          subscription.cancel();
+        Future.delayed(const Duration(seconds: 60), () {
+          subscription?.cancel();
         });
       } else {
         // Failed to launch browser
@@ -520,25 +542,12 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _handleFacebookLogin() async {
     setState(() => _isLoading = true);
 
-    // Note: تسجيل الدخول بواسطة Facebook يتطلب إعداد Facebook Sign In
-    // سيتم تفعيله لاحقاً
-    SnackBarHelper.showError(
-      context,
-      'تسجيل الدخول بواسطة Facebook قيد التطوير',
-    );
-    setState(() => _isLoading = false);
-
-    /* الكود الأصلي - يحتاج إلى Facebook Sign In setup
-    SnackBarHelper.showLoading(
-      context,
-      '🔄 جاري تسجيل الدخول بواسطة فيسبوك...',
-    );
-
     try {
       final authProvider = Provider.of<SupabaseProvider>(
         context,
         listen: false,
       );
+
       final success = await authProvider.signInWithFacebook();
 
       if (!mounted) return;
@@ -549,35 +558,30 @@ class _LoginScreenState extends State<LoginScreen> {
           '✅ تم تسجيل الدخول بواسطة فيسبوك بنجاح!',
         );
 
-        // Wait for user profile to load and navigate based on role
+        // التنقل حسب دور المستخدم
         await authProvider.refreshProfile();
+        final role = authProvider.currentProfile?.role;
 
-        if (mounted) {
-          final userRole = authProvider.currentUserProfile?.role;
-          switch (userRole) {
-            case UserRole.admin:
-              Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
-              break;
-            case UserRole.merchant:
-              Navigator.pushReplacementNamed(
-                context,
-                AppRoutes.merchantDashboard,
-              );
-              break;
-            case UserRole.captain:
-              Navigator.pushReplacementNamed(
-                context,
-                AppRoutes.captainDashboard,
-              );
-              break;
-            case UserRole.client:
-            default:
-              Navigator.pushReplacementNamed(context, AppRoutes.home);
-              break;
-          }
+        if (!mounted) return;
+
+        if (role == UserRole.admin) {
+          Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
+        } else if (role == UserRole.deliveryCompanyAdmin) {
+          Navigator.pushReplacementNamed(
+            context,
+            AppRoutes.deliveryCompanyDashboard,
+          );
+        } else if (role == UserRole.merchant) {
+          Navigator.pushReplacementNamed(context, AppRoutes.merchantDashboard);
+        } else if (role == UserRole.captain) {
+          Navigator.pushReplacementNamed(context, AppRoutes.captainDashboard);
+        } else {
+          Navigator.pushReplacementNamed(context, AppRoutes.home);
         }
       } else {
-        SnackBarHelper.showError(context, '❌ فشل تسجيل الدخول بواسطة فيسبوك');
+        if (authProvider.error != null) {
+          SnackBarHelper.showError(context, authProvider.error!);
+        }
       }
     } catch (e) {
       if (!mounted) return;
@@ -590,7 +594,6 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() => _isLoading = false);
       }
     }
-    */
   }
 
   void _showPasswordResetDialog() {
@@ -694,6 +697,22 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final authProvider = Provider.of<SupabaseProvider>(context);
     final theme = Theme.of(context);
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth > 800) return _buildWebLayout(context, authProvider, theme);
+    final screenHeight = MediaQuery.of(context).size.height;
+    final isCompact = screenHeight < 700;
+    final logoSize = isCompact ? 64.0 : 85.0;
+    final titleSize = isCompact ? 22.0 : 26.0;
+    final subtitleSize = isCompact ? 14.0 : 16.0;
+    final verticalPadding = isCompact ? 8.0 : 16.0;
+    final topGap = isCompact ? 12.0 : 20.0;
+    final titleGap = isCompact ? 6.0 : 8.0;
+    final sectionGap = isCompact ? 24.0 : 40.0;
+    final fieldGap = isCompact ? 14.0 : 20.0;
+    final actionGap = isCompact ? 22.0 : 32.0;
+    final loginGap = isCompact ? 26.0 : 36.0;
+    final dividerGap = isCompact ? 20.0 : 28.0;
+    final socialGap = isCompact ? 20.0 : 32.0;
 
     return Scaffold(
       appBar: AppBar(
@@ -724,40 +743,33 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
       extendBodyBehindAppBar: true,
-      body: Container(
-        height: MediaQuery.of(context).size.height,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              theme.colorScheme.primary.withValues(alpha: 0.1),
-              Colors.white,
-              theme.colorScheme.primary.withValues(alpha: 0.05),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            stops: const [0.0, 0.5, 1.0],
+      body: ResponsiveCenter(
+        maxWidth: 600,
+        child: Container(
+          height: MediaQuery.of(context).size.height,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                theme.colorScheme.primary.withValues(alpha: 0.1),
+                Colors.white,
+                theme.colorScheme.primary.withValues(alpha: 0.05),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              stops: const [0.0, 0.5, 1.0],
+            ),
           ),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 20,
-                ),
-                child: Card(
-                  elevation: 12,
-                  shadowColor: Colors.black.withValues(alpha: 0.15),
-                  color: Colors.white.withValues(alpha: 0.95),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(24),
+          child: SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: verticalPadding,
                   ),
-                  child: Container(
-                    width: double.infinity,
+                  child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 400),
-                    padding: const EdgeInsets.all(28),
                     child: Form(
                       key: _formKey,
                       autovalidateMode: _autovalidateMode,
@@ -766,8 +778,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         children: [
                           // 🛒 الشعار والعنوان المحسن
                           Container(
-                            width: 85,
-                            height: 85,
+                            width: logoSize,
+                            height: logoSize,
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [
@@ -790,33 +802,36 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               ],
                             ),
-                            child: const Icon(
-                              Icons.shopping_cart_rounded,
-                              size: 42,
-                              color: Colors.white,
+                            child: ClipOval(
+                              child: Image.asset(
+                                'assets/icons/icon.png',
+                                fit: BoxFit.cover,
+                                width: logoSize,
+                                height: logoSize,
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 24),
+                          SizedBox(height: topGap),
 
                           Text(
                             "مرحباً بعودتك! 👋",
                             style: theme.textTheme.headlineMedium?.copyWith(
                               color: const Color(0xFF2D3748),
                               fontWeight: FontWeight.bold,
-                              fontSize: 26,
+                              fontSize: titleSize,
                             ),
                           ),
-                          const SizedBox(height: 8),
+                          SizedBox(height: titleGap),
                           Text(
                             "سجل دخولك لمتابعة التسوق والعروض الحصرية",
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodyLarge?.copyWith(
                               color: const Color(0xFF718096),
-                              fontSize: 16,
+                              fontSize: subtitleSize,
                               height: 1.4,
                             ),
                           ),
-                          const SizedBox(height: 40),
+                          SizedBox(height: sectionGap),
 
                           // 📧 البريد الإلكتروني المحسن
                           _buildModernTextField(
@@ -832,7 +847,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             validator: Validators.validateEmail,
                             enabled: !_isLoading,
                           ),
-                          const SizedBox(height: 20),
+                          SizedBox(height: fieldGap),
 
                           // 🔒 كلمة المرور المحسنة
                           _buildModernTextField(
@@ -847,7 +862,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             validator: Validators.validatePassword,
                             enabled: !_isLoading,
                           ),
-                          const SizedBox(height: 20),
+                          SizedBox(height: fieldGap),
 
                           // ✅ تذكرني ونسيت كلمة المرور
                           Row(
@@ -922,7 +937,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 32),
+                          SizedBox(height: actionGap),
 
                           // 🟢 زر تسجيل الدخول
                           _buildModernButton(
@@ -931,11 +946,11 @@ class _LoginScreenState extends State<LoginScreen> {
                             isLoading: _isLoading,
                             theme: theme,
                           ),
-                          const SizedBox(height: 36),
+                          SizedBox(height: loginGap),
 
                           // ➖ فاصل أنيق
                           _buildDivider(),
-                          const SizedBox(height: 28),
+                          SizedBox(height: dividerGap),
 
                           // 🔵 أزرار التسجيل الاجتماعي
                           Row(
@@ -955,7 +970,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 32),
+                          SizedBox(height: socialGap),
 
                           // 📝 رابط إنشاء حساب
                           _buildSignupLink(theme),
@@ -1128,11 +1143,9 @@ class _LoginScreenState extends State<LoginScreen> {
                       SizedBox(
                         width: 20,
                         height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2.5,
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.grey[600]!,
-                          ),
+                        child: AppShimmer.wrap(
+                          context,
+                          child: AppShimmer.circle(context, size: 20),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -1282,19 +1295,391 @@ class _LoginScreenState extends State<LoginScreen> {
               fontSize: 16,
             ),
           ),
-          GestureDetector(
-            onTap: _isLoading
-                ? null
-                : () => Navigator.pushNamed(context, AppRoutes.register),
-            child: Text(
-              "إنشاء حساب جديد",
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.primary,
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-                decoration: TextDecoration.underline,
-                decorationColor: theme.colorScheme.primary,
+          MouseRegion(
+            cursor: _isLoading
+                ? SystemMouseCursors.basic
+                : SystemMouseCursors.click,
+            child: GestureDetector(
+              onTap: _isLoading
+                  ? null
+                  : () => Navigator.pushNamed(context, AppRoutes.register),
+              child: Text(
+                "إنشاء حساب جديد",
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  decoration: TextDecoration.underline,
+                  decorationColor: theme.colorScheme.primary,
+                ),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =====================================================
+  // Web / Desktop Two-Column Layout
+  // =====================================================
+
+  Widget _buildWebLayout(
+    BuildContext context,
+    SupabaseProvider authProvider,
+    ThemeData theme,
+  ) {
+    return Scaffold(
+      body: Row(
+        children: [
+          // ── الجانب الأيسر: لوحة العلامة التجارية ──
+          Expanded(flex: 4, child: _buildBrandingPanel(theme)),
+          // ── الجانب الأيمن: نموذج تسجيل الدخول ──
+          Expanded(
+            flex: 5,
+            child: Container(
+              color: Colors.white,
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 56,
+                    vertical: 40,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 440),
+                    child: Form(
+                      key: _formKey,
+                      autovalidateMode: _autovalidateMode,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // ── زر الرجوع ──
+                          Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.arrow_back_ios_new_rounded,
+                                  size: 18,
+                                  color: Color(0xFF1A237E),
+                                ),
+                                onPressed: () => Navigator.pop(context),
+                                tooltip: 'رجوع',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'مرحباً بعودتك! 👋',
+                            style: theme.textTheme.headlineMedium?.copyWith(
+                              color: const Color(0xFF1A237E),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 32,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'سجل دخولك لمتابعة التسوق والعروض الحصرية',
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              color: const Color(0xFF718096),
+                              fontSize: 15,
+                            ),
+                          ),
+                          const SizedBox(height: 40),
+                          _buildModernTextField(
+                            controller: _emailController,
+                            label: 'البريد الإلكتروني',
+                            hintText: 'example@gmail.com',
+                            icon: Icons.email_outlined,
+                            keyboardType: TextInputType.emailAddress,
+                            textInputAction: TextInputAction.next,
+                            focusNode: _emailFocus,
+                            onFieldSubmitted: (_) =>
+                                _passwordFocus.requestFocus(),
+                            validator: Validators.validateEmail,
+                            enabled: !_isLoading,
+                          ),
+                          const SizedBox(height: 20),
+                          _buildModernTextField(
+                            controller: _passwordController,
+                            label: 'كلمة المرور',
+                            hintText: 'أدخل كلمة المرور',
+                            icon: Icons.lock_outline_rounded,
+                            isPassword: true,
+                            textInputAction: TextInputAction.done,
+                            focusNode: _passwordFocus,
+                            onFieldSubmitted: (_) => _handleLogin(authProvider),
+                            validator: Validators.validatePassword,
+                            enabled: !_isLoading,
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              InkWell(
+                                onTap: _isLoading
+                                    ? null
+                                    : () => setState(
+                                        () => _rememberMe = !_rememberMe,
+                                      ),
+                                borderRadius: BorderRadius.circular(8),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 8,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        width: 22,
+                                        height: 22,
+                                        decoration: BoxDecoration(
+                                          color: _rememberMe
+                                              ? theme.colorScheme.primary
+                                              : Colors.transparent,
+                                          border: Border.all(
+                                            color: _rememberMe
+                                                ? theme.colorScheme.primary
+                                                : Colors.grey[400]!,
+                                            width: 2,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            6,
+                                          ),
+                                        ),
+                                        child: _rememberMe
+                                            ? const Icon(
+                                                Icons.check,
+                                                size: 16,
+                                                color: Colors.white,
+                                              )
+                                            : null,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'تذكرني',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                              color: const Color(0xFF4A5568),
+                                              fontWeight: FontWeight.w500,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _isLoading
+                                    ? null
+                                    : _showPasswordResetDialog,
+                                child: Text(
+                                  'نسيت كلمة المرور؟',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                    fontWeight: FontWeight.w600,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 32),
+                          _buildModernButton(
+                            onPressed: () => _handleLogin(authProvider),
+                            text: 'تسجيل الدخول 🚀',
+                            isLoading: _isLoading,
+                            theme: theme,
+                          ),
+                          const SizedBox(height: 32),
+                          _buildDivider(),
+                          const SizedBox(height: 24),
+                          Row(
+                            children: [
+                              _buildSocialButton(
+                                onTap: _isLoading ? null : _handleGoogleLogin,
+                                iconPath: 'assets/icons/icons8-google-192.png',
+                                label: 'Google',
+                                enabled: !_isLoading,
+                              ),
+                              const SizedBox(width: 12),
+                              _buildSocialButton(
+                                onTap: _isLoading ? null : _handleFacebookLogin,
+                                iconPath: 'assets/icons/icons8-facebook-96.png',
+                                label: 'Facebook',
+                                enabled: !_isLoading,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 32),
+                          _buildSignupLink(theme),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBrandingPanel(ThemeData theme) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [theme.colorScheme.primary, const Color(0xFF1A237E)],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -80,
+            right: -80,
+            child: Container(
+              width: 220,
+              height: 220,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.07),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -100,
+            left: -60,
+            child: Container(
+              width: 280,
+              height: 280,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.05),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 220,
+            right: 40,
+            child: Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.1),
+              ),
+            ),
+          ),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(48),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 110,
+                      height: 110,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withValues(alpha: 0.15),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.4),
+                          width: 2.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 24,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/icons/icon.png',
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  const Center(
+                    child: Text(
+                      'التل ماركت',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 34,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Center(
+                    child: Text(
+                      'تسوّق بذكاء، ادفع بأمان',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.8),
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 52),
+                  _webFeatureRow(
+                    Icons.local_shipping_rounded,
+                    'توصيل سريع لباب بيتك',
+                  ),
+                  _webFeatureRow(
+                    Icons.local_offer_rounded,
+                    'أفضل الأسعار والعروض',
+                  ),
+                  _webFeatureRow(
+                    Icons.verified_user_rounded,
+                    'دفع آمن ومضمون 100%',
+                  ),
+                  _webFeatureRow(
+                    Icons.track_changes_rounded,
+                    'تتبع طلباتك لحظة بلحظة',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _webFeatureRow(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 16),
+          Text(
+            text,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.9),
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],

@@ -5,23 +5,56 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+import java.io.FileInputStream
+import java.util.Properties
+
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+}
+
 android {
-    namespace = "com.example.ell_tall_market"
-    compileSdk = 36
+    namespace = "com.elltall.market"
+    compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.ell_tall_market"
+        applicationId = "com.elltall.market"
         minSdk = flutter.minSdkVersion
-        targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        targetSdk = 35
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        // Used only when android/key.properties exists.
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                // Resolve relative paths from the android/ directory (rootProject).
+                storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             isShrinkResources = false
+
+            // IMPORTANT:
+            // - For local testing, sign release with debug key if no key.properties is configured.
+            // - For production, create android/key.properties and an upload keystore.
+            signingConfig =
+                if (keystorePropertiesFile.exists()) {
+                    signingConfigs.getByName("release")
+                } else {
+                    signingConfigs.getByName("debug")
+                }
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -37,6 +70,14 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    applicationVariants.all {
+        val variant = this
+        variant.outputs.all {
+            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            output.outputFileName = "EllTallMarket-v${variant.versionName}.apk"
+        }
     }
 }
 
@@ -64,4 +105,12 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+}
+ // تعديل اسم APK
+tasks.register<Copy>("renameApk") {
+    from("build/outputs/apk/release") {
+        include("app-release.apk")
+    }
+    into("build/outputs/apk/release")
+    rename("app-release.apk", "Ell-Tall-Market-v${android.defaultConfig.versionName}.apk")
 }

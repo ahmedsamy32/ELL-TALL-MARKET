@@ -14,6 +14,13 @@ class MerchantDraft {
   // بيانات المتجر
   final String? storeName;
   final String? storeAddress;
+  final String? storeGovernorate;
+  final String? storeCity;
+  final String? storeArea;
+  final String? storeStreet;
+  final String? storeLandmark;
+  final double? storeLatitude;
+  final double? storeLongitude;
   final String? storeDescription;
   final String? category;
   final String? logoPath; // local file path
@@ -25,6 +32,13 @@ class MerchantDraft {
     this.phone,
     this.storeName,
     this.storeAddress,
+    this.storeGovernorate,
+    this.storeCity,
+    this.storeArea,
+    this.storeStreet,
+    this.storeLandmark,
+    this.storeLatitude,
+    this.storeLongitude,
     this.storeDescription,
     this.category,
     this.logoPath,
@@ -38,6 +52,13 @@ class MerchantDraft {
     'phone': phone,
     'storeName': storeName,
     'storeAddress': storeAddress,
+    'storeGovernorate': storeGovernorate,
+    'storeCity': storeCity,
+    'storeArea': storeArea,
+    'storeStreet': storeStreet,
+    'storeLandmark': storeLandmark,
+    'storeLatitude': storeLatitude,
+    'storeLongitude': storeLongitude,
     'storeDescription': storeDescription,
     'category': category,
     'logoPath': logoPath,
@@ -47,6 +68,11 @@ class MerchantDraft {
   /// إنشاء مسودة من JSON مع معالجة آمنة للأنواع
   static MerchantDraft fromJson(Map<String, dynamic> json) {
     String? asString(dynamic v) => v is String ? v : null;
+    double? asDouble(dynamic v) {
+      if (v is num) return v.toDouble();
+      if (v is String) return double.tryParse(v);
+      return null;
+    }
 
     return MerchantDraft(
       fullName: asString(json['fullName']),
@@ -54,6 +80,13 @@ class MerchantDraft {
       phone: asString(json['phone']),
       storeName: asString(json['storeName']),
       storeAddress: asString(json['storeAddress']),
+      storeGovernorate: asString(json['storeGovernorate']),
+      storeCity: asString(json['storeCity']),
+      storeArea: asString(json['storeArea']),
+      storeStreet: asString(json['storeStreet']),
+      storeLandmark: asString(json['storeLandmark']),
+      storeLatitude: asDouble(json['storeLatitude']),
+      storeLongitude: asDouble(json['storeLongitude']),
       storeDescription: asString(json['storeDescription']),
       category: asString(json['category']),
       logoPath: asString(json['logoPath']),
@@ -70,6 +103,13 @@ class MerchantDraft {
     String? phone,
     String? storeName,
     String? storeAddress,
+    String? storeGovernorate,
+    String? storeCity,
+    String? storeArea,
+    String? storeStreet,
+    String? storeLandmark,
+    double? storeLatitude,
+    double? storeLongitude,
     String? storeDescription,
     String? category,
     String? logoPath,
@@ -81,6 +121,13 @@ class MerchantDraft {
       phone: phone ?? this.phone,
       storeName: storeName ?? this.storeName,
       storeAddress: storeAddress ?? this.storeAddress,
+      storeGovernorate: storeGovernorate ?? this.storeGovernorate,
+      storeCity: storeCity ?? this.storeCity,
+      storeArea: storeArea ?? this.storeArea,
+      storeStreet: storeStreet ?? this.storeStreet,
+      storeLandmark: storeLandmark ?? this.storeLandmark,
+      storeLatitude: storeLatitude ?? this.storeLatitude,
+      storeLongitude: storeLongitude ?? this.storeLongitude,
       storeDescription: storeDescription ?? this.storeDescription,
       category: category ?? this.category,
       logoPath: logoPath ?? this.logoPath,
@@ -98,13 +145,20 @@ class MerchantDraft {
       (phone == null || phone!.trim().isEmpty) &&
       (storeName == null || storeName!.trim().isEmpty) &&
       (storeAddress == null || storeAddress!.trim().isEmpty) &&
+      (storeGovernorate == null || storeGovernorate!.trim().isEmpty) &&
+      (storeCity == null || storeCity!.trim().isEmpty) &&
+      (storeArea == null || storeArea!.trim().isEmpty) &&
+      (storeStreet == null || storeStreet!.trim().isEmpty) &&
+      (storeLandmark == null || storeLandmark!.trim().isEmpty) &&
+      (storeLatitude == null) &&
+      (storeLongitude == null) &&
       (storeDescription == null || storeDescription!.trim().isEmpty) &&
       (category == null || category!.trim().isEmpty) &&
       (logoPath == null || logoPath!.trim().isEmpty);
 
   @override
   String toString() =>
-      'MerchantDraft(storeName: $storeName, storeAddress: $storeAddress, storeDescription: $storeDescription, category: $category, logoPath: $logoPath, updatedAt: $updatedAt)';
+      'MerchantDraft(storeName: $storeName, storeAddress: $storeAddress, storeGovernorate: $storeGovernorate, storeCity: $storeCity, storeArea: $storeArea, storeStreet: $storeStreet, storeLandmark: $storeLandmark, storeLatitude: $storeLatitude, storeLongitude: $storeLongitude, storeDescription: $storeDescription, category: $category, logoPath: $logoPath, updatedAt: $updatedAt)';
 
   @override
   bool operator ==(Object other) {
@@ -115,6 +169,13 @@ class MerchantDraft {
         other.phone == phone &&
         other.storeName == storeName &&
         other.storeAddress == storeAddress &&
+        other.storeGovernorate == storeGovernorate &&
+        other.storeCity == storeCity &&
+        other.storeArea == storeArea &&
+        other.storeStreet == storeStreet &&
+        other.storeLandmark == storeLandmark &&
+        other.storeLatitude == storeLatitude &&
+        other.storeLongitude == storeLongitude &&
         other.storeDescription == storeDescription &&
         other.category == category &&
         other.logoPath == logoPath &&
@@ -128,6 +189,13 @@ class MerchantDraft {
     phone,
     storeName,
     storeAddress,
+    storeGovernorate,
+    storeCity,
+    storeArea,
+    storeStreet,
+    storeLandmark,
+    storeLatitude,
+    storeLongitude,
     storeDescription,
     category,
     logoPath,

@@ -42,17 +42,17 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions web = FirebaseOptions(
     apiKey: 'AIzaSyAKUWGQgBTf1OBXqLlBQ0ZiGnk-GrJa3FU',
-    appId: '1:941471556278:web:8bb6af8ae5e3ce9f08fc17',
+    appId: '1:941471556278:web:1644f2f9c839ade308fc17',
     messagingSenderId: '941471556278',
     projectId: 'ell-tall-market',
     authDomain: 'ell-tall-market.firebaseapp.com',
     storageBucket: 'ell-tall-market.firebasestorage.app',
-    measurementId: 'G-0E4TLRX3XS',
+    measurementId: 'G-EZE5HCT5X5',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyBSk8EfZdGE8JGoqE1cA6dAcGXY_Q9YotQ',
-    appId: '1:941471556278:android:1d90df64a0f9fc2a08fc17',
+    appId: '1:941471556278:android:bf44b6b731a4381608fc17',
     messagingSenderId: '941471556278',
     projectId: 'ell-tall-market',
     storageBucket: 'ell-tall-market.firebasestorage.app',
@@ -60,31 +60,33 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyASu5cSMyRqpmAxYKs8Pvn_dpnmUueHD_I',
-    appId: '1:941471556278:ios:1ae1f350fb80520e08fc17',
+    appId: '1:941471556278:ios:4c0dd18cfe52d56808fc17',
     messagingSenderId: '941471556278',
     projectId: 'ell-tall-market',
     storageBucket: 'ell-tall-market.firebasestorage.app',
-    iosClientId: '941471556278-o98nlsdrf39jl1f1v2k8g4f4f64mbqnf.apps.googleusercontent.com',
-    iosBundleId: 'com.example.ellTallMarket',
+    androidClientId: '941471556278-g0d409tmu6qv6oskauhkgbu04ko9faci.apps.googleusercontent.com',
+    iosClientId: '941471556278-341l68isfcd7q6peegu4i5p41emunml0.apps.googleusercontent.com',
+    iosBundleId: 'com.elltall.market',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyASu5cSMyRqpmAxYKs8Pvn_dpnmUueHD_I',
-    appId: '1:941471556278:ios:1ae1f350fb80520e08fc17',
+    appId: '1:941471556278:ios:4c0dd18cfe52d56808fc17',
     messagingSenderId: '941471556278',
     projectId: 'ell-tall-market',
     storageBucket: 'ell-tall-market.firebasestorage.app',
-    iosClientId: '941471556278-o98nlsdrf39jl1f1v2k8g4f4f64mbqnf.apps.googleusercontent.com',
-    iosBundleId: 'com.example.ellTallMarket',
+    androidClientId: '941471556278-g0d409tmu6qv6oskauhkgbu04ko9faci.apps.googleusercontent.com',
+    iosClientId: '941471556278-341l68isfcd7q6peegu4i5p41emunml0.apps.googleusercontent.com',
+    iosBundleId: 'com.elltall.market',
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
     apiKey: 'AIzaSyAKUWGQgBTf1OBXqLlBQ0ZiGnk-GrJa3FU',
-    appId: '1:941471556278:web:712cd5f045134ffc08fc17',
+    appId: '1:941471556278:web:da2c01bec1d888db08fc17',
     messagingSenderId: '941471556278',
     projectId: 'ell-tall-market',
     authDomain: 'ell-tall-market.firebaseapp.com',
     storageBucket: 'ell-tall-market.firebasestorage.app',
-    measurementId: 'G-992RHG7DS7',
+    measurementId: 'G-J3ZB63S986',
   );
 }

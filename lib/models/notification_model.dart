@@ -75,12 +75,14 @@ class NotificationModel with BaseModelMixin {
   @override
   final String id; // UUID PRIMARY KEY DEFAULT gen_random_uuid()
   final String? userId; // UUID REFERENCES auth.users(id) ON DELETE CASCADE
+  final String? storeId; // UUID REFERENCES stores(id)
   final String title; // TEXT NOT NULL
   final String body; // TEXT NOT NULL
   final NotificationType?
   type; // TEXT CHECK (type IN ('order', 'promotion', 'system'))
   final Map<String, dynamic>? data; // JSONB DEFAULT '{}'
   final bool isRead; // BOOLEAN DEFAULT FALSE
+  final String targetRole; // TEXT DEFAULT 'client'
   @override
   final DateTime createdAt;
   @override
@@ -89,26 +91,37 @@ class NotificationModel with BaseModelMixin {
   const NotificationModel({
     required this.id,
     this.userId,
+    this.storeId,
     required this.title,
     required this.body,
     this.type,
     this.data,
     required this.isRead,
+    this.targetRole = 'client',
     required this.createdAt,
     this.updatedAt,
   });
 
   factory NotificationModel.fromMap(Map<String, dynamic> map) {
+    // targetRole: أولوية للعمود، ثم الـ JSONB data
+    final dataMap = map['data'] as Map<String, dynamic>?;
+    final role =
+        (map['target_role'] as String?) ??
+        (dataMap?['target_role'] as String?) ??
+        'client';
+
     return NotificationModel(
       id: map['id'] as String,
       userId: map['user_id'] as String?,
+      storeId: map['store_id'] as String?,
       title: map['title'] as String,
       body: map['body'] as String,
       type: map['type'] != null
           ? NotificationType.fromString(map['type'] as String)
           : null,
-      data: map['data'] as Map<String, dynamic>?,
+      data: dataMap,
       isRead: (map['is_read'] as bool?) ?? false,
+      targetRole: role,
       createdAt: BaseModelMixin.parseDateTime(map['created_at']),
       updatedAt: null, // notifications table doesn't have updated_at
     );
@@ -138,22 +151,26 @@ class NotificationModel with BaseModelMixin {
   NotificationModel copyWith({
     String? id,
     String? userId,
+    String? storeId,
     String? title,
     String? body,
     NotificationType? type,
     Map<String, dynamic>? data,
     bool? isRead,
+    String? targetRole,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
     return NotificationModel(
       id: id ?? this.id,
       userId: userId ?? this.userId,
+      storeId: storeId ?? this.storeId,
       title: title ?? this.title,
       body: body ?? this.body,
       type: type ?? this.type,
       data: data ?? this.data,
       isRead: isRead ?? this.isRead,
+      targetRole: targetRole ?? this.targetRole,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

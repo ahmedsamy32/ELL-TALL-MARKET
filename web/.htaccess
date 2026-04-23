@@ -1,0 +1,8 @@
+Options -MultiViews
+
+RewriteEngine On
+
+# إعادة توجيه كل المسارات لـ index.html (SPA Flutter Web)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.html [L]

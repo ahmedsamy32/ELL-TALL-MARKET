@@ -7,15 +7,20 @@ import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
+import 'package:ell_tall_market/services/notification_service.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_products_screen.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_orders_screen.dart';
-import 'package:ell_tall_market/screens/common/notifications_screen.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_settings_screen.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_coupons_screen.dart';
+import 'package:ell_tall_market/screens/merchant/merchant_reports_screen.dart';
+import 'package:ell_tall_market/screens/merchant/merchant_help_screen.dart';
 import 'package:ell_tall_market/core/logger.dart';
-import 'package:shimmer/shimmer.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/models/notification_model.dart';
+import 'package:ell_tall_market/utils/app_colors.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class MerchantDashboardScreen extends StatefulWidget {
   const MerchantDashboardScreen({super.key});
@@ -53,7 +58,10 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     super.didChangeDependencies();
     // نراقب تغيّر المستخدم تلقائياً عبر الاستماع للمزوّد
     final authProvider = Provider.of<SupabaseProvider>(context);
-    _handleAuthChange(authProvider.currentUser?.id);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _handleAuthChange(authProvider.currentUser?.id);
+    });
   }
 
   void _handleAuthChange(String? currentUserId) {
@@ -87,9 +95,9 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     }
   }
 
-  Future<void> _loadData() async {
+  Future<void> _loadData({bool force = false}) async {
     // منع التحميل المتكرر
-    if (_isInitialized) {
+    if (_isInitialized && !force) {
       AppLogger.info('✅ البيانات محملة بالفعل');
       return;
     }
@@ -111,25 +119,10 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     if (authProvider.isLoggedIn && authProvider.currentUser != null) {
       // تأمين profileId حتى لو كان المزوّد لم يحمّله بعد
       String? profileId = authProvider.currentUserProfile?.id;
-      if (profileId == null) {
-        try {
-          final profileRow = await Supabase.instance.client
-              .from('profiles')
-              .select('id')
-              .eq('user_id', authProvider.currentUser!.id)
-              .maybeSingle();
-          profileId = profileRow?['id'] as String?;
-          AppLogger.info('🔑 ProfileId fallback: $profileId');
-        } on PostgrestException catch (e) {
-          AppLogger.error('⛔ PostgREST ${e.code}: ${e.message}', e);
-        } catch (e) {
-          AppLogger.error('❌ فشل جلب البروفايل للمستخدم', e);
-        }
-      }
 
-      if (profileId != null &&
-          merchantProvider.selectedMerchant == null &&
-          !merchantProvider.isLoading) {
+      if (merchantProvider.selectedMerchant == null &&
+          !merchantProvider.isLoading &&
+          profileId != null) {
         AppLogger.info('📦 جاري جلب بيانات التاجر عبر profileId...');
         await merchantProvider.fetchMerchantByProfileId(profileId);
       }
@@ -165,13 +158,34 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
             await orderProvider.subscribeToStoreOrders(storeId);
             AppLogger.info('✅ عدد الطلبات: ${orderProvider.orders.length}');
           }
+
+          // جلب الإشعارات للتاجر
+          if (mounted) {
+            final notificationProvider = Provider.of<NotificationProvider>(
+              context,
+              listen: false,
+            );
+            // استخدام loadStoreNotifications بدلاً من loadUserNotifications
+            // لأن إشعارات التاجر محفوظة بـ store_id وليس merchant_id
+            await notificationProvider.loadStoreNotifications(storeId);
+            AppLogger.info('✅ تم تحميل إشعارات المتجر');
+
+            // تسجيل device token للمتجر (لاستقبال إشعارات الطلبات)
+            try {
+              await NotificationServiceEnhanced.instance
+                  .saveDeviceTokenForStore(storeId);
+              AppLogger.info('✅ تم تسجيل device token للمتجر');
+            } catch (e) {
+              AppLogger.warning('⚠️ فشل تسجيل device token للمتجر', e);
+            }
+          }
         } else {
           AppLogger.warning('⚠️ لم يتم العثور على معرف المتجر');
         }
       } else {
         // محاولة احتياطية مباشرة عبر جدول merchants
-        try {
-          if (profileId != null) {
+        if (profileId != null) {
+          try {
             final mRow = await Supabase.instance.client
                 .from('merchants')
                 .select('id')
@@ -184,11 +198,11 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
             } else {
               AppLogger.info('ℹ️ لم يتم العثور على صف تاجر احتياطي');
             }
+          } on PostgrestException catch (e) {
+            AppLogger.error('⛔ PostgREST ${e.code}: ${e.message}', e);
+          } catch (e) {
+            AppLogger.error('❌ فشل محاولة العثور على التاجر احتياطياً', e);
           }
-        } on PostgrestException catch (e) {
-          AppLogger.error('⛔ PostgREST ${e.code}: ${e.message}', e);
-        } catch (e) {
-          AppLogger.error('❌ فشل محاولة العثور على التاجر احتياطياً', e);
         }
 
         if (merchantProvider.selectedMerchant == null) {
@@ -239,151 +253,485 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     final textTheme = Theme.of(context).textTheme;
     final localeProvider = Provider.of<LocaleProvider>(context);
     final isArabic = localeProvider.locale.languageCode == 'ar';
+    final isWide = MediaQuery.sizeOf(context).width >= 1200;
 
     return Directionality(
       textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(
-            merchantProvider.selectedMerchant?.storeName ?? 'لوحة تحكم المتجر',
-            style: textTheme.titleLarge?.copyWith(color: colorScheme.onPrimary),
-          ),
-          centerTitle: true,
-          backgroundColor: colorScheme.primary,
-          foregroundColor: colorScheme.onPrimary,
-          elevation: 0,
-          actions: [
-            // زر العودة للرئيسية
-            IconButton(
-              icon: const Icon(Icons.home_outlined),
-              onPressed: () {
-                Navigator.pushReplacementNamed(context, AppRoutes.home);
-              },
-              tooltip: 'العودة للرئيسية',
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (bool didPop, dynamic result) async {
+          if (didPop) return;
+
+          if (_selectedIndex != 0) {
+            setState(() => _selectedIndex = 0);
+            return;
+          }
+
+          if (context.mounted) {
+            Navigator.of(context).pop(result);
+          }
+        },
+        child: Scaffold(
+          appBar: AppBar(
+            automaticallyImplyLeading: !isWide,
+            title: Text(
+              merchantProvider.selectedMerchant?.storeName ??
+                  'لوحة تحكم المتجر',
             ),
-            // إشعارات التاجر
-            Consumer<NotificationProvider>(
-              builder: (context, notificationProvider, child) {
-                final unreadCount = notificationProvider.unreadCount;
-                return Stack(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.notifications_outlined),
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const NotificationsScreen(),
-                          ),
-                        );
-                      },
-                      tooltip: 'الإشعارات',
-                    ),
-                    if (unreadCount > 0)
-                      Positioned(
-                        right: 6,
-                        top: 6,
-                        child: Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: colorScheme.error,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                              color: colorScheme.primary,
-                              width: 2,
+            centerTitle: true,
+            elevation: 0,
+            actions: [
+              // زر العودة للرئيسية
+              IconButton(
+                icon: const Icon(Icons.home_outlined),
+                onPressed: () {
+                  Navigator.pushReplacementNamed(context, AppRoutes.home);
+                },
+                tooltip: 'العودة للرئيسية',
+              ),
+              // إشعارات التاجر
+              Consumer<NotificationProvider>(
+                builder: (context, notificationProvider, child) {
+                  final unreadCount = notificationProvider
+                      .getUnreadCountForRole('merchant');
+                  return Stack(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.notifications_outlined),
+                        onPressed: () {
+                          showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            backgroundColor: Colors.transparent,
+                            builder: (context) => DraggableScrollableSheet(
+                              initialChildSize: 0.7,
+                              minChildSize: 0.5,
+                              maxChildSize: 0.95,
+                              builder: (context, scrollController) {
+                                return Container(
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(
+                                      context,
+                                    ).scaffoldBackgroundColor,
+                                    borderRadius: const BorderRadius.vertical(
+                                      top: Radius.circular(20),
+                                    ),
+                                  ),
+                                  child: SafeArea(
+                                    child: Column(
+                                      children: [
+                                        // Handle bar
+                                        Container(
+                                          margin: const EdgeInsets.only(
+                                            top: 12,
+                                          ),
+                                          width: 40,
+                                          height: 4,
+                                          decoration: BoxDecoration(
+                                            color: Colors.grey[300],
+                                            borderRadius: BorderRadius.circular(
+                                              2,
+                                            ),
+                                          ),
+                                        ),
+                                        // Header
+                                        Padding(
+                                          padding: const EdgeInsets.all(16),
+                                          child: Row(
+                                            children: [
+                                              const Icon(
+                                                Icons.notifications_rounded,
+                                              ),
+                                              const SizedBox(width: 8),
+                                              const Text(
+                                                'الإشعارات',
+                                                style: TextStyle(
+                                                  fontSize: 20,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                              const Spacer(),
+                                              if (unreadCount > 0)
+                                                Row(
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
+                                                  children: [
+                                                    TextButton.icon(
+                                                      onPressed: () async {
+                                                        // الحصول على storeId
+                                                        final merchantProvider =
+                                                            Provider.of<
+                                                              MerchantProvider
+                                                            >(
+                                                              context,
+                                                              listen: false,
+                                                            );
+                                                        final storeId =
+                                                            await _ensureStoreId(
+                                                              merchantProvider,
+                                                            );
+                                                        if (storeId != null) {
+                                                          await notificationProvider
+                                                              .markAllAsReadForStore(
+                                                                storeId,
+                                                              );
+                                                        }
+                                                      },
+                                                      icon: const Icon(
+                                                        Icons.mark_email_read,
+                                                        size: 18,
+                                                      ),
+                                                      label: const Text(
+                                                        'قراءة الكل',
+                                                      ),
+                                                      style: TextButton.styleFrom(
+                                                        padding:
+                                                            const EdgeInsets.symmetric(
+                                                              horizontal: 8,
+                                                              vertical: 8,
+                                                            ),
+                                                      ),
+                                                    ),
+                                                    IconButton(
+                                                      onPressed: () {
+                                                        showDialog(
+                                                          context: context,
+                                                          builder: (context) => AlertDialog(
+                                                            title: const Text(
+                                                              'حذف جميع الإشعارات',
+                                                            ),
+                                                            content: const Text(
+                                                              'هل أنت متأكد من حذف جميع الإشعارات؟',
+                                                            ),
+                                                            actions: [
+                                                              TextButton(
+                                                                onPressed: () =>
+                                                                    Navigator.pop(
+                                                                      context,
+                                                                    ),
+                                                                child:
+                                                                    const Text(
+                                                                      'إلغاء',
+                                                                    ),
+                                                              ),
+                                                              TextButton(
+                                                                onPressed: () async {
+                                                                  // الحصول على storeId
+                                                                  final merchantProvider =
+                                                                      Provider.of<
+                                                                        MerchantProvider
+                                                                      >(
+                                                                        context,
+                                                                        listen:
+                                                                            false,
+                                                                      );
+                                                                  final storeId =
+                                                                      await _ensureStoreId(
+                                                                        merchantProvider,
+                                                                      );
+                                                                  if (storeId !=
+                                                                      null) {
+                                                                    await notificationProvider
+                                                                        .deleteStoreNotifications(
+                                                                          storeId,
+                                                                        );
+                                                                    if (context
+                                                                        .mounted) {
+                                                                      Navigator.pop(
+                                                                        context,
+                                                                      );
+                                                                      ScaffoldMessenger.of(
+                                                                        context,
+                                                                      ).showSnackBar(
+                                                                        const SnackBar(
+                                                                          content: Text(
+                                                                            'تم حذف جميع الإشعارات',
+                                                                          ),
+                                                                          backgroundColor:
+                                                                              Colors.red,
+                                                                        ),
+                                                                      );
+                                                                    }
+                                                                  }
+                                                                },
+                                                                child: const Text(
+                                                                  'حذق',
+                                                                  style: TextStyle(
+                                                                    color: Colors
+                                                                        .red,
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ],
+                                                          ),
+                                                        );
+                                                      },
+                                                      icon: const Icon(
+                                                        Icons.delete_outline,
+                                                        size: 20,
+                                                      ),
+                                                      tooltip: 'مسح الكل',
+                                                    ),
+                                                  ],
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                        const Divider(height: 1),
+                                        // Notifications list
+                                        Expanded(
+                                          child:
+                                              _NotificationsBottomSheetContent(
+                                                targetRole: 'merchant',
+                                                scrollController:
+                                                    scrollController,
+                                              ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
-                          ),
-                          constraints: const BoxConstraints(
-                            minWidth: 18,
-                            minHeight: 18,
-                          ),
-                          child: Text(
-                            unreadCount > 99 ? '99+' : unreadCount.toString(),
-                            style: TextStyle(
-                              color: colorScheme.onError,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
+                          );
+                        },
+                        tooltip: 'الإشعارات',
+                      ),
+                      if (unreadCount > 0)
+                        Positioned(
+                          right: 8,
+                          top: 8,
+                          child: Container(
+                            padding: const EdgeInsets.all(2),
+                            decoration: BoxDecoration(
+                              color: colorScheme.error,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: colorScheme.primary,
+                                width: 1.5,
+                              ),
                             ),
-                            textAlign: TextAlign.center,
+                            constraints: const BoxConstraints(
+                              minWidth: 16,
+                              minHeight: 16,
+                            ),
+                            child: Text(
+                              unreadCount > 99 ? '99+' : unreadCount.toString(),
+                              style: TextStyle(
+                                color: colorScheme.onError,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
                           ),
                         ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ],
-        ),
-        drawer: _buildDrawer(),
-        body: SafeArea(
-          child: IndexedStack(
-            index: _selectedIndex,
-            children: [
-              _buildDashboardHome(),
-              const MerchantProductsScreen(), // استخدام الشاشة الفعلية للمنتجات
-              const MerchantOrdersScreen(), // استخدام الشاشة الفعلية للطلبات
-              _buildAnalyticsPage(),
-              const MerchantSettingsScreen(),
+                    ],
+                  );
+                },
+              ),
             ],
           ),
-        ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _selectedIndex,
-          onDestinationSelected: (index) async {
-            setState(() => _selectedIndex = index);
-            if (index == 1) {
-              // عند فتح تبويب المنتجات، نجلب القائمة الكاملة عند الحاجة فقط
-              final merchantProvider = Provider.of<MerchantProvider>(
-                context,
-                listen: false,
-              );
-              final productProvider = Provider.of<ProductProvider>(
-                context,
-                listen: false,
-              );
+          drawer: !isWide ? _buildDrawer() : null,
+          body: isWide
+              ? Row(
+                  children: [
+                    _buildMerchantSidebar(colorScheme, textTheme),
+                    const VerticalDivider(width: 1),
+                    Expanded(child: _buildMerchantBody()),
+                  ],
+                )
+              : _buildMerchantBody(),
+          bottomNavigationBar: !isWide
+              ? NavigationBar(
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: (index) async {
+                    setState(() => _selectedIndex = index);
+                    if (index == 1) {
+                      // عند فتح تبويب المنتجات، نجلب القائمة الكاملة عند الحاجة فقط
+                      final merchantProvider = Provider.of<MerchantProvider>(
+                        context,
+                        listen: false,
+                      );
+                      final productProvider = Provider.of<ProductProvider>(
+                        context,
+                        listen: false,
+                      );
 
-              if (merchantProvider.selectedMerchant != null &&
-                  productProvider.products.isEmpty &&
-                  !productProvider.isLoading) {
-                try {
-                  final storeId = await _ensureStoreId(merchantProvider);
-                  if (storeId != null) {
-                    await productProvider.fetchProductsByStore(storeId);
-                  }
-                } catch (e) {
-                  AppLogger.error(
-                    '❌ خطأ في جلب منتجات المتجر عند فتح التبويب',
-                    e,
-                  );
-                }
-              }
-            }
-          },
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.dashboard_outlined),
-              selectedIcon: Icon(Icons.dashboard),
-              label: 'الرئيسية',
+                      if (merchantProvider.selectedMerchant != null &&
+                          productProvider.products.isEmpty &&
+                          !productProvider.isLoading) {
+                        try {
+                          final storeId = await _ensureStoreId(
+                            merchantProvider,
+                          );
+                          if (storeId != null) {
+                            await productProvider.fetchProductsByStore(storeId);
+                          }
+                        } catch (e) {
+                          AppLogger.error(
+                            '❌ خطأ في جلب منتجات المتجر عند فتح التبويب',
+                            e,
+                          );
+                        }
+                      }
+                    }
+                  },
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.dashboard_outlined),
+                      selectedIcon: Icon(Icons.dashboard),
+                      label: 'الرئيسية',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.inventory_2_outlined),
+                      selectedIcon: Icon(Icons.inventory_2),
+                      label: 'المنتجات',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.shopping_cart_outlined),
+                      selectedIcon: Icon(Icons.shopping_cart),
+                      label: 'الطلبات',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.bar_chart_outlined),
+                      selectedIcon: Icon(Icons.bar_chart),
+                      label: 'التقارير',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.settings_outlined),
+                      selectedIcon: Icon(Icons.settings),
+                      label: 'الإعدادات',
+                    ),
+                  ],
+                )
+              : null,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMerchantBody() {
+    return ResponsiveCenter(
+      maxWidth: 1000,
+      child: SafeArea(
+        child: IndexedStack(
+          index: _selectedIndex,
+          children: [
+            _buildDashboardHome(),
+            const MerchantProductsScreen(),
+            const MerchantOrdersScreen(),
+            const MerchantReportsScreen(),
+            const MerchantSettingsScreen(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMerchantSidebar(ColorScheme colorScheme, TextTheme textTheme) {
+    final merchantProvider = Provider.of<MerchantProvider>(context);
+    final user = Provider.of<SupabaseProvider>(context).currentUserProfile;
+    final items = [
+      (Icons.dashboard_outlined, Icons.dashboard, 'الرئيسية'),
+      (Icons.inventory_2_outlined, Icons.inventory_2, 'المنتجات'),
+      (Icons.shopping_cart_outlined, Icons.shopping_cart, 'الطلبات'),
+      (Icons.bar_chart_outlined, Icons.bar_chart, 'التقارير'),
+      (Icons.settings_outlined, Icons.settings, 'الإعدادات'),
+    ];
+    return Container(
+      width: 240,
+      color: colorScheme.surface,
+      child: SafeArea(
+        right: false,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: colorScheme.primaryContainer,
+                    backgroundImage: user?.avatarUrl != null
+                        ? NetworkImage(user!.avatarUrl!)
+                        : null,
+                    child: user?.avatarUrl == null
+                        ? Icon(
+                            Icons.store,
+                            color: colorScheme.onPrimaryContainer,
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          merchantProvider.selectedMerchant?.storeName ??
+                              'المتجر',
+                          style: textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        Text(
+                          'لوحة التاجر',
+                          style: textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
-            NavigationDestination(
-              icon: Icon(Icons.inventory_2_outlined),
-              selectedIcon: Icon(Icons.inventory_2),
-              label: 'المنتجات',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.shopping_cart_outlined),
-              selectedIcon: Icon(Icons.shopping_cart),
-              label: 'الطلبات',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.bar_chart_outlined),
-              selectedIcon: Icon(Icons.bar_chart),
-              label: 'التقارير',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.settings_outlined),
-              selectedIcon: Icon(Icons.settings),
-              label: 'الإعدادات',
+            const Divider(height: 1),
+            Expanded(
+              child: Directionality(
+                textDirection: TextDirection.rtl,
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: items.length,
+                  itemBuilder: (context, index) {
+                    final isSelected = _selectedIndex == index;
+                    return Container(
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      child: ListTile(
+                        leading: Icon(
+                          isSelected ? items[index].$2 : items[index].$1,
+                          color: isSelected
+                              ? colorScheme.primary
+                              : colorScheme.onSurfaceVariant,
+                          size: 22,
+                        ),
+                        title: Text(
+                          items[index].$3,
+                          style: TextStyle(
+                            fontWeight: isSelected
+                                ? FontWeight.w600
+                                : FontWeight.w500,
+                            color: isSelected ? colorScheme.primary : null,
+                            fontSize: 14,
+                          ),
+                        ),
+                        selected: isSelected,
+                        selectedTileColor: colorScheme.primary.withValues(
+                          alpha: 0.1,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        onTap: () => setState(() => _selectedIndex = index),
+                      ),
+                    );
+                  },
+                ),
+              ),
             ),
           ],
         ),
@@ -426,11 +774,38 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
             child: ListView(
               padding: EdgeInsets.zero,
               children: [
-                _buildDrawerItem(0, 'الرئيسية', Icons.dashboard_outlined),
-                _buildDrawerItem(1, 'المنتجات', Icons.inventory_2_outlined),
-                _buildDrawerItem(2, 'الطلبات', Icons.shopping_cart_outlined),
-                _buildDrawerItem(3, 'التقارير', Icons.bar_chart_outlined),
-                _buildDrawerItem(4, 'الإعدادات', Icons.settings_outlined),
+                ListTile(
+                  leading: Icon(
+                    Icons.add_box_outlined,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  title: Text(
+                    'إضافة منتج',
+                    style: textTheme.bodyLarge?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, AppRoutes.addEditProduct);
+                  },
+                ),
+                ListTile(
+                  leading: Icon(
+                    Icons.account_balance_wallet_outlined,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  title: Text(
+                    'المحفظة',
+                    style: textTheme.bodyLarge?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.pushNamed(context, AppRoutes.merchantWallet);
+                  },
+                ),
                 ListTile(
                   leading: Icon(
                     Icons.local_offer_outlined,
@@ -464,41 +839,21 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                       color: colorScheme.onSurfaceVariant,
                     ),
                   ),
-                  onTap: () => Navigator.pop(context),
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const MerchantHelpScreen(),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildDrawerItem(int index, String title, IconData icon) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
-    final isSelected = _selectedIndex == index;
-
-    return ListTile(
-      selected: isSelected,
-      selectedTileColor: colorScheme.primaryContainer.withValues(alpha: 0.3),
-      leading: Icon(
-        icon,
-        color: isSelected ? colorScheme.primary : colorScheme.onSurfaceVariant,
-      ),
-      title: Text(
-        title,
-        style: textTheme.bodyLarge?.copyWith(
-          color: isSelected
-              ? colorScheme.primary
-              : colorScheme.onSurfaceVariant,
-          fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-        ),
-      ),
-      onTap: () {
-        setState(() => _selectedIndex = index);
-        Navigator.pop(context);
-      },
     );
   }
 
@@ -562,7 +917,17 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
               ),
               const SizedBox(height: 24),
               FilledButton.icon(
-                onPressed: _loadData,
+                onPressed: () async {
+                  merchantProvider.clearData();
+                  productProvider.clearProducts(resetCount: false);
+                  _storeId = null;
+                  if (mounted) {
+                    setState(() {
+                      _isInitialized = false;
+                    });
+                  }
+                  await _loadData(force: true);
+                },
                 icon: const Icon(Icons.refresh),
                 label: const Text('إعادة المحاولة'),
                 style: FilledButton.styleFrom(
@@ -690,18 +1055,6 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                 ),
                 const SizedBox(height: 12),
                 _buildRecentOrders(),
-                const SizedBox(height: 24),
-
-                // إجراءات سريعة
-                _buildSectionHeader(
-                  'إجراءات سريعة',
-                  null,
-                  textTheme,
-                  colorScheme,
-                  null,
-                ),
-                const SizedBox(height: 12),
-                _buildQuickActions(),
               ],
             ),
           ),
@@ -711,46 +1064,45 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
   }
 
   Widget _buildShimmerDashboard(ColorScheme colorScheme) {
-    return SingleChildScrollView(
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+    return ListView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              _shimmerBox(width: 64, height: 64, radius: 32),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _shimmerBox(width: 160, height: 16),
-                    const SizedBox(height: 8),
-                    _shimmerBox(width: 120, height: 14),
-                  ],
-                ),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomPad + 24),
+      children: [
+        Row(
+          children: [
+            _shimmerBox(width: 64, height: 64, radius: 32),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _shimmerBox(width: 160, height: 16),
+                  const SizedBox(height: 8),
+                  _shimmerBox(width: 120, height: 14),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          GridView.count(
-            physics: const NeverScrollableScrollPhysics(),
-            shrinkWrap: true,
-            crossAxisCount: 2,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 1.4,
-            children: List.generate(
-              4,
-              (_) => _shimmerBox(radius: 12, height: 110),
             ),
+          ],
+        ),
+        const SizedBox(height: 24),
+        GridView.count(
+          physics: const NeverScrollableScrollPhysics(),
+          shrinkWrap: true,
+          crossAxisCount: 2,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 1.4,
+          children: List.generate(
+            4,
+            (_) => _shimmerBox(radius: 12, height: 110),
           ),
-          const SizedBox(height: 24),
-          _shimmerBox(radius: 12, height: 200),
-          const SizedBox(height: 12),
-          _shimmerBox(radius: 12, height: 200),
-        ],
-      ),
+        ),
+        const SizedBox(height: 24),
+        _shimmerBox(radius: 12, height: 200),
+        const SizedBox(height: 12),
+        _shimmerBox(radius: 12, height: 200),
+      ],
     );
   }
 
@@ -759,16 +1111,13 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     double height = 80,
     double radius = 8,
   }) {
-    return Shimmer.fromColors(
-      baseColor: Colors.grey.shade300,
-      highlightColor: Colors.grey.shade100,
-      child: Container(
+    return AppShimmer.wrap(
+      context,
+      child: AppShimmer.box(
+        context,
         width: width,
         height: height,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(radius),
-        ),
+        borderRadius: BorderRadius.circular(radius),
       ),
     );
   }
@@ -859,7 +1208,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
           'طلبات مكتملة',
           Icons.trending_up_outlined,
           Colors.green,
-          null,
+          () => setState(() => _selectedIndex = 3),
         ),
       ],
     );
@@ -1061,38 +1410,6 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildAnalyticsPage() {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.bar_chart_outlined,
-            size: 64,
-            color: colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'صفحة التقارير',
-            style: Theme.of(
-              context,
-            ).textTheme.headlineSmall?.copyWith(color: colorScheme.onSurface),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'تحليلات الأداء والمبيعات',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
       ),
     );
   }
@@ -1392,152 +1709,330 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     );
   }
 
-  Widget _buildQuickActions() {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    final actions = [
-      _buildActionButton(
-        'إضافة منتج',
-        Icons.add_box_outlined,
-        colorScheme.primary,
-        colorScheme.onPrimary,
-        () {
-          Navigator.pushNamed(context, AppRoutes.addEditProduct);
-        },
-      ),
-      _buildActionButton(
-        'عرض المنتجات',
-        Icons.inventory_2_outlined,
-        colorScheme.secondary,
-        colorScheme.onSecondary,
-        () {
-          setState(() => _selectedIndex = 1);
-        },
-      ),
-      _buildActionButton(
-        'الطلبات',
-        Icons.shopping_cart_outlined,
-        colorScheme.tertiary,
-        colorScheme.onTertiary,
-        () {
-          setState(() => _selectedIndex = 2);
-        },
-      ),
-      _buildActionButton(
-        'المحفظة',
-        Icons.account_balance_wallet_outlined,
-        Colors.green,
-        Colors.white,
-        () {
-          Navigator.pushNamed(context, AppRoutes.merchantWallet);
-        },
-      ),
-      _buildActionButton(
-        'الكوبونات',
-        Icons.local_offer_outlined,
-        Colors.orange,
-        Colors.white,
-        () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const MerchantCouponsScreen()),
-          );
-        },
-      ),
-      _buildActionButton(
-        'الإعدادات',
-        Icons.settings_outlined,
-        colorScheme.surfaceContainerHighest,
-        colorScheme.primary,
-        () {
-          setState(() => _selectedIndex = 4);
-        },
-      ),
-    ];
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWideScreen = constraints.maxWidth > 600;
-        final crossAxisCount = isWideScreen ? 6 : 3;
-
-        return GridView.count(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: crossAxisCount,
-          mainAxisSpacing: 16,
-          crossAxisSpacing: 16,
-          children: actions,
-        );
-      },
-    );
-  }
-
-  Widget _buildActionButton(
-    String label,
-    IconData icon,
-    Color backgroundColor,
-    Color foregroundColor,
-    VoidCallback onPressed,
-  ) {
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: colorScheme.outlineVariant),
-      ),
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: backgroundColor,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: backgroundColor.withValues(alpha: 0.3),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Icon(icon, color: foregroundColor, size: 24),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                label,
-                style: textTheme.labelSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.onSurface,
-                  fontSize: 11,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   double _calculateTotalSales() {
     final orderProvider = Provider.of<OrderProvider>(context, listen: false);
     // حساب إجمالي المبيعات للطلبات التي تم توصيلها فقط
     return orderProvider.orders
         .where((order) => order.status == OrderStatus.delivered)
         .fold<double>(0.0, (total, order) => total + order.totalAmount);
+  }
+}
+
+// ===== Bottom Sheet Content Widget =====
+class _NotificationsBottomSheetContent extends StatelessWidget {
+  final String? targetRole;
+  final ScrollController scrollController;
+
+  const _NotificationsBottomSheetContent({
+    this.targetRole,
+    required this.scrollController,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final notificationProvider = Provider.of<NotificationProvider>(context);
+    final authProvider = Provider.of<SupabaseProvider>(context);
+    final userId = authProvider.currentUser?.id;
+
+    if (userId == null) {
+      return _buildLoginRequired();
+    }
+
+    if (notificationProvider.isLoading) {
+      return AppShimmer.list(context);
+    }
+
+    final notifications = notificationProvider.getNotificationsForRole(
+      targetRole,
+    );
+
+    if (notificationProvider.error != null) {
+      return _buildError(notificationProvider, userId);
+    }
+
+    if (notifications.isEmpty) {
+      return _buildEmpty();
+    }
+
+    return ListView.builder(
+      controller: scrollController,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      itemCount: notifications.length,
+      itemBuilder: (context, index) {
+        final notification = notifications[index];
+        return _buildNotificationItem(
+          context,
+          notification,
+          notificationProvider,
+        );
+      },
+    );
+  }
+
+  Widget _buildLoginRequired() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.login, size: 80, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          const Text(
+            'يرجى تسجيل الدخول',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'قم بتسجيل الدخول لعرض الإشعارات',
+            style: TextStyle(color: Colors.grey[600]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildError(NotificationProvider provider, String userId) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.wifi_off_rounded, size: 80, color: Colors.orange[300]),
+            const SizedBox(height: 16),
+            const Text(
+              'مشكلة في الاتصال',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              provider.error!,
+              style: const TextStyle(color: Colors.grey, fontSize: 15),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: () => provider.loadUserNotifications(
+                userId,
+                targetRole: 'merchant',
+              ),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('إعادة المحاولة'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmpty() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.notifications_none, size: 80, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          const Text(
+            'لا توجد إشعارات',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'سيتم إعلامك عند وجود إشعارات جديدة',
+            style: TextStyle(color: Colors.grey[600]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotificationItem(
+    BuildContext context,
+    NotificationModel notification,
+    NotificationProvider provider,
+  ) {
+    return Dismissible(
+      key: Key(notification.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.red,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.only(left: 20),
+        child: const Icon(Icons.delete, color: Colors.white),
+      ),
+      onDismissed: (direction) {
+        provider.deleteNotification(notification.id);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم حذف الإشعار'),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      },
+      child: Card(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        color: notification.isRead
+            ? Colors.white
+            : AppColors.primary.withAlpha(25),
+        elevation: notification.isRead ? 1 : 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 8,
+          ),
+          leading: _getNotificationIcon(
+            notification.type ?? NotificationType.system,
+          ),
+          title: Text(
+            notification.title,
+            style: TextStyle(
+              fontWeight: notification.isRead
+                  ? FontWeight.normal
+                  : FontWeight.bold,
+              fontSize: 15,
+            ),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 4),
+              Text(
+                notification.body,
+                style: const TextStyle(fontSize: 13),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                notification.createdAtRelative,
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
+            ],
+          ),
+          trailing: notification.isRead
+              ? null
+              : Container(
+                  width: 10,
+                  height: 10,
+                  decoration: const BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+          onTap: () {
+            if (!notification.isRead) {
+              provider.markAsRead(notification.id);
+            }
+            Navigator.pop(context); // Close bottom sheet
+            _handleNotificationTap(context, notification);
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _getNotificationIcon(NotificationType type) {
+    late IconData icon;
+    late Color color;
+
+    switch (type) {
+      case NotificationType.order:
+        icon = Icons.shopping_cart_rounded;
+        color = AppColors.primary;
+        break;
+      case NotificationType.promotion:
+        icon = Icons.local_offer_rounded;
+        color = AppColors.secondary;
+        break;
+      case NotificationType.system:
+        icon = Icons.info_rounded;
+        color = AppColors.info;
+        break;
+    }
+
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: color.withAlpha(25),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(icon, size: 24, color: color),
+    );
+  }
+
+  void _handleNotificationTap(
+    BuildContext context,
+    NotificationModel notification,
+  ) {
+    final data = notification.data ?? {};
+
+    debugPrint('📬 Tapped Notification: ${notification.title}');
+    debugPrint('📊 Notification Type: ${notification.type}');
+    debugPrint('📦 Notification Data: $data');
+
+    switch (notification.type) {
+      case NotificationType.order:
+        _navigateToOrderNotification(context, data);
+        break;
+      case NotificationType.promotion:
+        _navigateToPromotionNotification(context, data);
+        break;
+      case NotificationType.system:
+      default:
+        _navigateToSystemNotification(context, data);
+        break;
+    }
+  }
+
+  void _navigateToOrderNotification(
+    BuildContext context,
+    Map<String, dynamic> data,
+  ) {
+    final orderId = data['order_id'] as String?;
+    if (orderId != null) {
+      // Navigate to merchant orders screen
+      // Since we're already in merchant dashboard, just show a message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('طلب رقم: ${orderId.substring(0, 8)}...'),
+          action: SnackBarAction(
+            label: 'عرض',
+            onPressed: () {
+              // Navigate to orders tab in merchant dashboard
+            },
+          ),
+        ),
+      );
+    }
+  }
+
+  void _navigateToPromotionNotification(
+    BuildContext context,
+    Map<String, dynamic> data,
+  ) {
+    final productId = data['productId'] as String?;
+    if (productId != null) {
+      Navigator.pushNamed(
+        context,
+        AppRoutes.productDetail,
+        arguments: productId,
+      );
+    }
+  }
+
+  void _navigateToSystemNotification(
+    BuildContext context,
+    Map<String, dynamic> data,
+  ) {
+    final actionRoute = data['actionRoute'] as String?;
+    if (actionRoute != null) {
+      Navigator.pushNamed(context, actionRoute);
+    }
   }
 }

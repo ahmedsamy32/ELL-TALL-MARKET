@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
@@ -9,8 +10,10 @@ import 'package:ell_tall_market/widgets/password_strength_indicator.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/services/network_manager.dart';
 import 'package:flutter/services.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 import 'dart:async';
 import 'package:ell_tall_market/services/merchant_draft_service.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -54,26 +57,39 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: GestureDetector(
-                    onTap: () {
-                      setState(() => _agreeToTerms = !_agreeToTerms);
-                    },
-                    child: Text.rich(
-                      TextSpan(
-                        text: "أوافق على ",
-                        style: theme.textTheme.bodyMedium,
-                        children: [
-                          TextSpan(
-                            text: "الشروط والأحكام",
-                            style: TextStyle(
-                              color: theme.colorScheme.primary,
-                              fontWeight: FontWeight.bold,
-                              decoration: TextDecoration.underline,
-                            ),
+                  child: Text.rich(
+                    TextSpan(
+                      text: "أوافق على ",
+                      style: theme.textTheme.bodyMedium,
+                      children: [
+                        TextSpan(
+                          text: "الشروط والأحكام",
+                          style: TextStyle(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.bold,
+                            decoration: TextDecoration.underline,
                           ),
-                          const TextSpan(text: " وسياسة الخصوصية"),
-                        ],
-                      ),
+                          recognizer: TapGestureRecognizer()
+                            ..onTap = () => Navigator.pushNamed(
+                              context,
+                              AppRoutes.termsConditions,
+                            ),
+                        ),
+                        const TextSpan(text: " و"),
+                        TextSpan(
+                          text: "سياسة الخصوصية",
+                          style: TextStyle(
+                            color: theme.colorScheme.primary,
+                            fontWeight: FontWeight.bold,
+                            decoration: TextDecoration.underline,
+                          ),
+                          recognizer: TapGestureRecognizer()
+                            ..onTap = () => Navigator.pushNamed(
+                              context,
+                              AppRoutes.privacyPolicy,
+                            ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -86,14 +102,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
+  final _firstNameController = TextEditingController();
+  final _middleNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
   // FocusNodes للتحكم في الانتقال بين الحقول
-  final _nameFocus = FocusNode();
+  final _firstNameFocus = FocusNode();
+  final _middleNameFocus = FocusNode();
+  final _lastNameFocus = FocusNode();
   final _emailFocus = FocusNode();
   final _phoneFocus = FocusNode();
   final _passwordFocus = FocusNode();
@@ -110,13 +130,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.initState();
     // إضافة مستمع لتحديث مؤشر قوة كلمة المرور
     _passwordController.addListener(() {
-      setState(() {
-        _currentPassword = _passwordController.text;
-      });
+      if (mounted) {
+        setState(() {
+          _currentPassword = _passwordController.text;
+        });
+      }
     });
 
     // حفظ مسودة البيانات الشخصية تلقائياً (بدون كلمات المرور)
-    _nameController.addListener(_scheduleDraftSave);
+    _firstNameController.addListener(_scheduleDraftSave);
+    _middleNameController.addListener(_scheduleDraftSave);
+    _lastNameController.addListener(_scheduleDraftSave);
     _emailController.addListener(_scheduleDraftSave);
     _phoneController.addListener(_scheduleDraftSave);
 
@@ -127,12 +151,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void dispose() {
     _draftSaveTimer?.cancel();
-    _nameController.dispose();
+    _firstNameController.dispose();
+    _middleNameController.dispose();
+    _lastNameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    _nameFocus.dispose();
+    _firstNameFocus.dispose();
+    _middleNameFocus.dispose();
+    _lastNameFocus.dispose();
     _emailFocus.dispose();
     _phoneFocus.dispose();
     _passwordFocus.dispose();
@@ -147,8 +175,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _saveDraftNow() async {
+    final fullName = [
+      _firstNameController.text.trim(),
+      _middleNameController.text.trim(),
+      _lastNameController.text.trim(),
+    ].where((p) => p.isNotEmpty).join(' ');
+
     final draft = MerchantDraft(
-      fullName: _nameController.text.trim(),
+      fullName: fullName,
       email: _emailController.text.trim(),
       phone: _phoneController.text.trim(),
     );
@@ -157,9 +191,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> _restoreDraftIfAny() async {
     final draft = await MerchantDraftService.load();
-    if (draft == null) return;
+    if (!mounted || draft == null) return;
     if (draft.fullName?.isNotEmpty == true) {
-      _nameController.text = draft.fullName!;
+      final parts = draft.fullName!.split(' ');
+      _firstNameController.text = parts.isNotEmpty ? parts[0] : '';
+      _middleNameController.text = parts.length > 1 ? parts[1] : '';
+      _lastNameController.text = parts.length > 2
+          ? parts.sublist(2).join(' ')
+          : '';
     }
     if (draft.email?.isNotEmpty == true) {
       _emailController.text = draft.email!;
@@ -259,7 +298,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       final userEmail = _emailController.text.trim();
       final userPassword = _passwordController.text;
-      final userName = _nameController.text.trim();
+      final userName = [
+        _firstNameController.text.trim(),
+        _middleNameController.text.trim(),
+        _lastNameController.text.trim(),
+      ].where((p) => p.isNotEmpty).join(' ');
       final userPhone = _phoneController.text.trim();
 
       try {
@@ -410,8 +453,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         SnackBarHelper.showInfo(context, '🔄 يرجى إكمال التسجيل في المتصفح...');
 
         // Set up a one-time listener for auth state changes
-        final subscription = authProvider.authStateChanges.listen((user) {
+        StreamSubscription<User?>? subscription;
+        subscription = authProvider.authStateChanges.listen((user) {
           if (user != null && mounted) {
+            // Cancel immediately to prevent multiple calls
+            subscription?.cancel();
+
             // User signed in successfully via OAuth callback
             ScaffoldMessenger.of(context).clearSnackBars();
             SnackBarHelper.showSuccess(
@@ -423,8 +470,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         });
 
         // Cancel subscription after 60 seconds (timeout)
-        Future.delayed(Duration(seconds: 60), () {
-          subscription.cancel();
+        Future.delayed(const Duration(seconds: 60), () {
+          subscription?.cancel();
         });
       } else {
         AppLogger.warning("فشل فتح متصفح Google");
@@ -607,6 +654,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Widget build(BuildContext context) {
     final authProvider = Provider.of<SupabaseProvider>(context);
     final theme = Theme.of(context);
+    final screenWidth = MediaQuery.of(context).size.width;
+    if (screenWidth > 800) return _buildWebLayout(context, authProvider, theme);
+    final screenHeight = MediaQuery.of(context).size.height;
+    final isCompact = screenHeight < 700;
+    final logoSize = isCompact ? 64.0 : 85.0;
+    final titleSize = isCompact ? 22.0 : 26.0;
+    final subtitleSize = isCompact ? 14.0 : 16.0;
+    final verticalPadding = isCompact ? 8.0 : 16.0;
+    final topGap = isCompact ? 12.0 : 24.0;
+    final titleGap = isCompact ? 6.0 : 12.0;
+    final sectionGap = isCompact ? 24.0 : 40.0;
+    final blockGap = isCompact ? 20.0 : 32.0;
 
     return Scaffold(
       appBar: AppBar(
@@ -636,96 +695,76 @@ class _RegisterScreenState extends State<RegisterScreen> {
         ),
       ),
       extendBodyBehindAppBar: true,
-      body: Stack(
-        children: [
-          // الخلفية المتدرجة مع الأشكال الديكورية
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  const Color(0xFFE3F2FD), // أزرق فاتح جداً
-                  const Color(0xFFBBDEFB), // أزرق فاتح
-                  Colors.white,
-                ],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                stops: const [0.0, 0.4, 1.0],
-              ),
-            ),
-          ),
-
-          // أشكال ديكورية خلفية
-          Positioned(
-            top: -50,
-            right: -50,
-            child: Container(
-              width: 200,
-              height: 200,
+      body: ResponsiveCenter(
+        maxWidth: 600,
+        child: Stack(
+          children: [
+            // الخلفية المتدرجة مع الأشكال الديكورية
+            Container(
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.blue.withValues(alpha: 0.1),
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: -100,
-            left: -100,
-            child: Container(
-              width: 250,
-              height: 250,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.purple.withValues(alpha: 0.05),
-              ),
-            ),
-          ),
-          Positioned(
-            top: 150,
-            left: -30,
-            child: Container(
-              width: 100,
-              height: 100,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.cyan.withValues(alpha: 0.08),
-              ),
-            ),
-          ),
-
-          // المحتوى الرئيسي
-          Center(
-            child: SingleChildScrollView(
-              physics: const BouncingScrollPhysics(),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 40,
+                gradient: LinearGradient(
+                  colors: [
+                    const Color(0xFFE3F2FD), // أزرق فاتح جداً
+                    const Color(0xFFBBDEFB), // أزرق فاتح
+                    Colors.white,
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  stops: const [0.0, 0.4, 1.0],
                 ),
-                child: Material(
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 800),
-                    curve: Curves.easeOutCubic,
-                    constraints: const BoxConstraints(maxWidth: 400),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(28),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.1),
-                          blurRadius: 30,
-                          offset: const Offset(0, 15),
-                          spreadRadius: -5,
-                        ),
-                        BoxShadow(
-                          color: Colors.blue.withValues(alpha: 0.1),
-                          blurRadius: 20,
-                          offset: const Offset(0, 5),
-                          spreadRadius: -10,
-                        ),
-                      ],
+              ),
+            ),
+
+            // أشكال ديكورية خلفية
+            Positioned(
+              top: -50,
+              right: -50,
+              child: Container(
+                width: 200,
+                height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.blue.withValues(alpha: 0.1),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -100,
+              left: -100,
+              child: Container(
+                width: 250,
+                height: 250,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.purple.withValues(alpha: 0.05),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 150,
+              left: -30,
+              child: Container(
+                width: 100,
+                height: 100,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.cyan.withValues(alpha: 0.08),
+                ),
+              ),
+            ),
+
+            // المحتوى الرئيسي
+            SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: verticalPadding,
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 400),
                       child: Form(
                         key: _formKey,
                         autovalidateMode: _autovalidateMode,
@@ -736,7 +775,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             Hero(
                               tag: 'shopping_icon',
                               child: Container(
-                                padding: const EdgeInsets.all(20),
+                                width: logoSize,
+                                height: logoSize,
                                 decoration: BoxDecoration(
                                   gradient: LinearGradient(
                                     colors: [
@@ -758,14 +798,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                     ),
                                   ],
                                 ),
-                                child: const Icon(
-                                  Icons.shopping_cart_rounded,
-                                  size: 40,
-                                  color: Colors.white,
+                                child: ClipOval(
+                                  child: Image.asset(
+                                    'assets/icons/icon.png',
+                                    fit: BoxFit.cover,
+                                    width: logoSize,
+                                    height: logoSize,
+                                  ),
                                 ),
                               ),
                             ),
-                            const SizedBox(height: 24),
+                            SizedBox(height: topGap),
 
                             // العنوان والوصف
                             Text(
@@ -773,35 +816,71 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               style: theme.textTheme.headlineMedium?.copyWith(
                                 color: const Color(0xFF1A237E),
                                 fontWeight: FontWeight.bold,
-                                fontSize: 26,
+                                fontSize: titleSize,
                               ),
                               textAlign: TextAlign.center,
                             ),
-                            const SizedBox(height: 12),
+                            SizedBox(height: titleGap),
                             Text(
                               "سجل للشراء وتتبع طلباتك بسهولة ✨",
                               style: theme.textTheme.bodyLarge?.copyWith(
                                 color: Colors.grey[600],
-                                fontSize: 16,
+                                fontSize: subtitleSize,
                                 height: 1.4,
                               ),
                               textAlign: TextAlign.center,
                             ),
-                            const SizedBox(height: 40),
+                            SizedBox(height: sectionGap),
 
-                            // حقول الإدخال المحسّنة
+                            // حقول الاسم (الأول + الثاني) في صف واحد
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildAnimatedTextField(
+                                    controller: _firstNameController,
+                                    label: "الاسم الأول 👤",
+                                    hintText: "أحمد",
+                                    icon: Icons.person_outline_rounded,
+                                    keyboardType: TextInputType.name,
+                                    textInputAction: TextInputAction.next,
+                                    focusNode: _firstNameFocus,
+                                    onFieldSubmitted: (_) =>
+                                        _middleNameFocus.requestFocus(),
+                                    validator: Validators.validateName,
+                                    delay: 100,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _buildAnimatedTextField(
+                                    controller: _middleNameController,
+                                    label: "الاسم الثاني 👤",
+                                    hintText: "سامي",
+                                    icon: Icons.person_outline_rounded,
+                                    keyboardType: TextInputType.name,
+                                    textInputAction: TextInputAction.next,
+                                    focusNode: _middleNameFocus,
+                                    onFieldSubmitted: (_) =>
+                                        _lastNameFocus.requestFocus(),
+                                    validator: Validators.validateName,
+                                    delay: 120,
+                                  ),
+                                ),
+                              ],
+                            ),
+
                             _buildAnimatedTextField(
-                              controller: _nameController,
-                              label: "الاسم الكامل 👤",
-                              hintText: "أحمد سامي عبدالهادي",
+                              controller: _lastNameController,
+                              label: "اسم العائلة 👤",
+                              hintText: "عبدالهادي",
                               icon: Icons.person_outline_rounded,
                               keyboardType: TextInputType.name,
                               textInputAction: TextInputAction.next,
-                              focusNode: _nameFocus,
+                              focusNode: _lastNameFocus,
                               onFieldSubmitted: (_) =>
                                   _emailFocus.requestFocus(),
                               validator: Validators.validateName,
-                              delay: 100,
+                              delay: 140,
                             ),
 
                             _buildAnimatedTextField(
@@ -882,27 +961,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               delay: 500,
                             ),
 
-                            const SizedBox(height: 24),
+                            SizedBox(height: isCompact ? 16 : 24),
 
                             // الموافقة على الشروط المحسّنة
                             _buildTermsCheckbox(theme),
 
-                            const SizedBox(height: 28),
+                            SizedBox(height: isCompact ? 20 : 28),
 
                             // زر التسجيل المحسّن
                             _buildRegisterButton(authProvider, theme),
 
-                            const SizedBox(height: 32),
+                            SizedBox(height: blockGap),
 
                             // فاصل "أو"
                             _buildOrDivider(theme),
 
-                            const SizedBox(height: 24),
+                            SizedBox(height: isCompact ? 16 : 24),
 
                             // أزرار التسجيل الاجتماعي المحسّنة
                             _buildSocialButtons(authProvider, theme),
 
-                            const SizedBox(height: 32),
+                            SizedBox(height: blockGap),
 
                             // رابط تسجيل الدخول المحسّن
                             _buildLoginLink(theme),
@@ -914,8 +993,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -983,6 +1062,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 decoration: InputDecoration(
                   labelText: label,
                   hintText: hintText,
+                  hintStyle: TextStyle(color: Colors.grey.shade400),
                   prefixText: prefixText,
                   prefixIcon: Container(
                     padding: const EdgeInsets.all(12),
@@ -1083,21 +1163,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     : () => _handleRegistration(authProvider),
                 child: Center(
                   child: authProvider.isLoading
-                      ? const Row(
+                      ? Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             SizedBox(
                               width: 20,
                               height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(
-                                  Colors.white,
-                                ),
+                              child: AppShimmer.wrap(
+                                context,
+                                child: AppShimmer.circle(context, size: 20),
                               ),
                             ),
-                            SizedBox(width: 12),
-                            Text(
+                            const SizedBox(width: 12),
+                            const Text(
                               "جاري إنشاء الحساب...",
                               style: TextStyle(
                                 color: Colors.white,
@@ -1332,6 +1410,380 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
         );
       },
+    );
+  }
+
+  // =====================================================
+  // Web / Desktop Two-Column Layout
+  // =====================================================
+
+  Widget _buildWebLayout(
+    BuildContext context,
+    SupabaseProvider authProvider,
+    ThemeData theme,
+  ) {
+    return Scaffold(
+      body: Row(
+        children: [
+          // ── الجانب الأيسر: لوحة العلامة التجارية ──
+          Expanded(flex: 4, child: _buildBrandingPanel(theme)),
+          // ── الجانب الأيمن: نموذج التسجيل ──
+          Expanded(
+            flex: 6,
+            child: Container(
+              color: Colors.white,
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 56,
+                    vertical: 40,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 520),
+                    child: Form(
+                      key: _formKey,
+                      autovalidateMode: _autovalidateMode,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // ── زر الرجوع ──
+                          Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.arrow_back_ios_new_rounded,
+                                  size: 18,
+                                  color: Color(0xFF1A237E),
+                                ),
+                                onPressed: () => Navigator.pop(context),
+                                tooltip: 'رجوع',
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '🛒 إنشاء حساب جديد',
+                            style: theme.textTheme.headlineMedium?.copyWith(
+                              color: const Color(0xFF1A237E),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 30,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'سجل للشراء وتتبع طلباتك بسهولة ✨',
+                            style: theme.textTheme.bodyLarge?.copyWith(
+                              color: Colors.grey[600],
+                              fontSize: 15,
+                            ),
+                          ),
+                          const SizedBox(height: 36),
+                          // الاسم الأول + الثاني في صف
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildAnimatedTextField(
+                                  controller: _firstNameController,
+                                  label: 'الاسم الأول 👤',
+                                  hintText: 'أحمد',
+                                  icon: Icons.person_outline_rounded,
+                                  keyboardType: TextInputType.name,
+                                  textInputAction: TextInputAction.next,
+                                  focusNode: _firstNameFocus,
+                                  onFieldSubmitted: (_) =>
+                                      _middleNameFocus.requestFocus(),
+                                  validator: Validators.validateName,
+                                  delay: 0,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildAnimatedTextField(
+                                  controller: _middleNameController,
+                                  label: 'الاسم الثاني 👤',
+                                  hintText: 'سامي',
+                                  icon: Icons.person_outline_rounded,
+                                  keyboardType: TextInputType.name,
+                                  textInputAction: TextInputAction.next,
+                                  focusNode: _middleNameFocus,
+                                  onFieldSubmitted: (_) =>
+                                      _lastNameFocus.requestFocus(),
+                                  validator: Validators.validateName,
+                                  delay: 0,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          // اسم العائلة كامل العرض
+                          _buildAnimatedTextField(
+                            controller: _lastNameController,
+                            label: 'اسم العائلة 👤',
+                            hintText: 'عبدالهادي',
+                            icon: Icons.person_outline_rounded,
+                            keyboardType: TextInputType.name,
+                            textInputAction: TextInputAction.next,
+                            focusNode: _lastNameFocus,
+                            onFieldSubmitted: (_) => _emailFocus.requestFocus(),
+                            validator: Validators.validateName,
+                            delay: 0,
+                          ),
+                          const SizedBox(height: 16),
+                          // البريد + الهاتف في صف
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildAnimatedTextField(
+                                  controller: _emailController,
+                                  label: 'البريد الإلكتروني 📧',
+                                  hintText: 'example@email.com',
+                                  icon: Icons.email_outlined,
+                                  keyboardType: TextInputType.emailAddress,
+                                  textInputAction: TextInputAction.next,
+                                  focusNode: _emailFocus,
+                                  onFieldSubmitted: (_) =>
+                                      _phoneFocus.requestFocus(),
+                                  validator: Validators.validateEmail,
+                                  delay: 0,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: _buildAnimatedTextField(
+                                  controller: _phoneController,
+                                  label: 'رقم الهاتف 📱',
+                                  hintText: '*********01',
+                                  icon: Icons.phone_outlined,
+                                  keyboardType: TextInputType.phone,
+                                  prefixText: '+20 🇪🇬 ',
+                                  textInputAction: TextInputAction.next,
+                                  focusNode: _phoneFocus,
+                                  onFieldSubmitted: (_) =>
+                                      _passwordFocus.requestFocus(),
+                                  validator: Validators.validatePhone,
+                                  delay: 0,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          // كلمة المرور كامل العرض
+                          _buildAnimatedTextField(
+                            controller: _passwordController,
+                            label: 'كلمة المرور 🔒',
+                            hintText: 'أدخل كلمة مرور قوية',
+                            icon: Icons.lock_outline_rounded,
+                            isPassword: true,
+                            textInputAction: TextInputAction.next,
+                            focusNode: _passwordFocus,
+                            onFieldSubmitted: (_) =>
+                                _confirmPasswordFocus.requestFocus(),
+                            validator: Validators.validatePassword,
+                            delay: 0,
+                          ),
+                          const SizedBox(height: 8),
+                          PasswordStrengthIndicator(password: _currentPassword),
+                          const SizedBox(height: 16),
+                          // تأكيد كلمة المرور
+                          _buildAnimatedTextField(
+                            controller: _confirmPasswordController,
+                            label: 'تأكيد كلمة المرور 🔒',
+                            hintText: 'أعد كتابة كلمة المرور',
+                            icon: Icons.lock_rounded,
+                            isPassword: true,
+                            textInputAction: TextInputAction.done,
+                            focusNode: _confirmPasswordFocus,
+                            onFieldSubmitted: (_) =>
+                                _handleRegistration(authProvider),
+                            validator: (value) =>
+                                Validators.validateConfirmPassword(
+                                  value,
+                                  _passwordController.text,
+                                ),
+                            delay: 0,
+                          ),
+                          const SizedBox(height: 24),
+                          _buildTermsCheckbox(theme),
+                          const SizedBox(height: 24),
+                          _buildRegisterButton(authProvider, theme),
+                          const SizedBox(height: 28),
+                          _buildOrDivider(theme),
+                          const SizedBox(height: 20),
+                          _buildSocialButtons(authProvider, theme),
+                          const SizedBox(height: 24),
+                          _buildLoginLink(theme),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBrandingPanel(ThemeData theme) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [theme.colorScheme.primary, const Color(0xFF1A237E)],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -80,
+            right: -80,
+            child: Container(
+              width: 220,
+              height: 220,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.07),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -100,
+            left: -60,
+            child: Container(
+              width: 280,
+              height: 280,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.05),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 220,
+            right: 40,
+            child: Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.1),
+              ),
+            ),
+          ),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(48),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 110,
+                      height: 110,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withValues(alpha: 0.15),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.4),
+                          width: 2.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 24,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: ClipOval(
+                        child: Image.asset(
+                          'assets/icons/icon.png',
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  const Center(
+                    child: Text(
+                      'التل ماركت',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 34,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Center(
+                    child: Text(
+                      'تسوّق بذكاء، ادفع بأمان',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.8),
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 52),
+                  _webFeatureRow(
+                    Icons.local_shipping_rounded,
+                    'توصيل سريع لباب بيتك',
+                  ),
+                  _webFeatureRow(
+                    Icons.local_offer_rounded,
+                    'أفضل الأسعار والعروض',
+                  ),
+                  _webFeatureRow(
+                    Icons.verified_user_rounded,
+                    'دفع آمن ومضمون 100%',
+                  ),
+                  _webFeatureRow(
+                    Icons.track_changes_rounded,
+                    'تتبع طلباتك لحظة بلحظة',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _webFeatureRow(IconData icon, String text) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
+          const SizedBox(width: 16),
+          Text(
+            text,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.9),
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

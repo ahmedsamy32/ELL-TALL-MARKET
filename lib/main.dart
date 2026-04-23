@@ -1,35 +1,64 @@
-import 'package:ell_tall_market/providers/locale_provider.dart';
+import 'dart:async';
 
+// Flutter Core
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'core/logger.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+
+// Firebase & Supabase
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:ell_tall_market/config/theme.dart';
-import 'package:ell_tall_market/config/supabase_config.dart';
-import 'package:ell_tall_market/config/env.dart';
-import 'package:ell_tall_market/providers/supabase_provider.dart'; // ✅ Supabase Provider
-import 'package:ell_tall_market/providers/cart_provider.dart';
-import 'package:ell_tall_market/providers/product_provider.dart';
-import 'package:ell_tall_market/providers/category_provider.dart';
-import 'package:ell_tall_market/providers/order_provider.dart';
-import 'package:ell_tall_market/providers/merchant_provider.dart';
-import 'package:ell_tall_market/providers/settings_provider.dart';
-import 'package:ell_tall_market/providers/notification_provider.dart';
-import 'package:ell_tall_market/providers/dynamic_ui_provider.dart';
-import 'package:ell_tall_market/providers/favorites_provider.dart';
-import 'package:ell_tall_market/providers/store_provider.dart';
-import 'package:ell_tall_market/providers/banner_provider.dart';
-import 'package:ell_tall_market/services/network_manager.dart'; // ✅ إضافة مدير الشبكة
-import 'package:ell_tall_market/utils/app_routes.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
-import 'generated/l10n.dart';
-import 'firebase_options.dart';
-import 'services/auth_deep_link_handler.dart';
-import 'config/production_config.dart';
 
-// ===== NavigationService =====
+// State Management
+import 'package:provider/provider.dart';
+
+// Configuration
+import 'config/env.dart';
+import 'config/theme.dart';
+import 'config/supabase_config.dart';
+import 'config/production_config.dart';
+import 'firebase_options.dart';
+
+// Core & Utils
+import 'core/logger.dart';
+import 'utils/app_routes.dart';
+
+// Services
+import 'services/network_manager.dart';
+import 'services/auth_deep_link_handler.dart';
+import 'services/notification_service.dart';
+
+// Providers
+import 'providers/locale_provider.dart';
+import 'providers/supabase_provider.dart';
+import 'providers/cart_provider.dart';
+import 'providers/product_provider.dart';
+import 'providers/category_provider.dart';
+import 'providers/order_provider.dart';
+import 'providers/merchant_provider.dart';
+import 'providers/app_settings_provider.dart';
+import 'providers/client_settings_provider.dart';
+import 'providers/notification_provider.dart';
+import 'providers/dynamic_ui_provider.dart';
+import 'providers/favorites_provider.dart';
+import 'providers/store_provider.dart';
+import 'providers/user_provider.dart';
+import 'providers/banner_provider.dart';
+import 'providers/location_provider.dart';
+
+// Widgets
+import 'widgets/app_shimmer.dart';
+import 'widgets/network_manager_widget.dart';
+
+// Localization
+import 'generated/l10n.dart';
+
+// -----------------------------------------------------------------------------
+// SERVICES & UTILITIES
+// -----------------------------------------------------------------------------
+
+/// Service providing global access to navigation state and common navigation methods.
 class NavigationService {
   static GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -63,96 +92,164 @@ class NavigationService {
   }
 }
 
-// Background message handler
+/// Handler for Firebase Messaging background messages.
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
   AppLogger.info('Handling a background message: ${message.messageId}');
 }
 
+// -----------------------------------------------------------------------------
+// MAIN ENTRY POINT
+// -----------------------------------------------------------------------------
+
 Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+  // Global Error Handling: Capture Flutter-specific errors
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    AppLogger.error(
+      '❌ Flutter Error: ${details.exception}',
+      details.exception,
+      details.stack,
+    );
+  };
 
-  // Load environment variables
-  await dotenv.load(fileName: ".env");
+  // Global Error Handling: Capture asynchronous platform errors
+  PlatformDispatcher.instance.onError = (error, stack) {
+    AppLogger.error('❌ Platform Error: $error', error, stack);
+    return true;
+  };
 
-  // Initialize Firebase with options
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  try {
+    WidgetsFlutterBinding.ensureInitialized();
 
-  // Set up Firebase Messaging
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    // 1. Initialization: Load Environments
+    await dotenv.load(fileName: ".env");
 
-  // Request notification permissions (iOS optimized)
-  final messaging = FirebaseMessaging.instance;
-  await messaging.requestPermission(
-    alert: true,
-    announcement: true,
-    badge: true,
-    carPlay: false,
-    criticalAlert: false,
-    provisional: false,
-    sound: true,
-  );
+    // 2. Initialization: Firebase Services
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
 
-  // Get FCM token
-  final token = await messaging.getToken();
-  AppLogger.info('FCM Token: $token');
+    if (!kIsWeb) {
+      // تسجيل background handler فقط هنا
+      // باقي الإعدادات (permission, token, listeners) تتم في NotificationServiceEnhanced.initialize()
+      FirebaseMessaging.onBackgroundMessage(
+        _firebaseMessagingBackgroundHandler,
+      );
+    } else {
+      AppLogger.info('Running on Web: Skipping FCM setup for now');
+    }
 
-  // Initialize Network Manager
-  NetworkManager().initialize();
-  AppLogger.info('✅ Network Manager initialized');
+    // 3. Initialization: App Services & Managers
+    NetworkManager().initialize();
+    AppLogger.info('✅ Network Manager initialized');
 
-  // Initialize Supabase according to official docs
-  await SupabaseConfig.initialize();
+    // Consolidated Supabase initialization
+    await SupabaseConfig.initialize();
 
-  // Initialize all app services
-  await initializeAppServices();
+    // Unified Service Initialization
+    await initializeAppServices();
 
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => LocaleProvider()),
-        ChangeNotifierProvider(
-          create: (_) => SupabaseProvider(),
-        ), // ✅ Supabase Provider
-        ChangeNotifierProxyProvider<SupabaseProvider, CartProvider>(
-          create: (context) => CartProvider(
-            Provider.of<SupabaseProvider>(
-                  context,
-                  listen: false,
-                ).currentUser?.id ??
-                '',
+    runApp(
+      MultiProvider(
+        providers: [
+          // Basic State Providers
+          ChangeNotifierProvider(create: (_) => LocaleProvider()),
+          ChangeNotifierProvider(create: (_) => SupabaseProvider()),
+
+          // Dependent Data Providers (ProxyProvider)
+          ChangeNotifierProxyProvider<SupabaseProvider, CartProvider>(
+            create: (context) => CartProvider(
+              Provider.of<SupabaseProvider>(
+                    context,
+                    listen: false,
+                  ).currentUser?.id ??
+                  '',
+            ),
+            update: (context, auth, previousCart) =>
+                CartProvider(auth.currentUser?.id ?? ''),
           ),
-          update: (context, auth, previousCart) =>
-              CartProvider(auth.currentUser?.id ?? ''),
+          ChangeNotifierProxyProvider<SupabaseProvider, FavoritesProvider>(
+            create: (_) => FavoritesProvider(),
+            update: (context, auth, previousFavorites) {
+              final favoritesProvider =
+                  previousFavorites ?? FavoritesProvider();
+              favoritesProvider.setAuthProvider(auth);
+              final currentUser = auth.currentUser;
+              if (auth.isLoggedIn && currentUser != null) {
+                favoritesProvider.loadUserFavorites(currentUser.id);
+              }
+              return favoritesProvider;
+            },
+          ),
+
+          // Core Feature Providers
+          ChangeNotifierProvider(create: (_) => UserProvider()),
+          ChangeNotifierProvider(create: (_) => ProductProvider()),
+          ChangeNotifierProvider(create: (_) => CategoryProvider()),
+          ChangeNotifierProvider(create: (_) => StoreProvider()),
+          ChangeNotifierProvider(create: (_) => LocationProvider()),
+          ChangeNotifierProvider(create: (_) => OrderProvider()),
+          ChangeNotifierProvider(create: (_) => MerchantProvider()),
+          ChangeNotifierProvider(create: (_) => AppSettingsProvider()),
+          ChangeNotifierProvider(create: (_) => ClientSettingsProvider()),
+          ChangeNotifierProvider(create: (_) => NotificationProvider()),
+          ChangeNotifierProvider(create: (_) => DynamicUIProvider()),
+          ChangeNotifierProvider(create: (_) => BannerProvider()),
+        ],
+        child: const MyApp(),
+      ),
+    );
+  } catch (e, stack) {
+    AppLogger.error('💥 Fatal initialization error: $e', e, stack);
+
+    // Final Fallback: Error Recovery Screen
+    runApp(
+      MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.red),
+        home: Scaffold(
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.error_outline, size: 80, color: Colors.red),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'حدث خطأ أثناء تشغيل التطبيق',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    e.toString(),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey[700]),
+                  ),
+                  const SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () => main(),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('إعادة المحاولة'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
-        ChangeNotifierProvider(create: (_) => ProductProvider()),
-        ChangeNotifierProvider(create: (_) => CategoryProvider()),
-        ChangeNotifierProvider(create: (_) => StoreProvider()),
-        ChangeNotifierProvider(create: (_) => OrderProvider()),
-        ChangeNotifierProvider(create: (_) => MerchantProvider()),
-        ChangeNotifierProvider(create: (_) => SettingsProvider()),
-        ChangeNotifierProvider(create: (_) => NotificationProvider()),
-        ChangeNotifierProvider(create: (_) => DynamicUIProvider()),
-        ChangeNotifierProvider(create: (_) => BannerProvider()),
-        ChangeNotifierProxyProvider<SupabaseProvider, FavoritesProvider>(
-          create: (_) => FavoritesProvider(),
-          update: (context, auth, previousFavorites) {
-            final favoritesProvider = previousFavorites ?? FavoritesProvider();
-            favoritesProvider.setAuthProvider(auth);
-            // تحميل المفضلة عند تسجيل الدخول
-            final currentUser = auth.currentUser;
-            if (auth.isLoggedIn && currentUser != null) {
-              favoritesProvider.loadUserFavorites(currentUser.id);
-            }
-            return favoritesProvider;
-          },
-        ),
-      ],
-      child: const MyApp(),
-    ),
-  );
+      ),
+    );
+  }
 }
+
+// -----------------------------------------------------------------------------
+// APP CORE WIDGET
+// -----------------------------------------------------------------------------
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -173,13 +270,11 @@ class MyApp extends StatelessWidget {
             GlobalCupertinoLocalizations.delegate,
           ],
           localeResolutionCallback: (locale, supportedLocales) {
-            // Check if the current device locale is supported
             for (var supportedLocale in supportedLocales) {
               if (supportedLocale.languageCode == locale?.languageCode) {
                 return supportedLocale;
               }
             }
-            // If the locale of the device is not supported, use the first one
             return supportedLocales.first;
           },
           initialRoute: AppRoutes.splash,
@@ -196,10 +291,13 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/// Initializes SupabaseProvider according to official documentation
+// -----------------------------------------------------------------------------
+// INITIALIZATION WIDGETS
+// -----------------------------------------------------------------------------
+
+/// Widget responsible for lazy initialization of Supabase after the app builds.
 class SupabaseInitializer extends StatefulWidget {
   final Widget child;
-
   const SupabaseInitializer({super.key, required this.child});
 
   @override
@@ -213,7 +311,6 @@ class _SupabaseInitializerState extends State<SupabaseInitializer> {
   @override
   void initState() {
     super.initState();
-    // Kick off Supabase setup after the first frame to avoid provider rebuilds during build.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _initializeSupabase();
@@ -228,25 +325,20 @@ class _SupabaseInitializerState extends State<SupabaseInitializer> {
         _errorMessage = null;
       });
 
-      // Initialize SupabaseProvider with short timeout
       final supabaseProvider = Provider.of<SupabaseProvider>(
         context,
         listen: false,
       );
 
       await supabaseProvider.initialize().timeout(
-        Duration(seconds: 3), // تقليل من 10 ثواني إلى 3
+        const Duration(seconds: 3),
         onTimeout: () {
-          AppLogger.warning(
-            '⚠️ Supabase initialization timeout - continuing anyway',
-          );
+          AppLogger.warning('⚠️ Supabase init timeout - continuing anyway');
         },
       );
 
       if (mounted) {
-        setState(() {
-          _isInitializing = false;
-        });
+        setState(() => _isInitializing = false);
       }
     } catch (e) {
       AppLogger.error('❌ Supabase initialization error: $e');
@@ -261,103 +353,90 @@ class _SupabaseInitializerState extends State<SupabaseInitializer> {
 
   @override
   Widget build(BuildContext context) {
-    // Show loading screen while initializing
     if (_isInitializing) {
-      return MaterialApp(
-        home: Scaffold(
-          body: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('جاري تهيئة التطبيق...'),
-              ],
-            ),
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AppShimmer.wrap(
+                context,
+                child: AppShimmer.circle(context, size: 44),
+              ),
+              const SizedBox(height: 16),
+              const Text('جاري تهيئة التطبيق...'),
+            ],
           ),
         ),
       );
     }
 
-    // Show error if initialization failed (but continue anyway)
     if (_errorMessage != null) {
-      // Log error but continue to app
-      AppLogger.warning(
-        '⚠️ Supabase init had errors but continuing: $_errorMessage',
-      );
+      AppLogger.warning('⚠️ Supabase init errors: $_errorMessage');
     }
 
-    // Return the normal app - continue even if there were errors
-    return widget.child;
+    return ConnectionStatusWidget(showBanner: true, child: widget.child);
   }
 }
 
-// Function to initialize app services (unified)
+// -----------------------------------------------------------------------------
+// SERVICE INITIALIZATION HELPERS
+// -----------------------------------------------------------------------------
+
+/// Unified application service initialization.
 Future<void> initializeAppServices() async {
   try {
-    // Initialize Auth Deep Link Handler for authentication links
     AuthDeepLinkHandler.initialize();
     if (ProductionConfig.shouldShowDebugLogs) {
       AppLogger.info('✅ Auth Deep Link Handler initialized');
     }
 
-    // Initialize Supabase with production-aware timeout
-    await SupabaseConfig.initialize();
-    if (ProductionConfig.shouldShowDebugLogs) {
-      AppLogger.info('✅ Supabase initialized successfully');
+    // Initialize notification service (FCM + local notifications)
+    if (!kIsWeb) {
+      final notifReady = await NotificationServiceEnhanced.instance
+          .initialize();
+      if (ProductionConfig.shouldShowDebugLogs) {
+        AppLogger.info(
+          notifReady
+              ? '✅ Notification service initialized'
+              : '⚠️ Notification service initialization failed',
+        );
+      }
     }
-
-    // تعطيل اختبار الاتصال المباشر لتجنب التوقف
-    // اختبار سريع في وضع التطوير - معطل مؤقتاً
-    // if (kDebugMode) {
-    //   try {
-    //     await SupabaseConfig.client.from('categories').select('id').limit(1);
-    //     debugPrint('✅ Supabase connection test successful');
-    //   } catch (e) {
-    //     debugPrint('❌ Supabase connection test failed: $e');
-    //   }
-    // }
-
-    // Test Supabase connection and run schema checks - معطل لتحسين الأداء
-    // if (ProductionConfig.shouldRunSchemaChecks) {
-    //   await _testSupabaseConnection();
-    //   await _runSchemaChecks();
-    // }
   } catch (e) {
     if (ProductionConfig.shouldShowDebugLogs) {
       AppLogger.error('❌ Service initialization failed: $e');
       AppLogger.info('📱 App will continue in offline mode');
     }
-
-    // Show user-friendly message in case of connection failure
     _showOfflineMode(e);
   }
 }
 
-// Show offline mode notification to user
+/// Utility for showing offline status to the user.
 void _showOfflineMode([dynamic error]) {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     final context = NavigationService.navigatorKey.currentContext;
-    if (context != null) {
-      String message = '📴 أنت غير متصل بالسيرفر – جاري العمل في وضع أوفلاين';
-
-      // Show error details only in debug mode
-      if (ProductionConfig.shouldShowErrorDetails && error != null) {
-        message += '\nالتفاصيل: ${error.toString().split('\n').first}';
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          backgroundColor: Colors.orange,
-          duration: const Duration(seconds: 4),
-          action: SnackBarAction(
-            label: 'إعادة المحاولة',
-            textColor: Colors.white,
-            onPressed: () => initializeAppServices(),
-          ),
-        ),
-      );
+    if (context == null || !context.mounted) {
+      AppLogger.warning('⚠️ Navigator context unavailable for offline notice');
+      return;
     }
+
+    String message = '📴 أنت غير متصل بالسيرفر – جاري العمل في وضع أوفلاين';
+    if (ProductionConfig.shouldShowErrorDetails && error != null) {
+      message += '\nالتفاصيل: ${error.toString().split('\n').first}';
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.orange,
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(
+          label: 'إعادة المحاولة',
+          textColor: Colors.white,
+          onPressed: () => initializeAppServices(),
+        ),
+      ),
+    );
   });
 }

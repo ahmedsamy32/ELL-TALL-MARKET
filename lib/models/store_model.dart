@@ -36,9 +36,14 @@ class StoreModel with BaseModelMixin {
   final String name; // TEXT NOT NULL
   final String? description; // TEXT
   final String? phone; // TEXT
-  final String address; // TEXT NOT NULL
-  final String? city; // TEXT - المدينة
-  final String? governorate; // TEXT - المحافظة
+  final String? governorate;
+  final String? city;
+  final String? area;
+  final String? street;
+  final String? landmark;
+
+  /// عنوان مركّب (للتوافق مع الشاشات/البحث). قد يكون مشتقًا من الحقول المفصلة.
+  final String address;
   final double? latitude; // DECIMAL(10, 8)
   final double? longitude; // DECIMAL(11, 8)
   final int deliveryTime; // INT DEFAULT 30
@@ -46,6 +51,7 @@ class StoreModel with BaseModelMixin {
   final double deliveryFee; // DECIMAL(10,2) DEFAULT 0
   final double minOrder; // DECIMAL(10,2) DEFAULT 0
   final String deliveryMode; // TEXT CHECK store/app
+  final double deliveryRadiusKm; // NUMERIC DEFAULT 7
   final double rating; // DECIMAL(2,1) DEFAULT 0.0
   final int reviewCount; // INT DEFAULT 0
   final String? category; // TEXT
@@ -64,9 +70,12 @@ class StoreModel with BaseModelMixin {
     required this.name,
     this.description,
     this.phone,
-    required this.address,
-    this.city,
     this.governorate,
+    this.city,
+    this.area,
+    this.street,
+    this.landmark,
+    required this.address,
     this.latitude,
     this.longitude,
     this.deliveryTime = 30,
@@ -74,6 +83,7 @@ class StoreModel with BaseModelMixin {
     this.deliveryFee = 0.0,
     this.minOrder = 0.0,
     this.deliveryMode = 'store',
+    this.deliveryRadiusKm = 7.0,
     this.rating = 0.0,
     this.reviewCount = 0,
     this.category,
@@ -86,15 +96,36 @@ class StoreModel with BaseModelMixin {
   });
 
   factory StoreModel.fromMap(Map<String, dynamic> map) {
+    final governorate = map['governorate'] as String?;
+    final city = map['city'] as String?;
+    final area = map['area'] as String?;
+    final street = map['street'] as String?;
+    final landmark = map['landmark'] as String?;
+
+    final parts = <String>[];
+    if ((governorate ?? '').trim().isNotEmpty) parts.add(governorate!.trim());
+    if ((city ?? '').trim().isNotEmpty) parts.add(city!.trim());
+    if ((area ?? '').trim().isNotEmpty) parts.add(area!.trim());
+    if ((street ?? '').trim().isNotEmpty) parts.add(street!.trim());
+    if ((landmark ?? '').trim().isNotEmpty) parts.add(landmark!.trim());
+
+    final derivedAddress = parts.join('، ');
+    final address = (map['address'] as String?)?.trim();
+
     return StoreModel(
       id: map['id'] as String,
       merchantId: map['merchant_id'] as String,
       name: map['name'] as String,
       description: map['description'] as String?,
       phone: map['phone'] as String?,
-      address: map['address'] as String,
-      city: map['city'] as String?,
-      governorate: map['governorate'] as String?,
+      governorate: governorate,
+      city: city,
+      area: area,
+      street: street,
+      landmark: landmark,
+      address: (address != null && address.isNotEmpty)
+          ? address
+          : derivedAddress,
       latitude: map['latitude'] != null
           ? double.parse(map['latitude'].toString())
           : null,
@@ -115,6 +146,9 @@ class StoreModel with BaseModelMixin {
           ? double.parse(map['min_order'].toString())
           : 0.0,
       deliveryMode: map['delivery_mode'] as String? ?? 'store',
+      deliveryRadiusKm: map['delivery_radius_km'] != null
+          ? double.parse(map['delivery_radius_km'].toString())
+          : 7.0,
       rating: map['rating'] != null
           ? double.parse(map['rating'].toString())
           : 0.0,
@@ -153,9 +187,12 @@ class StoreModel with BaseModelMixin {
       'name': name,
       'description': description,
       'phone': phone,
-      'address': address,
-      'city': city,
       'governorate': governorate,
+      'city': city,
+      'area': area,
+      'street': street,
+      'landmark': landmark,
+      'address': address,
       'latitude': latitude,
       'longitude': longitude,
       'is_active': isActive,
@@ -165,6 +202,7 @@ class StoreModel with BaseModelMixin {
       'delivery_fee': deliveryFee,
       'min_order': minOrder,
       'delivery_mode': deliveryMode,
+      'delivery_radius_km': deliveryRadiusKm,
       'rating': rating,
       'review_count': reviewCount,
       'category': category,
@@ -182,9 +220,12 @@ class StoreModel with BaseModelMixin {
       'name': name,
       'description': description,
       'phone': phone,
-      'address': address,
-      'city': city,
       'governorate': governorate,
+      'city': city,
+      'area': area,
+      'street': street,
+      'landmark': landmark,
+      'address': address,
       'latitude': latitude,
       'longitude': longitude,
       'delivery_time': deliveryTime,
@@ -192,6 +233,7 @@ class StoreModel with BaseModelMixin {
       'delivery_fee': deliveryFee,
       'min_order': minOrder,
       'delivery_mode': deliveryMode,
+      'delivery_radius_km': deliveryRadiusKm,
       'rating': rating,
       'review_count': reviewCount,
       'category': category,
@@ -208,9 +250,12 @@ class StoreModel with BaseModelMixin {
     String? name,
     String? description,
     String? phone,
-    String? address,
-    String? city,
     String? governorate,
+    String? city,
+    String? area,
+    String? street,
+    String? landmark,
+    String? address,
     double? latitude,
     double? longitude,
     int? deliveryTime,
@@ -219,6 +264,7 @@ class StoreModel with BaseModelMixin {
     double? minOrder,
     double? rating,
     String? deliveryMode,
+    double? deliveryRadiusKm,
     int? reviewCount,
     String? category,
     Map<String, dynamic>? openingHours,
@@ -234,9 +280,12 @@ class StoreModel with BaseModelMixin {
       name: name ?? this.name,
       description: description ?? this.description,
       phone: phone ?? this.phone,
-      address: address ?? this.address,
-      city: city ?? this.city,
       governorate: governorate ?? this.governorate,
+      city: city ?? this.city,
+      area: area ?? this.area,
+      street: street ?? this.street,
+      landmark: landmark ?? this.landmark,
+      address: address ?? this.address,
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       deliveryTime: deliveryTime ?? this.deliveryTime,
@@ -244,6 +293,7 @@ class StoreModel with BaseModelMixin {
       deliveryFee: deliveryFee ?? this.deliveryFee,
       minOrder: minOrder ?? this.minOrder,
       deliveryMode: deliveryMode ?? this.deliveryMode,
+      deliveryRadiusKm: deliveryRadiusKm ?? this.deliveryRadiusKm,
       rating: rating ?? this.rating,
       reviewCount: reviewCount ?? this.reviewCount,
       category: category ?? this.category,
@@ -277,8 +327,8 @@ class StoreModel with BaseModelMixin {
 
   String get deliveryTimeFormatted => '$deliveryTime دقيقة';
   String get deliveryFeeFormatted =>
-      deliveryFee == 0 ? 'مجاناً' : '${deliveryFee.toStringAsFixed(2)} ر.س';
-  String get minOrderFormatted => '${minOrder.toStringAsFixed(2)} ر.س';
+      deliveryFee == 0 ? 'مجاناً' : '${deliveryFee.toStringAsFixed(2)} ج.م';
+  String get minOrderFormatted => '${minOrder.toStringAsFixed(2)} ج.م';
   String get ratingFormatted => rating.toStringAsFixed(1);
 
   bool get hasFreeDelivery => deliveryFee == 0;

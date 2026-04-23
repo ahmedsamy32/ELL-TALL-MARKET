@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:ell_tall_market/utils/app_routes.dart';
 
 class BannerWidget extends StatelessWidget {
   final String imageUrl;
@@ -151,6 +152,63 @@ class _BannerCarouselState extends State<BannerCarousel> {
     });
   }
 
+  /// Handle banner tap navigation based on target type
+  void _handleBannerTap(BuildContext context, Map<String, dynamic> banner) {
+    final targetType = banner['targetType'] as String?;
+    final targetId = banner['targetId'] as String?;
+    final actionUrl = banner['actionUrl'] as String?;
+
+    // If custom action URL is provided, prioritize it
+    if (actionUrl != null && actionUrl.isNotEmpty) {
+      // You can add custom URL handling here (e.g., launch URL)
+      debugPrint('Custom action URL: $actionUrl');
+      return;
+    }
+
+    // Navigate based on target type
+    if (targetType != null && targetId != null) {
+      switch (targetType.toLowerCase()) {
+        case 'product':
+          Navigator.pushNamed(
+            context,
+            AppRoutes.productDetail,
+            arguments: {'productId': targetId},
+          );
+          break;
+
+        case 'store':
+          Navigator.pushNamed(
+            context,
+            AppRoutes.storeDetail,
+            arguments: {'storeId': targetId},
+          );
+          break;
+
+        case 'category':
+          Navigator.pushNamed(
+            context,
+            AppRoutes.category,
+            arguments: {'categoryId': targetId},
+          );
+          break;
+
+        case 'promotion':
+          // Handle promotion - could show a dialog or navigate to a special screen
+          debugPrint('Promotion banner tapped: $targetId');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(banner['title'] ?? 'عرض خاص'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          break;
+
+        default:
+          debugPrint('Unknown banner target type: $targetType');
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -173,12 +231,7 @@ class _BannerCarouselState extends State<BannerCarousel> {
                   imageUrl: banner['imageUrl'],
                   title: banner['title'],
                   subtitle: banner['subtitle'],
-                  onTap: () {
-                    // Handle banner tap
-                    if (banner['action'] != null) {
-                      // Navigate or perform action
-                    }
-                  },
+                  onTap: () => _handleBannerTap(context, banner),
                 ),
               );
             },

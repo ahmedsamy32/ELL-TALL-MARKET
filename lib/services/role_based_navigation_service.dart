@@ -664,6 +664,7 @@ class RoleBasedNavigationServiceEnhanced {
   UserRole _mapUserTypeToRole(String userType) {
     switch (userType.toLowerCase()) {
       case 'admin':
+      case 'delivery_company_admin':
         return UserRole.admin;
       case 'captain':
         return UserRole.captain;

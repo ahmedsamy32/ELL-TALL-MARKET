@@ -34,21 +34,22 @@ class CategoryService {
         throw Exception('فئة بنفس الاسم موجودة مسبقاً');
       }
 
-      final categoryData = {
+      // ملاحظة مهمة:
+      // جدول categories الفعلي يحتوي حقولاً محددة (name, description, icon,
+      // image_url, display_order, is_active ...). إرسال حقول غير موجودة يسبب
+      // PostgrestException أثناء الإضافة.
+      final categoryData = <String, dynamic>{
         'name': name,
         'description': description,
         'image_url': imageUrl,
-        'order': order,
+        'display_order': order,
         'is_active': isActive,
-        'is_featured': isFeatured,
-        'icon_name': iconName,
-        'color_code': colorCode,
-        'parent_id': parentId,
-        'metadata': metadata ?? {},
-        'product_count': 0,
-        'created_at': DateTime.now().toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
       };
+
+      // بعض البيئات تحتوي عمود icon بدل icon_name.
+      if (iconName != null && iconName.trim().isNotEmpty) {
+        categoryData['icon'] = iconName.trim();
+      }
 
       final response = await _supabase
           .from('categories')
@@ -267,9 +268,7 @@ class CategoryService {
     Map<String, dynamic>? metadata,
   }) async {
     try {
-      final data = <String, dynamic>{
-        'updated_at': DateTime.now().toIso8601String(),
-      };
+      final data = <String, dynamic>{};
 
       if (name != null) {
         // التحقق من عدم تكرار الاسم
@@ -282,13 +281,11 @@ class CategoryService {
 
       if (description != null) data['description'] = description;
       if (imageUrl != null) data['image_url'] = imageUrl;
-      if (order != null) data['order'] = order;
+      if (order != null) data['display_order'] = order;
       if (isActive != null) data['is_active'] = isActive;
-      if (isFeatured != null) data['is_featured'] = isFeatured;
-      if (iconName != null) data['icon_name'] = iconName;
-      if (colorCode != null) data['color_code'] = colorCode;
-      if (parentId != null) data['parent_id'] = parentId;
-      if (metadata != null) data['metadata'] = metadata;
+      if (iconName != null) data['icon'] = iconName;
+      // الحقول التالية غير موجودة في جدول categories - تم تجاهلها
+      // isFeatured, colorCode, parentId, metadata
 
       final response = await _supabase
           .from('categories')
@@ -589,14 +586,18 @@ class CategoryService {
       final filePath =
           'categories/$categoryId/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
 
-      // رفع الصورة
+      // رفع الصورة (upsert لتجنب خطأ التكرار)
       await _supabase.storage
-          .from('category-images')
-          .uploadBinary(filePath, imageBytes);
+          .from('categories')
+          .uploadBinary(
+            filePath,
+            imageBytes,
+            fileOptions: const FileOptions(upsert: true),
+          );
 
       // الحصول على الرابط العام
       final imageUrl = _supabase.storage
-          .from('category-images')
+          .from('categories')
           .getPublicUrl(filePath);
 
       // تحديث الفئة بالصورة الجديدة
@@ -622,13 +623,13 @@ class CategoryService {
       // استخراج مسار الملف من الرابط
       final uri = Uri.parse(category.imageUrl!);
       final pathSegments = uri.pathSegments;
-      final bucketIndex = pathSegments.indexOf('category-images');
+      final bucketIndex = pathSegments.indexOf('categories');
 
       if (bucketIndex != -1 && bucketIndex < pathSegments.length - 1) {
         final filePath = pathSegments.sublist(bucketIndex + 1).join('/');
 
         // حذف الصورة من التخزين
-        await _supabase.storage.from('category-images').remove([filePath]);
+        await _supabase.storage.from('categories').remove([filePath]);
       }
 
       // إزالة رابط الصورة من الفئة

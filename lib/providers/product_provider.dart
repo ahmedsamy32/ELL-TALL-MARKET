@@ -191,17 +191,32 @@ class ProductProvider with ChangeNotifier {
   }
 
   /// جلب جميع المنتجات
-  Future<void> fetchProducts() async {
+  Future<void> fetchProducts({List<String>? allowedStoreIds}) async {
     _setLoading(true);
     _setError(null);
 
     try {
-      final response = await _supabase
+      _products = [];
+      _filteredProducts = [];
+      _featuredProducts = [];
+      notifyListeners();
+
+      if (allowedStoreIds != null && allowedStoreIds.isEmpty) {
+        AppLogger.info('📦 تم تطبيق نطاق متاجر فارغ - لا توجد منتجات للعرض');
+        return;
+      }
+
+      var query = _supabase
           .from('products')
           .select()
           .eq('is_active', true)
-          .eq('in_stock', true)
-          .order('created_at', ascending: false);
+          .eq('in_stock', true);
+
+      if (allowedStoreIds != null) {
+        query = query.inFilter('store_id', allowedStoreIds);
+      }
+
+      final response = await query.order('created_at', ascending: false);
 
       _products = (response as List)
           .map((data) => ProductModel.fromMap(data))
@@ -222,6 +237,10 @@ class ProductProvider with ChangeNotifier {
     _setError(null);
 
     try {
+      _products = [];
+      _filteredProducts = [];
+      notifyListeners();
+
       final response = await _supabase
           .from('products')
           .select()
@@ -280,13 +299,26 @@ class ProductProvider with ChangeNotifier {
   }
 
   /// جلب المنتجات المميزة
-  Future<void> fetchFeaturedProducts() async {
+  Future<void> fetchFeaturedProducts({List<String>? allowedStoreIds}) async {
     try {
-      final response = await _supabase
+      if (allowedStoreIds != null && allowedStoreIds.isEmpty) {
+        _featuredProducts = [];
+        notifyListeners();
+        AppLogger.info('⭐ تم تطبيق نطاق متاجر فارغ - لا توجد منتجات مميزة');
+        return;
+      }
+
+      var query = _supabase
           .from('products')
           .select()
           .eq('is_active', true)
-          .eq('in_stock', true)
+          .eq('in_stock', true);
+
+      if (allowedStoreIds != null) {
+        query = query.inFilter('store_id', allowedStoreIds);
+      }
+
+      final response = await query
           .order('created_at', ascending: false)
           .limit(10);
 
@@ -303,7 +335,10 @@ class ProductProvider with ChangeNotifier {
   }
 
   /// البحث في المنتجات
-  Future<void> searchProducts(String query) async {
+  Future<void> searchProducts(
+    String query, {
+    List<String>? allowedStoreIds,
+  }) async {
     if (query.trim().isEmpty) {
       _filteredProducts = [];
       notifyListeners();
@@ -315,12 +350,23 @@ class ProductProvider with ChangeNotifier {
 
     try {
       // البحث في اسم المنتج أو الوصف
-      final response = await _supabase
+      if (allowedStoreIds != null && allowedStoreIds.isEmpty) {
+        _filteredProducts = [];
+        AppLogger.info('🔍 نطاق متاجر فارغ - نتائج البحث 0');
+        return;
+      }
+
+      var dbQuery = _supabase
           .from('products')
           .select()
           .eq('is_active', true)
-          .or('name.ilike.%$query%,description.ilike.%$query%')
-          .order('name');
+          .or('name.ilike.%$query%,description.ilike.%$query%');
+
+      if (allowedStoreIds != null) {
+        dbQuery = dbQuery.inFilter('store_id', allowedStoreIds);
+      }
+
+      final response = await dbQuery.order('name');
 
       _filteredProducts = (response as List)
           .map((data) => ProductModel.fromMap(data))
@@ -339,16 +385,33 @@ class ProductProvider with ChangeNotifier {
   }
 
   /// فلترة المنتجات حسب الفئة
-  Future<void> filterByCategory(String categoryId) async {
+  Future<void> filterByCategory(
+    String categoryId, {
+    List<String>? allowedStoreIds,
+  }) async {
     _setLoading(true);
 
     try {
-      final response = await _supabase
+      _filteredProducts = [];
+      notifyListeners();
+
+      if (allowedStoreIds != null && allowedStoreIds.isEmpty) {
+        _filteredProducts = [];
+        AppLogger.info('📂 نطاق متاجر فارغ - منتجات الفئة 0');
+        return;
+      }
+
+      var query = _supabase
           .from('products')
           .select()
           .eq('is_active', true)
-          .eq('category_id', categoryId)
-          .order('created_at', ascending: false);
+          .eq('category_id', categoryId);
+
+      if (allowedStoreIds != null) {
+        query = query.inFilter('store_id', allowedStoreIds);
+      }
+
+      final response = await query.order('created_at', ascending: false);
 
       _filteredProducts = (response as List)
           .map((data) => ProductModel.fromMap(data))
@@ -370,6 +433,9 @@ class ProductProvider with ChangeNotifier {
     _setLoading(true);
 
     try {
+      _filteredProducts = [];
+      notifyListeners();
+
       final response = await _supabase
           .from('products')
           .select()
@@ -397,6 +463,9 @@ class ProductProvider with ChangeNotifier {
     _setLoading(true);
 
     try {
+      _filteredProducts = [];
+      notifyListeners();
+
       final response = await _supabase
           .from('products')
           .select()
@@ -557,8 +626,8 @@ class ProductProvider with ChangeNotifier {
   }
 
   /// إعادة تحميل البيانات
-  Future<void> refresh() async {
-    await fetchProducts();
-    await fetchFeaturedProducts();
+  Future<void> refresh({List<String>? allowedStoreIds}) async {
+    await fetchProducts(allowedStoreIds: allowedStoreIds);
+    await fetchFeaturedProducts(allowedStoreIds: allowedStoreIds);
   }
 }

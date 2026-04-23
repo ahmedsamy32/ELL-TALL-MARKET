@@ -34,8 +34,16 @@ class OrderModel with BaseModelMixin {
   final String clientId; // UUID REFERENCES clients(id) ON DELETE CASCADE
   final String storeId; // UUID REFERENCES stores(id) ON DELETE CASCADE
   final String? captainId; // UUID REFERENCES captains(id)
+  final String? orderGroupId; // UUID لربط الطلبات متعددة المتاجر
   final String? storeName; // اسم المتجر (من join)
+  final String? storeAddress; // عنوان المتجر (من join)
+  final String? storePhone; // رقم هاتف المتجر (من join)
+  final double? storeLatitude; // خط عرض المتجر (من join)
+  final double? storeLongitude; // خط طول المتجر (من join)
+  final String? clientName; // اسم العميل (من join)
+  final String? clientPhone; // رقم هاتف العميل (من join)
   final List<String> productNames; // أسماء المنتجات (من order_items)
+  final List<OrderItemModel> items; // العناصر المضمنة (اختياري)
 
   // معلومات الطلب
   final String? orderNumber; // TEXT UNIQUE
@@ -73,8 +81,16 @@ class OrderModel with BaseModelMixin {
     required this.clientId,
     required this.storeId,
     this.captainId,
+    this.orderGroupId,
     this.storeName,
+    this.storeAddress,
+    this.storePhone,
+    this.storeLatitude,
+    this.storeLongitude,
+    this.clientName,
+    this.clientPhone,
     this.productNames = const [],
+    this.items = const [],
     this.orderNumber,
     required this.totalAmount,
     required this.deliveryFee,
@@ -96,22 +112,67 @@ class OrderModel with BaseModelMixin {
   });
 
   factory OrderModel.fromMap(Map<String, dynamic> map) {
-    final productNamesFromItems =
-        (map['order_items'] as List?)
-            ?.map((item) => (item as Map<String, dynamic>?)?['product_name'])
-            .whereType<String>()
+    // دالة مساعدة لاستخراج البيانات من joined records (سواء كانت Map أو List)
+    dynamic getJoinedData(String key) {
+      final raw = map[key];
+      if (raw == null) return null;
+      if (raw is List) {
+        return raw.isNotEmpty ? raw[0] : null;
+      }
+      return raw;
+    }
+
+    final orderItemsRaw = map['order_items'] as List?;
+    final items =
+        orderItemsRaw
+            ?.map(
+              (item) => item is Map<String, dynamic>
+                  ? OrderItemModel.fromMap(item)
+                  : null,
+            )
+            .whereType<OrderItemModel>()
             .toList() ??
-        const [];
+        const <OrderItemModel>[];
+
+    final productNamesFromItems = items.isNotEmpty
+        ? items.map((e) => e.productName).toList()
+        : (orderItemsRaw
+                  ?.map(
+                    (item) =>
+                        (item as Map<String, dynamic>?)?['product_name']
+                            as String?,
+                  )
+                  .whereType<String>()
+                  .toList() ??
+              const []);
+
+    final storeData = getJoinedData('store');
+    final clientData = getJoinedData('client');
+    final profilesData = getJoinedData('profiles');
 
     return OrderModel(
       id: map['id'] as String,
       clientId: map['client_id'] as String,
       storeId: map['store_id'] as String,
       captainId: map['captain_id'] as String?,
-      storeName: map['store'] != null
-          ? (map['store'] as Map<String, dynamic>)['name'] as String?
-          : null,
+      orderGroupId: map['order_group_id'] as String?,
+      storeName: storeData?['name'] as String?,
+      storeAddress: storeData?['address'] as String?,
+      storePhone: storeData?['phone'] as String?,
+      storeLatitude: (storeData?['latitude'] as num?)?.toDouble(),
+      storeLongitude: (storeData?['longitude'] as num?)?.toDouble(),
+      clientName:
+          clientData?['full_name'] as String? ??
+          profilesData?['full_name'] as String? ??
+          map['client_name'] as String? ??
+          map['full_name'] as String?,
+      clientPhone:
+          clientData?['phone'] as String? ??
+          profilesData?['phone'] as String? ??
+          map['client_phone'] as String? ??
+          map['phone'] as String?,
       productNames: productNamesFromItems,
+      items: items,
       orderNumber: map['order_number'] as String?,
       totalAmount: (map['total_amount'] as num).toDouble(),
       deliveryFee: (map['delivery_fee'] as num?)?.toDouble() ?? 0.0,
@@ -153,7 +214,10 @@ class OrderModel with BaseModelMixin {
       'client_id': clientId,
       'store_id': storeId,
       'captain_id': captainId,
+      'order_group_id': orderGroupId,
       'order_number': orderNumber,
+      'client_name': clientName,
+      'client_phone': clientPhone,
       'total_amount': totalAmount,
       'delivery_fee': deliveryFee,
       'tax_amount': taxAmount,
@@ -178,6 +242,7 @@ class OrderModel with BaseModelMixin {
       'client_id': clientId,
       'store_id': storeId,
       'captain_id': captainId,
+      'order_group_id': orderGroupId,
       'total_amount': totalAmount,
       'delivery_fee': deliveryFee,
       'tax_amount': taxAmount,
@@ -195,8 +260,15 @@ class OrderModel with BaseModelMixin {
     String? clientId,
     String? storeId,
     String? captainId,
+    String? orderGroupId,
+    String? storeName,
+    String? storeAddress,
+    String? storePhone,
     String? orderNumber,
+    String? clientName,
+    String? clientPhone,
     List<String>? productNames,
+    List<OrderItemModel>? items,
     double? totalAmount,
     double? deliveryFee,
     double? taxAmount,
@@ -219,8 +291,15 @@ class OrderModel with BaseModelMixin {
       clientId: clientId ?? this.clientId,
       storeId: storeId ?? this.storeId,
       captainId: captainId ?? this.captainId,
+      orderGroupId: orderGroupId ?? this.orderGroupId,
+      storeName: storeName ?? this.storeName,
+      storeAddress: storeAddress ?? this.storeAddress,
+      storePhone: storePhone ?? this.storePhone,
       orderNumber: orderNumber ?? this.orderNumber,
+      clientName: clientName ?? this.clientName,
+      clientPhone: clientPhone ?? this.clientPhone,
       productNames: productNames ?? this.productNames,
+      items: items ?? this.items,
       totalAmount: totalAmount ?? this.totalAmount,
       deliveryFee: deliveryFee ?? this.deliveryFee,
       taxAmount: taxAmount ?? this.taxAmount,
@@ -287,12 +366,16 @@ class OrderItemModel with BaseModelMixin {
   @override
   final String id; // UUID PRIMARY KEY DEFAULT gen_random_uuid()
   final String orderId; // UUID REFERENCES orders(id) ON DELETE CASCADE
+  final String? orderNumber; // 🏷️ يحمل رقم الطلب الموحد للتتبع
   final String? productId; // UUID REFERENCES products(id)
   final String productName; // TEXT NOT NULL
   final double productPrice; // DECIMAL(10,2) NOT NULL
   final int quantity; // INT NOT NULL CHECK (quantity > 0)
   final double totalPrice; // DECIMAL(10,2) NOT NULL
   final String? specialInstructions; // TEXT
+  final Map<String, dynamic>? selectedOptions; // JSONB
+  final String? productImage; // From joined products table
+
   @override
   final DateTime createdAt;
   @override
@@ -301,12 +384,15 @@ class OrderItemModel with BaseModelMixin {
   const OrderItemModel({
     required this.id,
     required this.orderId,
+    this.orderNumber,
     this.productId,
     required this.productName,
     required this.productPrice,
     required this.quantity,
     required this.totalPrice,
     this.specialInstructions,
+    this.selectedOptions,
+    this.productImage,
     required this.createdAt,
     this.updatedAt,
   });
@@ -315,12 +401,19 @@ class OrderItemModel with BaseModelMixin {
     return OrderItemModel(
       id: map['id'] as String,
       orderId: map['order_id'] as String,
+      orderNumber: map['order_number'] as String?,
       productId: map['product_id'] as String?,
       productName: map['product_name'] as String,
       productPrice: (map['product_price'] as num).toDouble(),
       quantity: map['quantity'] as int,
       totalPrice: (map['total_price'] as num).toDouble(),
       specialInstructions: map['special_instructions'] as String?,
+      selectedOptions: map['selected_options'] != null
+          ? Map<String, dynamic>.from(map['selected_options'])
+          : null,
+      productImage: map['products'] != null
+          ? (map['products'] as Map<String, dynamic>)['image_url'] as String?
+          : null,
       createdAt: BaseModelMixin.parseDateTime(map['created_at']),
       updatedAt: map['updated_at'] != null
           ? BaseModelMixin.parseDateTime(map['updated_at'])
@@ -338,6 +431,7 @@ class OrderItemModel with BaseModelMixin {
       'quantity': quantity,
       'total_price': totalPrice,
       'special_instructions': specialInstructions,
+      'selected_options': selectedOptions,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
     };
@@ -346,36 +440,42 @@ class OrderItemModel with BaseModelMixin {
   Map<String, dynamic> toInsertMap() {
     return {
       'order_id': orderId,
+      'order_number': orderNumber,
       'product_id': productId,
       'product_name': productName,
       'product_price': productPrice,
       'quantity': quantity,
       'total_price': totalPrice,
       'special_instructions': specialInstructions,
+      'selected_options': selectedOptions,
     };
   }
 
   OrderItemModel copyWith({
     String? id,
     String? orderId,
+    String? orderNumber,
     String? productId,
     String? productName,
     double? productPrice,
     int? quantity,
     double? totalPrice,
     String? specialInstructions,
+    Map<String, dynamic>? selectedOptions,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
     return OrderItemModel(
       id: id ?? this.id,
       orderId: orderId ?? this.orderId,
+      orderNumber: orderNumber ?? this.orderNumber,
       productId: productId ?? this.productId,
       productName: productName ?? this.productName,
       productPrice: productPrice ?? this.productPrice,
       quantity: quantity ?? this.quantity,
       totalPrice: totalPrice ?? this.totalPrice,
       specialInstructions: specialInstructions ?? this.specialInstructions,
+      selectedOptions: selectedOptions ?? this.selectedOptions,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -565,7 +665,7 @@ class OrderService {
     try {
       final response = await _client
           .from(OrderItemModel.tableName)
-          .select()
+          .select('*, products(image_url)')
           .eq('order_id', orderId);
 
       return response
@@ -573,6 +673,26 @@ class OrderService {
           .toList();
     } catch (e) {
       AppLogger.error('Error getting order items', e);
+      return [];
+    }
+  }
+
+  /// الحصول على طلبات مجموعة واحدة
+  static Future<List<OrderModel>> getOrdersByGroupId(
+    String orderGroupId,
+  ) async {
+    try {
+      final response = await _client
+          .from(OrderModel.tableName)
+          .select('*, store:stores(name)')
+          .eq('order_group_id', orderGroupId)
+          .order('created_at', ascending: true);
+
+      return response
+          .map<OrderModel>((order) => OrderModel.fromMap(order))
+          .toList();
+    } catch (e) {
+      AppLogger.error('Error getting orders by group id', e);
       return [];
     }
   }

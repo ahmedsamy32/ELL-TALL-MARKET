@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/delivery_model.dart';
+import '../services/captain_service.dart';
 import '../core/logger.dart';
 
 /// خدمة التوصيلات المحسنة
@@ -82,16 +83,16 @@ class DeliveryService {
     required double lat,
     required double lng,
     double radiusKm = 5.0,
-    bool availableOnly = true,
+    int limit = 10,
   }) async {
     try {
       final response = await _supabase.rpc(
         'get_nearby_captains',
         params: {
-          'lat': lat,
-          'lng': lng,
-          'radius_km': radiusKm,
-          'available_only': availableOnly,
+          'p_lat': lat,
+          'p_lng': lng,
+          'p_radius_km': radiusKm,
+          'p_limit': limit,
         },
       );
       return List<Map<String, dynamic>>.from(response ?? []);
@@ -112,7 +113,6 @@ class DeliveryService {
         lat: lat,
         lng: lng,
         radiusKm: radiusKm,
-        availableOnly: true,
       );
 
       if (captains.isNotEmpty) {
@@ -202,12 +202,13 @@ class DeliveryService {
       final deliveryData = {
         'order_id': orderId,
         'captain_id': captainId,
-        'pickup_location': {'lat': pickupLat, 'lng': pickupLng},
-        'delivery_location': {'lat': deliveryLat, 'lng': deliveryLng},
+        'pickup_latitude': pickupLat,
+        'pickup_longitude': pickupLng,
+        'delivery_latitude': deliveryLat,
+        'delivery_longitude': deliveryLng,
         'status': 'pending',
         'notes': notes,
         'scheduled_at': scheduledTime?.toIso8601String(),
-        'created_at': DateTime.now().toIso8601String(),
       };
 
       final response = await _supabase
@@ -227,7 +228,7 @@ class DeliveryService {
     }
   }
 
-  // ===== تحديث حالة التوصيل =====
+  // ===== تحديث حالة التوصيل باستخدام RPC =====
   static Future<bool> updateDeliveryStatus({
     required String deliveryId,
     required String status,
@@ -235,31 +236,15 @@ class DeliveryService {
     Map<String, dynamic>? location,
   }) async {
     try {
-      final updateData = <String, dynamic>{
-        'status': status,
-        'updated_at': DateTime.now().toIso8601String(),
-      };
-
-      if (notes != null) updateData['notes'] = notes;
-      if (location != null) updateData['current_location'] = location;
-
-      // إضافة أوقات محددة حسب الحالة
-      switch (status) {
-        case 'picked_up':
-          updateData['picked_up_at'] = DateTime.now().toIso8601String();
-          break;
-        case 'delivered':
-          updateData['delivered_at'] = DateTime.now().toIso8601String();
-          break;
-        case 'cancelled':
-          updateData['cancelled_at'] = DateTime.now().toIso8601String();
-          break;
-      }
-
-      await _supabase
-          .from('deliveries')
-          .update(updateData)
-          .eq('id', deliveryId);
+      // استخدام RPC للتحديث الذري
+      await _supabase.rpc(
+        'update_delivery_status',
+        params: {
+          'p_delivery_id': deliveryId,
+          'p_new_status': status,
+          'p_notes': notes,
+        },
+      );
 
       return true;
     } catch (e) {
@@ -277,16 +262,17 @@ class DeliveryService {
             *,
             orders (
               id,
-              order_number,
-              customer_name,
-              customer_phone
+              order_number
             ),
             captains (
               id,
-              name,
-              phone,
               vehicle_type,
-              license_plate
+              vehicle_number,
+              rating,
+              profiles (
+                full_name,
+                phone
+              )
             )
           ''')
           .eq('id', deliveryId)
@@ -407,25 +393,23 @@ class DeliveryService {
   }
 
   // ===== تحديث موقع الكابتن =====
+  /// @deprecated استخدم CaptainService.updateCaptainLocation بدلاً من هذه الدالة
   static Future<bool> updateCaptainLocation({
     required String captainId,
     required double lat,
     required double lng,
+    double? heading,
+    double? speed,
+    double? accuracy,
   }) async {
-    try {
-      await _supabase
-          .from('captains')
-          .update({
-            'current_location': {'lat': lat, 'lng': lng},
-            'last_location_update': DateTime.now().toIso8601String(),
-          })
-          .eq('id', captainId);
-
-      return true;
-    } catch (e) {
-      AppLogger.error('خطأ في تحديث موقع الكابتن', e);
-      return false;
-    }
+    return CaptainService.updateCaptainLocation(
+      captainId: captainId,
+      latitude: lat,
+      longitude: lng,
+      heading: heading,
+      speed: speed,
+      accuracy: accuracy,
+    );
   }
 
   // ===== تخصيص توصيل لكابتن =====

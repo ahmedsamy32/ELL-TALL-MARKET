@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/models/notification_model.dart';
+import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
+import 'package:ell_tall_market/utils/app_routes.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key});
+  final String? targetRole; // الدور المستهدف (client, merchant, captain, admin)
+
+  const NotificationsScreen({super.key, this.targetRole});
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -38,24 +45,78 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final authProvider = Provider.of<SupabaseProvider>(context);
     final userId = authProvider.currentUser?.id;
 
+    final unreadCount = notificationProvider.getUnreadCountForRole(
+      widget.targetRole,
+    );
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('الإشعارات'),
         centerTitle: true,
         actions: [
-          if (notificationProvider.unreadCount > 0 && userId != null)
-            IconButton(
-              icon: const Icon(Icons.mark_email_read),
+          if (unreadCount > 0 && userId != null)
+            TextButton.icon(
               onPressed: () {
                 notificationProvider.markAllAsRead(userId);
               },
-              tooltip: 'تمييز الكل كمقروء',
+              icon: const Icon(Icons.mark_email_read, size: 18),
+              label: const Text('قراءة الكل'),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              ),
+            ),
+          if (notificationProvider
+              .getNotificationsForRole(widget.targetRole)
+              .isNotEmpty)
+            IconButton(
+              onPressed: () {
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('حذف جميع الإشعارات'),
+                    content: const Text('هل أنت متأكد من حذف جميع الإشعارات؟'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('إلغاء'),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          if (userId != null) {
+                            notificationProvider.deleteUserNotifications(
+                              userId,
+                            );
+                          }
+                          Navigator.pop(context);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('تم حذف جميع الإشعارات'),
+                              backgroundColor: Colors.red,
+                            ),
+                          );
+                        },
+                        child: const Text(
+                          'حذف',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              icon: const Icon(Icons.delete_outline, size: 20),
+              tooltip: 'مسح الكل',
             ),
         ],
       ),
-      body: userId == null
-          ? _buildLoginRequired()
-          : _buildNotificationsList(notificationProvider, userId),
+      body: ResponsiveCenter(
+        maxWidth: 700,
+        child: SafeArea(
+          child: userId == null
+              ? _buildLoginRequired()
+              : _buildNotificationsList(notificationProvider, userId),
+        ),
+      ),
     );
   }
 
@@ -82,8 +143,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
 
   Widget _buildNotificationsList(NotificationProvider provider, String userId) {
     if (provider.isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return AppShimmer.list(context);
     }
+
+    final notifications = provider.getNotificationsForRole(widget.targetRole);
 
     if (provider.error != null) {
       return Center(
@@ -124,7 +187,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       );
     }
 
-    if (provider.notifications.isEmpty) {
+    if (notifications.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -151,9 +214,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       },
       child: ListView.builder(
         padding: const EdgeInsets.all(8),
-        itemCount: provider.notifications.length,
+        itemCount: notifications.length,
         itemBuilder: (context, index) {
-          final notification = provider.notifications[index];
+          final notification = notifications[index];
           return _buildNotificationItem(notification, provider);
         },
       ),
@@ -255,25 +318,146 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   void _handleNotificationTap(NotificationModel notification) {
-    // معالجة رابط الإشعار من data
-    final actionUrl = notification.data?['actionUrl'] as String?;
+    final data = notification.data ?? {};
 
-    if (actionUrl != null || notification.hasData) {
-      // معالجة حسب نوع الإشعار
-      switch (notification.type) {
-        case NotificationType.order:
-          final orderId = notification.data?['orderId'] as String?;
-          if (orderId != null) {
-            // Navigator.pushNamed(context, AppRoutes.orderTracking, arguments: {'orderId': orderId});
-          }
-          break;
-        case NotificationType.promotion:
-          // Navigator.pushNamed(context, AppRoutes.promotions);
-          break;
-        case NotificationType.system:
-        default:
-          break;
-      }
+    // Debug: اطبع البيانات للتحقق
+    debugPrint('📬 Tapped Notification: ${notification.title}');
+    debugPrint('📊 Notification Type: ${notification.type}');
+    debugPrint('📦 Notification Data: $data');
+
+    switch (notification.type) {
+      case NotificationType.order:
+        _navigateToOrderNotification(data);
+        break;
+      case NotificationType.promotion:
+        _navigateToPromotionNotification(data);
+        break;
+      case NotificationType.system:
+      default:
+        _navigateToSystemNotification(data);
+        break;
     }
+  }
+
+  /// التنقل لإشعارات الطلبات
+  void _navigateToOrderNotification(Map<String, dynamic> data) {
+    final orderId = data['orderId'] as String?;
+    final orderStatus = data['orderStatus'] as String?;
+    final actionType = data['actionType'] as String?;
+
+    if (orderId == null) return;
+
+    // إذا كان الإشعار عن تتبع الطلب
+    if (actionType == 'order_tracking' || orderStatus != null) {
+      Navigator.pushNamed(
+        context,
+        AppRoutes.orderTracking,
+        arguments: {'orderId': orderId},
+      );
+    }
+    // إذا كان الإشعار عن حالة الطلب
+    else if (actionType == 'order_status') {
+      Navigator.pushNamed(context, AppRoutes.orderHistory);
+    }
+    // الحالة الافتراضية
+    else {
+      Navigator.pushNamed(context, AppRoutes.orderHistory);
+    }
+  }
+
+  /// التنقل لإشعارات العروض والمنتجات
+  void _navigateToPromotionNotification(Map<String, dynamic> data) {
+    final productId = data['productId'] as String?;
+    final storeId = data['storeId'] as String?;
+    final promotionType = data['promotionType'] as String?;
+
+    // إذا كان الإشعار عن منتج محدد
+    if (productId != null) {
+      _navigateToProduct(productId);
+    }
+    // إذا كان الإشعار عن متجر محدد
+    else if (storeId != null) {
+      _navigateToStore(storeId);
+    }
+    // إذا كان الإشعار عن عرض عام
+    else if (promotionType == 'general_promotion') {
+      Navigator.pushNamed(context, AppRoutes.home);
+    }
+    // الحالة الافتراضية
+    else {
+      Navigator.pushNamed(context, AppRoutes.home);
+    }
+  }
+
+  /// التنقل لإشعارات النظام
+  void _navigateToSystemNotification(Map<String, dynamic> data) {
+    final actionType = data['actionType'] as String?;
+    final actionRoute = data['actionRoute'] as String?;
+
+    // إذا كان هناك route محدد
+    if (actionRoute != null) {
+      Navigator.pushNamed(context, actionRoute);
+    }
+    // إذا كان الإشعار عن رسالة نظام عامة
+    else if (actionType == 'general_message') {
+      // ابق في الشاشة الحالية
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(data['message'] as String? ?? 'لديك إشعار جديد'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  /// التنقل لصفحة تفاصيل المنتج
+  void _navigateToProduct(String productId) async {
+    try {
+      final productProvider = Provider.of<ProductProvider>(
+        context,
+        listen: false,
+      );
+
+      // البحث عن المنتج في القائمة المحملة
+      ProductModel? product;
+
+      if (productProvider.products.isNotEmpty) {
+        product = productProvider.products.firstWhere(
+          (p) => p.id == productId,
+          orElse: () => throw Exception('Product not found'),
+        );
+      }
+
+      if (product != null) {
+        Navigator.pushNamed(
+          context,
+          AppRoutes.productDetail,
+          arguments: product,
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('لم يتم العثور على المنتج'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('خطأ في فتح المنتج: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  /// التنقل لصفحة تفاصيل المتجر
+  void _navigateToStore(String storeId) {
+    Navigator.pushNamed(
+      context,
+      AppRoutes.storeDetail,
+      arguments: {'storeId': storeId},
+    );
   }
 }

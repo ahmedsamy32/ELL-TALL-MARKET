@@ -3,14 +3,22 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/category_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
+import 'package:ell_tall_market/providers/store_provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/favorites_provider.dart';
+import 'package:ell_tall_market/providers/cart_provider.dart';
 import 'package:ell_tall_market/widgets/product_card.dart';
 import 'package:ell_tall_market/screens/user/product_detail_screen.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/models/category_model.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:ell_tall_market/providers/location_provider.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:ell_tall_market/utils/location_ui_text.dart';
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/utils/cart_helper.dart';
 
 class CategoryScreen extends StatefulWidget {
   final String? categoryId;
@@ -48,6 +56,14 @@ class _CategoryScreenState extends State<CategoryScreen> {
         context,
         listen: false,
       );
+      final storeProvider = Provider.of<StoreProvider>(context, listen: false);
+
+      final allowedStoreIds = storeProvider.nearbyStores
+          .map((s) => s.id)
+          .toList(growable: false);
+
+      // تفعيل نطاق الفئات المتاحة (إخفاء الفئات بدون منتجات/متاجر داخل النطاق)
+      categoryProvider.applyAvailabilityScope(allowedStoreIds: allowedStoreIds);
 
       if (widget.categoryId != null) {
         final category = categoryProvider.categories.firstWhere(
@@ -61,14 +77,64 @@ class _CategoryScreenState extends State<CategoryScreen> {
         );
 
         _selectedCategory = category;
-        productProvider.filterByCategory(widget.categoryId!);
+        productProvider.filterByCategory(
+          widget.categoryId!,
+          allowedStoreIds: allowedStoreIds,
+        );
       } else {
         if (categoryProvider.categories.isEmpty) {
           categoryProvider.fetchCategories();
         }
-        productProvider.fetchProducts();
+        productProvider.fetchProducts(allowedStoreIds: allowedStoreIds);
       }
     });
+  }
+
+  Future<void> _requestLocationAndReload() async {
+    final locationProvider = Provider.of<LocationProvider>(
+      context,
+      listen: false,
+    );
+    final storeProvider = Provider.of<StoreProvider>(context, listen: false);
+    final categoryProvider = Provider.of<CategoryProvider>(
+      context,
+      listen: false,
+    );
+    final productProvider = Provider.of<ProductProvider>(
+      context,
+      listen: false,
+    );
+
+    final got = await locationProvider.getCurrentLocation();
+    if (!mounted) return;
+
+    if (!got || !locationProvider.hasLocation) {
+      await categoryProvider.applyAvailabilityScope(allowedStoreIds: const []);
+      return;
+    }
+
+    await storeProvider.fetchNearbyStores(
+      latitude: locationProvider.latitude!,
+      longitude: locationProvider.longitude!,
+      maxDistanceKm: 15,
+    );
+
+    final allowedStoreIds = storeProvider.nearbyStores
+        .map((s) => s.id)
+        .toList(growable: false);
+
+    await categoryProvider.applyAvailabilityScope(
+      allowedStoreIds: allowedStoreIds,
+    );
+
+    if (_selectedCategory != null) {
+      await productProvider.filterByCategory(
+        _selectedCategory!.id,
+        allowedStoreIds: allowedStoreIds,
+      );
+    } else {
+      await productProvider.fetchProducts(allowedStoreIds: allowedStoreIds);
+    }
   }
 
   Future<void> _refreshData() async {
@@ -76,11 +142,25 @@ class _CategoryScreenState extends State<CategoryScreen> {
       context,
       listen: false,
     );
+    final categoryProvider = Provider.of<CategoryProvider>(
+      context,
+      listen: false,
+    );
+    final storeProvider = Provider.of<StoreProvider>(context, listen: false);
+    final allowedStoreIds = storeProvider.nearbyStores
+        .map((s) => s.id)
+        .toList(growable: false);
 
     if (_selectedCategory != null) {
-      await productProvider.filterByCategory(_selectedCategory!.id);
+      await productProvider.filterByCategory(
+        _selectedCategory!.id,
+        allowedStoreIds: allowedStoreIds,
+      );
     } else {
-      await productProvider.refresh();
+      await Future.wait([
+        productProvider.refresh(allowedStoreIds: allowedStoreIds),
+        categoryProvider.fetchCategories(refresh: true),
+      ]);
     }
   }
 
@@ -102,7 +182,14 @@ class _CategoryScreenState extends State<CategoryScreen> {
       context,
       listen: false,
     );
-    productProvider.filterByCategory(category.id);
+    final storeProvider = Provider.of<StoreProvider>(context, listen: false);
+    final allowedStoreIds = storeProvider.nearbyStores
+        .map((s) => s.id)
+        .toList(growable: false);
+    productProvider.filterByCategory(
+      category.id,
+      allowedStoreIds: allowedStoreIds,
+    );
   }
 
   void _checkLoginForFavoriteAction(VoidCallback action) {
@@ -235,24 +322,28 @@ class _CategoryScreenState extends State<CategoryScreen> {
 
   PreferredSizeWidget _buildMaterialAppBar(BuildContext context) {
     final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
 
     return AppBar(
       elevation: 0,
       scrolledUnderElevation: 3,
-      backgroundColor: colorScheme.primary,
-      foregroundColor: colorScheme.onPrimary,
       centerTitle: true,
-      systemOverlayStyle: SystemUiOverlayStyle.light,
       leading: _selectedCategory != null
           ? IconButton(
               icon: const Icon(Icons.arrow_back_rounded),
               onPressed: () {
                 setState(() => _selectedCategory = null);
+                final storeProvider = Provider.of<StoreProvider>(
+                  context,
+                  listen: false,
+                );
+                final allowedStoreIds = storeProvider.nearbyStores
+                    .map((s) => s.id)
+                    .toList(growable: false);
+
                 Provider.of<ProductProvider>(
                   context,
                   listen: false,
-                ).fetchProducts();
+                ).fetchProducts(allowedStoreIds: allowedStoreIds);
               },
               tooltip: 'رجوع',
             )
@@ -263,7 +354,6 @@ class _CategoryScreenState extends State<CategoryScreen> {
             : 'الفئات',
         style: theme.textTheme.titleLarge?.copyWith(
           fontWeight: FontWeight.bold,
-          color: colorScheme.onPrimary,
         ),
       ),
       actions: _selectedCategory == null
@@ -322,23 +412,10 @@ class _CategoryScreenState extends State<CategoryScreen> {
   Widget _buildCategoriesList(CategoryProvider provider) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final locationProvider = Provider.of<LocationProvider>(context);
 
-    if (provider.isLoading && provider.categories.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(color: colorScheme.primary),
-            const SizedBox(height: 16),
-            Text(
-              'جاري تحميل الفئات...',
-              style: theme.textTheme.bodyLarge?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      );
+    if (provider.isLoading) {
+      return _buildCategoriesShimmer(colorScheme);
     }
 
     if (provider.error != null && provider.categories.isEmpty) {
@@ -387,6 +464,94 @@ class _CategoryScreenState extends State<CategoryScreen> {
       );
     }
 
+    final categories = provider.availableCategories;
+
+    if (provider.availabilityScopeActive && categories.isEmpty) {
+      if (!locationProvider.hasLocation) {
+        final isDeniedForever = LocationUiText.isDeniedForever(
+          locationProvider,
+        );
+        final isServiceOff = LocationUiText.isServiceOff(locationProvider);
+        final message = LocationUiText.message(locationProvider);
+
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.location_off_rounded,
+                  size: 72,
+                  color: colorScheme.outline,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  LocationUiText.title,
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.onSurface,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: isDeniedForever
+                          ? () => Geolocator.openAppSettings()
+                          : _requestLocationAndReload,
+                      icon: Icon(
+                        isDeniedForever
+                            ? Icons.settings_rounded
+                            : Icons.my_location_rounded,
+                      ),
+                      label: Text(
+                        LocationUiText.primaryButtonLabel(locationProvider),
+                      ),
+                    ),
+                    if (isServiceOff)
+                      OutlinedButton.icon(
+                        onPressed: () => Geolocator.openLocationSettings(),
+                        icon: const Icon(Icons.location_on_outlined),
+                        label: const Text(LocationUiText.secondaryButtonLabel),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.category_outlined, size: 64),
+            const SizedBox(height: 16),
+            const Text('لا توجد تصنيفات متاحة في منطقتك حالياً'),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: () => provider.fetchCategories(refresh: true),
+              child: const Text('تحديث'),
+            ),
+          ],
+        ),
+      );
+    }
+
     return CustomScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
       slivers: [
@@ -394,19 +559,68 @@ class _CategoryScreenState extends State<CategoryScreen> {
           padding: const EdgeInsets.all(16),
           sliver: SliverGrid(
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: MediaQuery.of(context).size.width > 600 ? 3 : 2,
+              crossAxisCount: context.responsiveCrossAxisCount,
               crossAxisSpacing: 16,
               mainAxisSpacing: 16,
               childAspectRatio: 0.85,
             ),
             delegate: SliverChildBuilderDelegate(
-              (context, index) =>
-                  _buildCategoryCard(provider.categories[index], index),
-              childCount: provider.categories.length,
+              (context, index) => _buildCategoryCard(categories[index], index),
+              childCount: categories.length,
             ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildCategoriesShimmer(ColorScheme colorScheme) {
+    Widget box({
+      required double width,
+      required double height,
+      BorderRadiusGeometry? radius,
+    }) {
+      return Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest,
+          borderRadius: radius ?? BorderRadius.circular(16),
+        ),
+      );
+    }
+
+    return AppShimmer.wrap(
+      context,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: GridView.builder(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: context.responsiveCrossAxisCount,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 1.2,
+          ),
+          itemCount: 6,
+          itemBuilder: (context, index) {
+            return Container(
+              decoration: BoxDecoration(
+                color: colorScheme.surface,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  box(width: 80, height: 80, radius: BorderRadius.circular(16)),
+                  const SizedBox(height: 12),
+                  box(width: 120, height: 12, radius: BorderRadius.circular(8)),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 
@@ -511,9 +725,9 @@ class _CategoryScreenState extends State<CategoryScreen> {
                               color: style['lightColor'] as Color?,
                             ),
                             child: Center(
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: style['color'] as Color?,
+                              child: AppShimmer.wrap(
+                                context,
+                                child: AppShimmer.circle(context, size: 28),
                               ),
                             ),
                           ),
@@ -566,22 +780,8 @@ class _CategoryScreenState extends State<CategoryScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
-    if (productProvider.isLoading && productProvider.products.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(color: colorScheme.primary),
-            const SizedBox(height: 16),
-            Text(
-              'جاري تحميل المنتجات...',
-              style: theme.textTheme.bodyLarge?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
-      );
+    if (productProvider.isLoading) {
+      return _buildProductsShimmer(colorScheme);
     }
 
     if (productProvider.error != null && productProvider.products.isEmpty) {
@@ -649,6 +849,7 @@ class _CategoryScreenState extends State<CategoryScreen> {
                   fontWeight: FontWeight.bold,
                   color: colorScheme.onSurface,
                 ),
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 12),
               Text(
@@ -693,10 +894,10 @@ class _CategoryScreenState extends State<CategoryScreen> {
             padding: const EdgeInsets.all(16),
             sliver: SliverGrid(
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: MediaQuery.of(context).size.width > 600 ? 3 : 2,
+                crossAxisCount: context.responsiveCrossAxisCount,
                 crossAxisSpacing: 16,
                 mainAxisSpacing: 16,
-                childAspectRatio: 0.70,
+                childAspectRatio: 0.68,
               ),
               delegate: SliverChildBuilderDelegate((context, index) {
                 final product = productProvider.products[index];
@@ -708,26 +909,119 @@ class _CategoryScreenState extends State<CategoryScreen> {
                     scale: value,
                     child: Opacity(opacity: value, child: child),
                   ),
-                  child: Consumer2<FavoritesProvider, SupabaseProvider>(
-                    builder: (context, favoritesProvider, authProvider, _) {
-                      return ProductCard(
-                        product: product,
-                        onTap: () => _navigateToProductDetail(product),
-                        onFavoritePressed: () =>
-                            _checkLoginForFavoriteAction(() {
-                              favoritesProvider.toggleFavoriteProduct(product);
-                            }),
-                        isFavorite: favoritesProvider.isFavoriteProduct(
-                          product.id,
-                        ),
-                      );
-                    },
-                  ),
+                  child:
+                      Consumer3<
+                        FavoritesProvider,
+                        SupabaseProvider,
+                        CartProvider
+                      >(
+                        builder:
+                            (
+                              context,
+                              favoritesProvider,
+                              authProvider,
+                              cartProvider,
+                              _,
+                            ) {
+                              return ProductCard(
+                                product: product,
+                                onTap: () => _navigateToProductDetail(product),
+                                onBuyPressed: () {
+                                  CartHelper.addToCart(context, product);
+                                },
+                                onFavoritePressed: () =>
+                                    _checkLoginForFavoriteAction(() async {
+                                      final wasFavorite = favoritesProvider
+                                          .isFavoriteProduct(product.id);
+                                      await favoritesProvider
+                                          .toggleFavoriteProduct(product);
+                                      if (mounted && context.mounted) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              wasFavorite
+                                                  ? 'تمت الإزالة من المفضلة'
+                                                  : 'تمت الإضافة للمفضلة',
+                                            ),
+                                            backgroundColor: wasFavorite
+                                                ? Colors.red
+                                                : Colors.green,
+                                            duration: const Duration(
+                                              seconds: 1,
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    }),
+                                isFavorite: favoritesProvider.isFavoriteProduct(
+                                  product.id,
+                                ),
+                                compact: true,
+                              );
+                            },
+                      ),
                 );
               }, childCount: productProvider.products.length),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildProductsShimmer(ColorScheme colorScheme) {
+    Widget box({
+      required double width,
+      required double height,
+      BorderRadiusGeometry? radius,
+    }) {
+      return Container(
+        width: width,
+        height: height,
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest,
+          borderRadius: radius ?? BorderRadius.circular(16),
+        ),
+      );
+    }
+
+    return AppShimmer.wrap(
+      context,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: GridView.builder(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: context.responsiveCrossAxisCount,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 0.68,
+          ),
+          itemCount: 6,
+          itemBuilder: (context, index) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: box(
+                    width: double.infinity,
+                    height: double.infinity,
+                    radius: BorderRadius.circular(16),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                box(
+                  width: double.infinity,
+                  height: 12,
+                  radius: BorderRadius.circular(8),
+                ),
+                const SizedBox(height: 8),
+                box(width: 120, height: 10, radius: BorderRadius.circular(8)),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

@@ -1,6 +1,6 @@
+import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
@@ -8,11 +8,19 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class OrderTrackingScreen extends StatefulWidget {
-  final String orderId;
+  final String? orderId;
+  final String? orderGroupId;
+  final String? orderNumber;
 
-  const OrderTrackingScreen({required this.orderId, super.key});
+  const OrderTrackingScreen({
+    super.key,
+    this.orderId,
+    this.orderGroupId,
+    this.orderNumber,
+  }) : assert(orderId != null || orderGroupId != null || orderNumber != null);
 
   @override
   State<OrderTrackingScreen> createState() => _OrderTrackingScreenState();
@@ -21,18 +29,98 @@ class OrderTrackingScreen extends StatefulWidget {
 class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   List<OrderItemModel>? _orderItems;
   bool _isLoadingItems = false;
+  bool _isRefreshingOrder = false;
   String? _clientPhone;
   String? _clientName;
+  String? _effectiveOrderId;
+  bool _isResolvingInitialOrder = false;
+  String? _initialLoadError;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<OrderProvider>(
-        context,
-        listen: false,
-      ).getOrderById(widget.orderId);
+      if (widget.orderNumber != null) {
+        Provider.of<OrderProvider>(
+          context,
+          listen: false,
+        ).getOrderByNumber(widget.orderNumber!);
+        return;
+      }
+
+      if (widget.orderId != null) {
+        _effectiveOrderId = widget.orderId;
+        Provider.of<OrderProvider>(
+          context,
+          listen: false,
+        ).getOrderById(widget.orderId!);
+        return;
+      }
+
+      if (widget.orderGroupId != null) {
+        _resolveGroupToSingleOrder();
+      }
     });
+  }
+
+  Future<void> _resolveGroupToSingleOrder() async {
+    if (_isResolvingInitialOrder) return;
+
+    setState(() {
+      _isResolvingInitialOrder = true;
+      _initialLoadError = null;
+    });
+
+    try {
+      final orderProvider = Provider.of<OrderProvider>(context, listen: false);
+
+      final orders = await OrderService.getOrdersByGroupId(
+        widget.orderGroupId!,
+      );
+      if (orders.isEmpty) {
+        if (mounted) {
+          setState(() {
+            _initialLoadError = 'لم يتم العثور على بيانات الطلب';
+            _isResolvingInitialOrder = false;
+          });
+        }
+        return;
+      }
+
+      final firstOrderId = orders.first.id;
+      _effectiveOrderId = firstOrderId;
+
+      if (!mounted) return;
+      await orderProvider.getOrderById(firstOrderId);
+
+      if (mounted) {
+        setState(() {
+          _isResolvingInitialOrder = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _initialLoadError = 'حدث خطأ أثناء تحميل الطلب';
+          _isResolvingInitialOrder = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadClientInfo(String clientId) async {
+    final clientData = await Supabase.instance.client
+        .from('profiles')
+        .select('full_name, phone')
+        .eq('id', clientId)
+        .maybeSingle();
+
+    if (mounted) {
+      setState(() {
+        _clientPhone = clientData?['phone'] as String?;
+        _clientName = clientData?['full_name'] as String?;
+      });
+    }
   }
 
   Future<void> _loadOrderDetails(String clientId, String orderId) async {
@@ -44,25 +132,67 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
       // تحميل المنتجات
       final items = await OrderService.getOrderItems(orderId);
 
-      // تحميل بيانات العميل
-      final clientData = await Supabase.instance.client
-          .from('profiles')
-          .select('full_name, phone')
-          .eq('id', clientId)
-          .maybeSingle();
+      await _loadClientInfo(clientId);
 
       if (mounted) {
         setState(() {
           _orderItems = items;
-          _clientPhone = clientData?['phone'] as String?;
-          _clientName = clientData?['full_name'] as String?;
           _isLoadingItems = false;
+          _isRefreshingOrder = false;
         });
       }
     } catch (e) {
       if (mounted) {
-        setState(() => _isLoadingItems = false);
+        setState(() {
+          _isLoadingItems = false;
+          _isRefreshingOrder = false;
+        });
       }
+    }
+  }
+
+  Future<void> _ensureOrderItemsLoaded(OrderModel order) async {
+    if (_orderItems != null) return;
+
+    if (_isLoadingItems) {
+      final startedAt = DateTime.now();
+      while (mounted &&
+          _isLoadingItems &&
+          DateTime.now().difference(startedAt) < const Duration(seconds: 10)) {
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+      return;
+    }
+
+    await _loadOrderDetails(order.clientId, order.id);
+  }
+
+  Future<void> _refreshSingleOrder() async {
+    if (mounted) {
+      setState(() => _isRefreshingOrder = true);
+    }
+
+    final provider = Provider.of<OrderProvider>(context, listen: false);
+
+    if (_effectiveOrderId == null) {
+      if (widget.orderNumber != null) {
+        await provider.getOrderByNumber(widget.orderNumber!);
+      } else if (widget.orderGroupId != null) {
+        await _resolveGroupToSingleOrder();
+      }
+      if (mounted) {
+        setState(() => _isRefreshingOrder = false);
+      }
+      return;
+    }
+
+    await provider.getOrderById(_effectiveOrderId!);
+
+    final order = provider.selectedOrder;
+    if (order != null) {
+      await _loadOrderDetails(order.clientId, order.id);
+    } else if (mounted) {
+      setState(() => _isRefreshingOrder = false);
     }
   }
 
@@ -71,10 +201,56 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
 
+    if (_isResolvingInitialOrder) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.timeline_rounded, size: 24),
+              SizedBox(width: 12),
+              Text('تتبع الطلب'),
+            ],
+          ),
+          centerTitle: true,
+        ),
+        body: SafeArea(child: AppShimmer.centeredLines(context)),
+      );
+    }
+
+    if (_initialLoadError != null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.timeline_rounded, size: 24),
+              SizedBox(width: 12),
+              Text('تتبع الطلب'),
+            ],
+          ),
+          centerTitle: true,
+        ),
+        body: SafeArea(
+          child: RefreshIndicator(
+            onRefresh: _refreshSingleOrder,
+            child: _buildRefreshablePlaceholder(_buildEmptyState(colorScheme)),
+          ),
+        ),
+      );
+    }
+
     return Consumer<OrderProvider>(
       builder: (context, provider, child) {
         final order = provider.selectedOrder;
         final isLoading = provider.isLoading;
+
+        final activeOrderId = _effectiveOrderId ?? widget.orderId;
+        final displayOrderNumber = order?.orderNumber ?? widget.orderNumber;
+        final titleId = displayOrderNumber ?? activeOrderId?.substring(0, 8);
+        final titleText = titleId == null
+            ? 'تتبع الطلب'
+            : 'تتبع الطلب #$titleId';
 
         // تحميل تفاصيل الطلب عند توفره
         if (order != null && _orderItems == null && !_isLoadingItems) {
@@ -87,48 +263,74 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(Icons.timeline_rounded, size: 24),
-                const SizedBox(width: 12),
-                Text('تتبع الطلب #${widget.orderId.substring(0, 8)}'),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(titleText, overflow: TextOverflow.ellipsis),
+                ),
               ],
             ),
             centerTitle: true,
-            actions: [
-              if (order != null)
-                IconButton(
-                  icon: const Icon(Icons.refresh_rounded),
-                  tooltip: 'تحديث',
-                  onPressed: () {
-                    Provider.of<OrderProvider>(
-                      context,
-                      listen: false,
-                    ).getOrderById(widget.orderId);
-                    _loadOrderDetails(order.clientId, order.id);
-                  },
-                ),
-            ],
           ),
-          body: isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : order == null
-              ? _buildEmptyState(colorScheme)
-              : _buildTrackingContent(order, colorScheme),
+          body: ResponsiveCenter(
+            maxWidth: 800,
+            child: (isLoading || _isRefreshingOrder)
+                ? AppShimmer.centeredLines(context)
+                : order == null
+                ? SafeArea(
+                    child: RefreshIndicator(
+                      onRefresh: _refreshSingleOrder,
+                      child: _buildRefreshablePlaceholder(
+                        _buildEmptyState(colorScheme),
+                      ),
+                    ),
+                  )
+                : _buildTrackingContent(order, colorScheme),
+          ),
         );
       },
     );
   }
 
+  Widget _buildRefreshablePlaceholder(Widget child) {
+    return CustomScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [SliverFillRemaining(hasScrollBody: false, child: child)],
+    );
+  }
+
   Widget _buildEmptyState(ColorScheme colorScheme) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.receipt_long, size: 72, color: colorScheme.outline),
-          const SizedBox(height: 16),
-          Text(
-            'لم يتم العثور على بيانات الطلب',
-            style: TextStyle(fontSize: 16, color: colorScheme.onSurfaceVariant),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.receipt_long_outlined,
+              size: 96,
+              color: colorScheme.primary.withValues(alpha: 0.3),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'لا توجد بيانات للطلب',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: colorScheme.onSurface,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'اسحب لأسفل للتحديث',
+              style: TextStyle(
+                fontSize: 13,
+                color: colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -138,10 +340,21 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
 
     return RefreshIndicator(
       onRefresh: () async {
-        await Provider.of<OrderProvider>(
-          context,
-          listen: false,
-        ).getOrderById(widget.orderId);
+        if (mounted) {
+          setState(() => _isRefreshingOrder = true);
+        }
+        if (widget.orderNumber != null) {
+          await Provider.of<OrderProvider>(
+            context,
+            listen: false,
+          ).getOrderByNumber(widget.orderNumber!);
+        } else {
+          final idToRefresh = _effectiveOrderId ?? widget.orderId ?? order.id;
+          await Provider.of<OrderProvider>(
+            context,
+            listen: false,
+          ).getOrderById(idToRefresh);
+        }
         await _loadOrderDetails(order.clientId, order.id);
       },
       child: SafeArea(
@@ -179,7 +392,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
 
               // المنتجات
               if (_isLoadingItems)
-                const Center(child: CircularProgressIndicator())
+                AppShimmer.centeredLines(context)
               else if (_orderItems != null && _orderItems!.isNotEmpty) ...[
                 _buildProductsSection(colorScheme),
                 const SizedBox(height: 24),
@@ -281,7 +494,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => const Center(child: CircularProgressIndicator()),
+      builder: (ctx) => AppShimmer.centeredLines(ctx),
     );
 
     try {
@@ -545,7 +758,28 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   }
 
   // Bottom Sheet للملخص والفاتورة
-  void _showSummaryBottomSheet(OrderModel order, ColorScheme colorScheme) {
+  Future<void> _showSummaryBottomSheet(
+    OrderModel order,
+    ColorScheme colorScheme,
+  ) async {
+    final shouldLoad = _orderItems == null;
+    if (shouldLoad) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AppShimmer.centeredLines(ctx),
+      );
+      try {
+        await _ensureOrderItemsLoaded(order);
+      } finally {
+        if (mounted) {
+          Navigator.pop(context);
+        }
+      }
+    }
+
+    if (!mounted) return;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -653,7 +887,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                   // Content
                   Expanded(
                     child: _isLoadingItems
-                        ? const Center(child: CircularProgressIndicator())
+                        ? AppShimmer.centeredLines(context)
                         : ListView(
                             controller: scrollController,
                             padding: const EdgeInsets.all(16),
@@ -849,14 +1083,48 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   List<Map<String, dynamic>> _buildTrackingEvents(OrderModel order) {
     final status = OrderStatusExtension.fromDbValue(order.status.value);
 
-    // تحديد الحالات المكتملة بناءً على الحالة الحالية
-    final isConfirmed =
-        status != OrderStatus.pending && status != OrderStatus.cancelled;
-    final isPreparing = isConfirmed && status != OrderStatus.confirmed;
-    final isReady = isPreparing && status != OrderStatus.preparing;
-    final isPickedUp = isReady && status != OrderStatus.ready;
-    final isInTransit = isPickedUp && status != OrderStatus.pickedUp;
-    final isDelivered = status == OrderStatus.delivered;
+    int rankOf(OrderStatus s) {
+      const flow = <OrderStatus>[
+        OrderStatus.pending,
+        OrderStatus.confirmed,
+        OrderStatus.preparing,
+        OrderStatus.ready,
+        OrderStatus.pickedUp,
+        OrderStatus.inTransit,
+        OrderStatus.delivered,
+      ];
+      return flow.indexOf(s);
+    }
+
+    if (status == OrderStatus.cancelled) {
+      return [
+        {
+          'title': 'تم إنشاء الطلب',
+          'time': order.createdAt,
+          'icon': Icons.shopping_cart_rounded,
+          'color': Colors.blue,
+          'isCompleted': true,
+        },
+        {
+          'title': 'تم إلغاء الطلب',
+          'time': order.updatedAt ?? order.createdAt,
+          'icon': Icons.cancel_rounded,
+          'color': Colors.red,
+          'isCompleted': true,
+        },
+      ];
+    }
+
+    final currentRank = rankOf(status);
+    bool done(OrderStatus stepStatus) =>
+        currentRank >= 0 && currentRank >= rankOf(stepStatus);
+
+    final isConfirmed = done(OrderStatus.confirmed);
+    final isPreparing = done(OrderStatus.preparing);
+    final isReady = done(OrderStatus.ready);
+    final isPickedUp = done(OrderStatus.pickedUp);
+    final isInTransit = done(OrderStatus.inTransit);
+    final isDelivered = done(OrderStatus.delivered);
 
     return [
       {
@@ -884,14 +1152,18 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
       },
       {
         'title': 'جاهز للتوصيل',
-        'time': isReady ? (order.preparedAt ?? order.acceptedAt) : null,
+        'time': isReady
+            ? (order.preparedAt ?? order.acceptedAt ?? order.createdAt)
+            : null,
         'icon': Icons.shopping_bag_rounded,
         'color': Colors.purple,
         'isCompleted': isReady,
       },
       {
         'title': 'تم استلامه من المتجر',
-        'time': isPickedUp ? (order.pickedUpAt ?? order.preparedAt) : null,
+        'time': isPickedUp
+            ? (order.pickedUpAt ?? order.preparedAt ?? order.acceptedAt)
+            : null,
         'icon': Icons.handshake_rounded,
         'color': Colors.cyan,
         'isCompleted': isPickedUp,
@@ -907,7 +1179,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
       },
       {
         'title': 'تم التوصيل',
-        'time': isDelivered ? (order.deliveredAt ?? DateTime.now()) : null,
+        'time': isDelivered
+            ? (order.deliveredAt ?? order.updatedAt ?? order.createdAt)
+            : null,
         'icon': Icons.check_circle_outline_rounded,
         'color': Colors.green,
         'isCompleted': isDelivered,
@@ -1050,9 +1324,6 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
       return const SizedBox.shrink();
     }
 
-    // عرض المنتج الأول فقط
-    final product = _orderItems!.first;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1065,7 +1336,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
             ),
             const SizedBox(width: 8),
             Text(
-              'المنتج',
+              'المنتجات',
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
@@ -1080,7 +1351,11 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
             color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: _buildProductItem(product, colorScheme),
+          child: Column(
+            children: _orderItems!
+                .map((item) => _buildProductItem(item, colorScheme))
+                .toList(),
+          ),
         ),
       ],
     );
@@ -1106,7 +1381,26 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
               color: colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(Icons.shopping_bag_outlined, size: 24),
+            child: item.productImage != null && item.productImage!.isNotEmpty
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      item.productImage!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Icon(
+                          Icons.shopping_bag_outlined,
+                          size: 24,
+                          color: colorScheme.onSurfaceVariant,
+                        );
+                      },
+                    ),
+                  )
+                : Icon(
+                    Icons.shopping_bag_outlined,
+                    size: 24,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1301,6 +1595,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   // توليد PDF للفاتورة
   Future<void> _generateInvoicePDF(OrderModel order) async {
     try {
+      await _ensureOrderItemsLoaded(order);
+
       // عرض مؤشر التحميل
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1697,6 +1993,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   // مشاركة PDF للفاتورة
   Future<void> _shareInvoicePDF(OrderModel order) async {
     try {
+      await _ensureOrderItemsLoaded(order);
+
       // عرض مؤشر التحميل
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1826,29 +2124,33 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                       ),
                       pw.SizedBox(height: 8),
                       pw.Row(
-                        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
                         children: [
                           pw.Text(
-                            'الاسم:',
+                            'الاسم: ',
                             style: const pw.TextStyle(fontSize: 11),
                           ),
-                          pw.Text(
-                            _clientName ?? 'غير محدد',
-                            style: const pw.TextStyle(fontSize: 11),
+                          pw.Expanded(
+                            child: pw.Text(
+                              _clientName ?? 'غير محدد',
+                              style: const pw.TextStyle(fontSize: 11),
+                            ),
                           ),
                         ],
                       ),
                       pw.SizedBox(height: 4),
                       pw.Row(
-                        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
                         children: [
                           pw.Text(
-                            'رقم الهاتف:',
+                            'رقم الهاتف: ',
                             style: const pw.TextStyle(fontSize: 11),
                           ),
-                          pw.Text(
-                            _clientPhone ?? 'غير محدد',
-                            style: const pw.TextStyle(fontSize: 11),
+                          pw.Expanded(
+                            child: pw.Text(
+                              _clientPhone ?? 'غير محدد',
+                              style: const pw.TextStyle(fontSize: 11),
+                            ),
                           ),
                         ],
                       ),
