@@ -681,6 +681,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         area: areaText.isEmpty ? null : areaText,
         street: streetText,
         landmark: landmarkText.isEmpty ? null : landmarkText,
+        address: addressText,
         latitude: _storeLatitude,
         longitude: _storeLongitude,
         deliveryRadiusKm: deliveryRadius,
@@ -962,7 +963,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
                         ? LatLng(_storeLatitude!, _storeLongitude!)
                         : null,
                     requirePosition: false,
-                    showMapPicker: false,
+                    showMapPicker: true,
                     onPositionChanged: (pos) {
                       setState(() {
                         _storeLatitude = pos?.latitude;
@@ -983,6 +984,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
                     refreshNearbyStores: false,
                     // الافتراضي: يملأ المحافظة + المركز فقط.
                     autofillAllFieldsFromMap: false,
+                    autofillGovernorateCityFromMap: false,
                   ),
                 ]),
                 const SizedBox(height: 120),

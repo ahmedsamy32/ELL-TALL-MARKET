@@ -1976,63 +1976,7 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
     debugPrint('📊 Notification Type: ${notification.type}');
     debugPrint('📦 Notification Data: $data');
 
-    switch (notification.type) {
-      case NotificationType.order:
-        _navigateToOrderNotification(context, data);
-        break;
-      case NotificationType.promotion:
-        _navigateToPromotionNotification(context, data);
-        break;
-      case NotificationType.system:
-      default:
-        _navigateToSystemNotification(context, data);
-        break;
-    }
-  }
-
-  void _navigateToOrderNotification(
-    BuildContext context,
-    Map<String, dynamic> data,
-  ) {
-    final orderId = data['order_id'] as String?;
-    if (orderId != null) {
-      // Navigate to merchant orders screen
-      // Since we're already in merchant dashboard, just show a message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('طلب رقم: ${orderId.substring(0, 8)}...'),
-          action: SnackBarAction(
-            label: 'عرض',
-            onPressed: () {
-              // Navigate to orders tab in merchant dashboard
-            },
-          ),
-        ),
-      );
-    }
-  }
-
-  void _navigateToPromotionNotification(
-    BuildContext context,
-    Map<String, dynamic> data,
-  ) {
-    final productId = data['productId'] as String?;
-    if (productId != null) {
-      Navigator.pushNamed(
-        context,
-        AppRoutes.productDetail,
-        arguments: productId,
-      );
-    }
-  }
-
-  void _navigateToSystemNotification(
-    BuildContext context,
-    Map<String, dynamic> data,
-  ) {
-    final actionRoute = data['actionRoute'] as String?;
-    if (actionRoute != null) {
-      Navigator.pushNamed(context, actionRoute);
-    }
+    // استخدام الموجه الذكي الموحد في خدمة الإشعارات
+    NotificationServiceEnhanced.instance.handleNotificationAction(data);
   }
 }

@@ -16,6 +16,11 @@ enum AddressFormType {
   residential,
 }
 
+/// Master switch for map picking feature availability.
+///
+/// Actual visibility is still controlled per-screen/per-user.
+const bool _isMapPickingEnabled = true;
+
 class AddressFormSection extends StatelessWidget {
   final GlobalKey<FormState> formKey;
 
@@ -127,6 +132,11 @@ class AddressFormSection extends StatelessWidget {
     final useGovernorateDropdown = governorateOptions != null;
     final useCityDropdown = cityOptions != null;
     final useAreaDropdown = areaOptions != null;
+    final effectiveShowMapPicker = _isMapPickingEnabled && showMapPicker;
+    final hasGovernorateSelection = governorateController.text
+        .trim()
+        .isNotEmpty;
+    final hasCitySelection = cityController.text.trim().isNotEmpty;
 
     final fields = Column(
       children: [
@@ -157,6 +167,9 @@ class AddressFormSection extends StatelessWidget {
             Expanded(
               child: useGovernorateDropdown
                   ? DropdownButtonFormField<String>(
+                      key: ValueKey<String>(
+                        'gov-${governorateController.text.trim()}-${governorates.length}',
+                      ),
                       isExpanded: true,
                       isDense: true,
                       initialValue: governorateController.text.trim().isEmpty
@@ -218,6 +231,9 @@ class AddressFormSection extends StatelessWidget {
             Expanded(
               child: useCityDropdown
                   ? DropdownButtonFormField<String>(
+                      key: ValueKey<String>(
+                        'city-${cityController.text.trim()}-${cities.length}',
+                      ),
                       isExpanded: true,
                       isDense: true,
                       initialValue: cityController.text.trim().isEmpty
@@ -277,9 +293,32 @@ class AddressFormSection extends StatelessWidget {
             ),
           ],
         ),
+        if (useGovernorateDropdown && governorates.isEmpty) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Text(
+              'لا توجد محافظات متاحة حالياً.',
+              style: text.bodySmall?.copyWith(color: color.error),
+            ),
+          ),
+        ],
+        if (useCityDropdown && hasGovernorateSelection && cities.isEmpty) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Text(
+              'لا توجد مدن متاحة داخل هذه المحافظة حالياً.',
+              style: text.bodySmall?.copyWith(color: color.error),
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         useAreaDropdown
             ? DropdownButtonFormField<String>(
+                key: ValueKey<String>(
+                  'area-${areaController.text.trim()}-${areas.length}',
+                ),
                 isExpanded: true,
                 isDense: true,
                 initialValue: areaController.text.trim().isEmpty
@@ -335,6 +374,19 @@ class AddressFormSection extends StatelessWidget {
                 onFieldSubmitted: (_) =>
                     FocusScope.of(context).requestFocus(streetFocus),
               ),
+        if (useAreaDropdown &&
+            hasGovernorateSelection &&
+            hasCitySelection &&
+            areas.isEmpty) ...[
+          const SizedBox(height: 8),
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: Text(
+              'لا توجد مناطق متاحة داخل هذه المدينة حالياً.',
+              style: text.bodySmall?.copyWith(color: color.error),
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         TextFormField(
           controller: streetController,
@@ -454,7 +506,7 @@ class AddressFormSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (showMapPicker)
+        if (effectiveShowMapPicker)
           Row(
             children: [
               Expanded(
@@ -478,7 +530,7 @@ class AddressFormSection extends StatelessWidget {
           ),
         // Hide coordinates from UI; only show a hint when location is required
         // but not picked yet.
-        if (showMapPicker && requirePosition && position == null) ...[
+        if (effectiveShowMapPicker && requirePosition && position == null) ...[
           const SizedBox(height: 8),
           Text(
             'الرجاء اختيار الموقع من الخريطة',
@@ -577,6 +629,11 @@ class AddressLocationFormSection extends StatelessWidget {
   /// Defaults to the simplest/safer behavior: fill governorate + city only.
   final bool autofillAllFieldsFromMap;
 
+  /// When true, fills governorate + city from map reverse geocoding.
+  ///
+  /// Set to false to keep map selection limited to coordinates only.
+  final bool autofillGovernorateCityFromMap;
+
   /// If true, show an error hint when [position] is null.
   final bool requirePosition;
   final bool showMapPicker;
@@ -621,6 +678,7 @@ class AddressLocationFormSection extends StatelessWidget {
     this.summaryCity,
     this.summaryGovernorate,
     this.autofillAllFieldsFromMap = false,
+    this.autofillGovernorateCityFromMap = true,
     this.requirePosition = false,
     this.showMapPicker = true,
     this.updateLocationProvider = false,
@@ -640,13 +698,15 @@ class AddressLocationFormSection extends StatelessWidget {
             // 1) Update coordinates
             onPositionChanged(details.position);
 
-            // 2) Autofill address fields (default: governorate + city only)
-            final gov = (details.governorate ?? '').trim();
-            final city = (details.city ?? '').trim();
-            governorateController.text = gov;
-            cityController.text = city;
-            onGovernorateChanged?.call(gov);
-            onCityChanged?.call(city);
+            // 2) Optional autofill address fields.
+            if (autofillGovernorateCityFromMap) {
+              final gov = (details.governorate ?? '').trim();
+              final city = (details.city ?? '').trim();
+              governorateController.text = gov;
+              cityController.text = city;
+              onGovernorateChanged?.call(gov);
+              onCityChanged?.call(city);
+            }
 
             if (autofillAllFieldsFromMap) {
               final district = (details.district ?? '').trim();
@@ -685,6 +745,8 @@ class AddressLocationFormSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isMerchantMapFlow = userType == MapUserType.merchant;
+
     return AddressFormSection(
       formKey: formKey,
       wrapInForm: wrapInForm,
@@ -704,8 +766,9 @@ class AddressLocationFormSection extends StatelessWidget {
       streetFocus: streetFocus,
       onPickFromMap: () => _pickFromMap(context),
       position: position,
-      requirePosition: requirePosition,
-      showMapPicker: showMapPicker,
+      requirePosition:
+          isMerchantMapFlow && _isMapPickingEnabled && requirePosition,
+      showMapPicker: isMerchantMapFlow && _isMapPickingEnabled && showMapPicker,
       onGovernorateChanged: onGovernorateChanged,
       onCityChanged: onCityChanged,
       onAreaChanged: onAreaChanged,

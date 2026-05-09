@@ -10,7 +10,6 @@ import '../core/logger.dart';
 import 'merchant_provider.dart';
 import 'product_provider.dart';
 import 'order_provider.dart';
-import '../services/facebook_signin_service.dart';
 import '../services/notification_service.dart';
 
 /// SupabaseProvider - manages authentication state
@@ -601,35 +600,6 @@ class SupabaseProvider with ChangeNotifier {
       _isLoading = false;
       notifyListeners();
       return false;
-    }
-  }
-
-  /// Sign in with Facebook
-  Future<bool> signInWithFacebook() async {
-    _isLoading = true;
-    _error = null;
-    notifyListeners();
-
-    try {
-      final response = await FacebookSignInService.instance
-          .signInWithFacebook();
-
-      if (response != null && response.user != null) {
-        _currentUser = response.user;
-        await _loadProfile();
-        return true;
-      }
-
-      return false;
-    } on AuthException catch (e) {
-      _error = e.message;
-      return false;
-    } catch (e) {
-      _error = 'خطأ في تسجيل الدخول بفيسبوك: $e';
-      return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
     }
   }
 

@@ -124,6 +124,7 @@ class CaptainService {
     bool? isActive,
     bool? isAvailable,
     bool? isOnline,
+    String? deliveryCompanyId,
     String orderBy = 'created_at',
     bool ascending = false,
   }) async {
@@ -151,6 +152,10 @@ class CaptainService {
 
       if (isOnline != null) {
         query = query.eq('is_online', isOnline);
+      }
+
+      if (deliveryCompanyId != null && deliveryCompanyId.trim().isNotEmpty) {
+        query = query.eq('delivery_company_id', deliveryCompanyId);
       }
 
       final response = await query

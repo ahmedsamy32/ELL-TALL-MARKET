@@ -392,14 +392,21 @@ class SupabaseService {
   /// تحديث حالة الكابتن (متصل/غير متصل) ووقت التوفر في جدول captains
   static Future<bool> updateCaptainStatus(String userId, String status) async {
     try {
-      final isOnline = status == 'online' || status == 'active';
+      final normalizedStatus = status.trim().toLowerCase();
+      final isBusy = normalizedStatus == 'busy';
+      final isOnline =
+          normalizedStatus == 'online' ||
+          normalizedStatus == 'active' ||
+          isBusy;
+      final isAvailable =
+          normalizedStatus == 'online' || normalizedStatus == 'active';
       await _client
           .from('captains')
           .update({
-            'status': status,
+            'status': normalizedStatus,
             'is_online': isOnline,
-            'is_available': isOnline,
-            'last_available_at': isOnline
+            'is_available': isAvailable,
+            'last_available_at': isAvailable
                 ? DateTime.now().toIso8601String()
                 : null,
             'updated_at': DateTime.now().toIso8601String(),
@@ -407,7 +414,9 @@ class SupabaseService {
           .eq('id', userId)
           .timeout(_defaultTimeout);
 
-      AppLogger.info('Captain status updated: $status (is_online: $isOnline)');
+      AppLogger.info(
+        'Captain status updated: $normalizedStatus (is_online: $isOnline, is_available: $isAvailable)',
+      );
       return true;
     } catch (e) {
       AppLogger.error('Update captain status error', e);

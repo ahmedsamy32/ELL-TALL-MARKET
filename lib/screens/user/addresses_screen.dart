@@ -2144,12 +2144,6 @@ class _AddressListBottomSheet extends StatelessWidget {
                                 PopupMenuButton<String>(
                                   tooltip: 'خيارات',
                                   padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(
-                                    minWidth: 36,
-                                    minHeight: 36,
-                                    maxWidth: 40,
-                                    maxHeight: 40,
-                                  ),
                                   icon: Icon(
                                     Icons.more_vert_rounded,
                                     color: colorScheme.onSurface,

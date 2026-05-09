@@ -589,63 +589,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _handleFacebookLogin() async {
-    setState(() => _isLoading = true);
-
-    try {
-      final authProvider = Provider.of<SupabaseProvider>(
-        context,
-        listen: false,
-      );
-
-      final success = await authProvider.signInWithFacebook();
-
-      if (!mounted) return;
-
-      if (success) {
-        SnackBarHelper.showSuccess(
-          context,
-          '✅ تم تسجيل الدخول بواسطة فيسبوك بنجاح!',
-        );
-
-        // التنقل حسب دور المستخدم
-        await authProvider.refreshProfile();
-        final role = authProvider.currentProfile?.role;
-
-        if (!mounted) return;
-
-        if (role == UserRole.admin) {
-          Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
-        } else if (role == UserRole.deliveryCompanyAdmin) {
-          Navigator.pushReplacementNamed(
-            context,
-            AppRoutes.deliveryCompanyDashboard,
-          );
-        } else if (role == UserRole.merchant) {
-          Navigator.pushReplacementNamed(context, AppRoutes.merchantDashboard);
-        } else if (role == UserRole.captain) {
-          Navigator.pushReplacementNamed(context, AppRoutes.captainDashboard);
-        } else {
-          Navigator.pushReplacementNamed(context, AppRoutes.home);
-        }
-      } else {
-        if (authProvider.error != null) {
-          SnackBarHelper.showError(context, authProvider.error!);
-        }
-      }
-    } catch (e) {
-      if (!mounted) return;
-      SnackBarHelper.showError(
-        context,
-        '❌ حدث خطأ في تسجيل الدخول بواسطة فيسبوك',
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
   void _showPasswordResetDialog() {
     final email = _emailController.text.trim();
     final emailValidation = Validators.validateEmail(email);
@@ -1005,13 +948,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                 onTap: _isLoading ? null : _handleGoogleLogin,
                                 iconPath: 'assets/icons/icons8-google-192.png',
                                 label: 'Google',
-                                enabled: !_isLoading,
-                              ),
-                              const SizedBox(width: 12),
-                              _buildSocialButton(
-                                onTap: _isLoading ? null : _handleFacebookLogin,
-                                iconPath: 'assets/icons/icons8-facebook-96.png',
-                                label: 'Facebook',
                                 enabled: !_isLoading,
                               ),
                             ],
@@ -1547,13 +1483,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                 onTap: _isLoading ? null : _handleGoogleLogin,
                                 iconPath: 'assets/icons/icons8-google-192.png',
                                 label: 'Google',
-                                enabled: !_isLoading,
-                              ),
-                              const SizedBox(width: 12),
-                              _buildSocialButton(
-                                onTap: _isLoading ? null : _handleFacebookLogin,
-                                iconPath: 'assets/icons/icons8-facebook-96.png',
-                                label: 'Facebook',
                                 enabled: !_isLoading,
                               ),
                             ],

@@ -449,32 +449,104 @@ class _OrderFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasDeliveryFee = order.deliveryFee > 0;
+    final productsOnlyTotal =
+        (order.totalAmount - order.deliveryFee - order.taxAmount).clamp(
+          0.0,
+          double.infinity,
+        );
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.grey[50],
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Row(
+      child: Column(
         children: [
-          Icon(Icons.attach_money_rounded, size: 18, color: Colors.grey[700]),
-          const SizedBox(width: 4),
-          Text(
-            'المبلغ الإجمالي:',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[700],
-              fontWeight: FontWeight.w500,
-            ),
+          Row(
+            children: [
+              Icon(
+                Icons.shopping_bag_outlined,
+                size: 17,
+                color: Colors.grey[700],
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'إجمالي المنتجات:',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${productsOnlyTotal.toStringAsFixed(2)} ج.م',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey[800],
+                ),
+              ),
+            ],
           ),
-          const Spacer(),
-          Text(
-            '${order.totalAmount.toStringAsFixed(2)} ج.م',
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1976D2),
+          const SizedBox(height: 6),
+          if (hasDeliveryFee)
+            Row(
+              children: [
+                Icon(
+                  Icons.local_shipping_outlined,
+                  size: 17,
+                  color: Colors.grey[700],
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'رسوم التوصيل:',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[700],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '${order.deliveryFee.toStringAsFixed(2)} ج.م',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey[800],
+                  ),
+                ),
+              ],
             ),
+          if (hasDeliveryFee) const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(
+                Icons.attach_money_rounded,
+                size: 18,
+                color: Colors.grey[700],
+              ),
+              const SizedBox(width: 4),
+              Text(
+                'المبلغ الإجمالي:',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[700],
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${order.totalAmount.toStringAsFixed(2)} ج.م',
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1976D2),
+                ),
+              ),
+            ],
           ),
         ],
       ),

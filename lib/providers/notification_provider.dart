@@ -21,15 +21,22 @@ class NotificationProvider with ChangeNotifier {
   /// الحصول على الإشعارات المفلترة حسب الدور
   List<NotificationModel> getNotificationsForRole(String? role) {
     if (role == null) return _notifications;
-    return _notifications.where((n) => n.targetRole == role).toList();
+    return _notifications.where((n) {
+      if (n.targetRole == role) return true;
+      final audience = n.data?['audience'] as String?;
+      return audience == role;
+    }).toList();
   }
 
   /// الحصول على عدد الإشعارات غير المقروءة حسب الدور
   int getUnreadCountForRole(String? role) {
     if (role == null) return _unreadCount;
-    return _notifications
-        .where((n) => !n.isRead && n.targetRole == role)
-        .length;
+    return _notifications.where((n) {
+      if (n.isRead) return false;
+      if (n.targetRole == role) return true;
+      final audience = n.data?['audience'] as String?;
+      return audience == role;
+    }).length;
   }
 
   void _setLoading(bool value) {
@@ -100,7 +107,7 @@ class NotificationProvider with ChangeNotifier {
           .from('notifications')
           .select()
           .eq('user_id', userId)
-          .eq('target_role', targetRole)
+          .or('target_role.eq.$targetRole,data->>audience.eq.$targetRole')
           .order('created_at', ascending: false);
 
       _notifications = (response as List)
@@ -290,11 +297,14 @@ class NotificationProvider with ChangeNotifier {
     final notification = NotificationModel.fromMap(data);
 
     // تجاهل الإشعار إذا لم يكن من نفس الدور المحمّل حالياً
-    if (_activeRole != null && notification.targetRole != _activeRole) {
-      AppLogger.info(
-        '🔕 تجاهل إشعار realtime (role=${notification.targetRole}, active=$_activeRole)',
-      );
-      return;
+    if (_activeRole != null) {
+      final audience = notification.data?['audience'] as String?;
+      if (notification.targetRole != _activeRole && audience != _activeRole) {
+        AppLogger.info(
+          '🔕 تجاهل إشعار realtime (role=${notification.targetRole}, audience=$audience, active=$_activeRole)',
+        );
+        return;
+      }
     }
 
     // تجنب التكرار

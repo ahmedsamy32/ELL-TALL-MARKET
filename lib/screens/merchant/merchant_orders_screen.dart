@@ -112,6 +112,32 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
     );
   }
 
+  /// فلترة ديناميكية حسب وضع التوصيل:
+  /// - store: كما هي من `MerchantOrderFilter.statuses`
+  /// - app: الطلبات الجاهزة/المؤكدة تعتبر ضمن مرحلة الدليفري
+  bool _matchesFilterForCurrentDeliveryMode(
+    MerchantOrderFilter filter,
+    OrderStatus status,
+  ) {
+    if (!_isAppDelivery) return filter.matches(status);
+
+    switch (filter) {
+      case MerchantOrderFilter.newOrders:
+        return status == OrderStatus.pending;
+      case MerchantOrderFilter.inProgress:
+        return status == OrderStatus.preparing;
+      case MerchantOrderFilter.delivery:
+        return status == OrderStatus.ready ||
+            status == OrderStatus.confirmed ||
+            status == OrderStatus.pickedUp ||
+            status == OrderStatus.inTransit;
+      case MerchantOrderFilter.completed:
+        return status == OrderStatus.delivered;
+      case MerchantOrderFilter.cancelled:
+        return status == OrderStatus.cancelled;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -237,7 +263,7 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
         children: MerchantOrderFilter.values.map((filter) {
           final count = orders.where((o) {
             final s = OrderStatusExtension.fromDbValue(o.status.value);
-            return filter.matches(s);
+            return _matchesFilterForCurrentDeliveryMode(filter, s);
           }).length;
           final isSelected = _selectedFilter == filter;
 
@@ -353,7 +379,7 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
 
     final filteredOrders = provider.orders.where((order) {
       final status = OrderStatusExtension.fromDbValue(order.status.value);
-      return _selectedFilter.matches(status);
+      return _matchesFilterForCurrentDeliveryMode(_selectedFilter, status);
     }).toList();
 
     if (filteredOrders.isEmpty) {
@@ -469,6 +495,7 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (context) {
         final orderStatus = OrderStatusExtension.fromDbValue(
           order.status.value,
@@ -632,12 +659,19 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
   ) {
     // الأزرار المشتركة لكل الطلبات
     if (orderStatus == OrderStatus.pending) {
+      final acceptText = _isAppDelivery
+          ? 'قبول وتحويل للدليفري 🚚'
+          : 'قبول وبدء التحضير';
+      final acceptStatus = _isAppDelivery
+          ? OrderStatus.ready
+          : OrderStatus.preparing;
+
       return [
         _buildActionButton(
-          'قبول وبدء التحضير',
+          acceptText,
           Icons.check,
           Colors.green,
-          () => _updateOrderStatus(order, OrderStatus.preparing),
+          () => _updateOrderStatus(order, acceptStatus),
         ),
         _buildActionButton(
           'رفض الطلب',
@@ -649,6 +683,17 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
     }
 
     if (orderStatus == OrderStatus.confirmed) {
+      if (_isAppDelivery) {
+        return [
+          _buildActionButton(
+            'تحويل للدليفري 🚚',
+            Icons.local_shipping_rounded,
+            Colors.orange,
+            () => _updateOrderStatus(order, OrderStatus.ready),
+          ),
+        ];
+      }
+
       return [
         _buildActionButton(
           'بدء التحضير',
@@ -663,8 +708,8 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
       if (_isAppDelivery) {
         return [
           _buildActionButton(
-            'جاهز - تسليم للكابتن 🚚',
-            Icons.delivery_dining,
+            'تحويل للدليفري 🚚',
+            Icons.local_shipping_rounded,
             Colors.orange,
             () => _updateOrderStatus(order, OrderStatus.ready),
           ),
@@ -685,11 +730,26 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
     if (orderStatus == OrderStatus.ready) {
       if (_isAppDelivery) {
         return [
-          _buildActionButton(
-            'تسليم للكابتن 🚚',
-            Icons.delivery_dining,
-            Colors.orange,
-            () => _updateOrderStatus(order, OrderStatus.ready),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Card(
+              color: Colors.blue[50],
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Icon(Icons.local_shipping_rounded, color: Colors.blue[700]),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'تم تحويل الطلب للدليفري وهو بانتظار قبول شركة التوصيل',
+                        style: TextStyle(color: Colors.blue[700], fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ];
       } else {

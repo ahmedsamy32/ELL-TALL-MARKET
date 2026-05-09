@@ -67,6 +67,7 @@ class CaptainModel with BaseModelMixin {
   final Map<String, dynamic> workingHours;
   final List<dynamic> workingAreas;
   final String? contactPhone;
+  final String? deliveryCompanyId;
 
   // بيانات إضافية
   final Map<String, dynamic> additionalData;
@@ -107,6 +108,7 @@ class CaptainModel with BaseModelMixin {
     this.workingHours = const {},
     this.workingAreas = const [],
     this.contactPhone,
+    this.deliveryCompanyId,
     this.additionalData = const {},
     this.lastAvailableAt,
     this.fullName,
@@ -150,6 +152,7 @@ class CaptainModel with BaseModelMixin {
           ? List<dynamic>.from(map['working_areas'] as List)
           : [],
       contactPhone: map['contact_phone'] as String?,
+      deliveryCompanyId: map['delivery_company_id'] as String?,
       additionalData: map['additional_data'] is Map
           ? Map<String, dynamic>.from(map['additional_data'] as Map)
           : {},
@@ -205,6 +208,7 @@ class CaptainModel with BaseModelMixin {
       'working_hours': workingHours,
       'working_areas': workingAreas,
       'contact_phone': contactPhone,
+      'delivery_company_id': deliveryCompanyId,
       'additional_data': additionalData,
       'last_available_at': lastAvailableAt?.toIso8601String(),
       'full_name': fullName,

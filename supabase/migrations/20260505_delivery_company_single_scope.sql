@@ -1,58 +1,36 @@
--- Delivery Company Admin Role (scoped permissions)
--- 1) Adds delivery_company_admin to profiles.role CHECK
--- 2) Updates admin_create_user to allow:
---    - owner admin: create any allowed role
---    - delivery_company_admin: create captain only
+-- Unify captain ownership by delivery_company_id only
+-- Keep delivery_companies and captains, remove delivery_admin_captains usage.
 
+-- 1) Backfill captains.delivery_company_id from old mapping table (if table still exists).
 DO $$
-DECLARE
-  c RECORD;
 BEGIN
-  FOR c IN
-    SELECT conname
-    FROM pg_constraint
-    WHERE conrelid = 'public.profiles'::regclass
-      AND contype = 'c'
-      AND pg_get_constraintdef(oid) ILIKE '%role%'
-  LOOP
-    EXECUTE format('ALTER TABLE public.profiles DROP CONSTRAINT IF EXISTS %I', c.conname);
-  END LOOP;
+  IF to_regclass('public.delivery_admin_captains') IS NOT NULL THEN
+    UPDATE public.captains c
+    SET delivery_company_id = dc.id
+    FROM public.delivery_admin_captains dac
+    JOIN public.delivery_companies dc ON dc.admin_id = dac.admin_id
+    WHERE c.id = dac.captain_id
+      AND c.delivery_company_id IS NULL;
+  END IF;
 END $$;
 
-ALTER TABLE public.profiles
-ADD CONSTRAINT profiles_role_check
-CHECK (role IN ('client', 'merchant', 'captain', 'admin', 'delivery_company_admin'));
-
--- Delivery scope mapping (which captains belong to which delivery admin)
-CREATE TABLE IF NOT EXISTS public.delivery_admin_captains (
-  admin_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-  captain_id UUID NOT NULL REFERENCES public.captains(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  PRIMARY KEY (admin_id, captain_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_delivery_admin_captains_admin
-  ON public.delivery_admin_captains(admin_id);
-CREATE INDEX IF NOT EXISTS idx_delivery_admin_captains_captain
-  ON public.delivery_admin_captains(captain_id);
-
-ALTER TABLE public.delivery_admin_captains ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Owner admins manage delivery mapping" ON public.delivery_admin_captains;
-CREATE POLICY "Owner admins manage delivery mapping" ON public.delivery_admin_captains
-  FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
-
-DROP POLICY IF EXISTS "Delivery admins view own mapping" ON public.delivery_admin_captains;
-CREATE POLICY "Delivery admins view own mapping" ON public.delivery_admin_captains
+-- 2) Captains visibility policy: only same company for delivery admins.
+DROP POLICY IF EXISTS "Authenticated can view active captains" ON public.captains;
+DROP POLICY IF EXISTS "Delivery admins view own captains" ON public.captains;
+CREATE POLICY "Delivery admins view own captains" ON public.captains
   FOR SELECT TO authenticated
   USING (
-    auth.uid() = admin_id
-    AND EXISTS (
-      SELECT 1 FROM public.profiles p
-      WHERE p.id = auth.uid() AND p.role = 'delivery_company_admin'
+    EXISTS (
+      SELECT 1
+      FROM public.delivery_companies dc
+      JOIN public.profiles p ON p.id = auth.uid()
+      WHERE dc.id = captains.delivery_company_id
+        AND dc.admin_id = auth.uid()
+        AND p.role = 'delivery_company_admin'
     )
   );
 
+-- 3) admin_create_user: set captain.delivery_company_id directly from creator company.
 CREATE OR REPLACE FUNCTION public.admin_create_user(
   user_email TEXT,
   user_password TEXT,
@@ -70,6 +48,7 @@ DECLARE
   caller_role TEXT;
   new_user_id UUID;
   normalized_role TEXT;
+  caller_company_id UUID;
 BEGIN
   IF caller_uid IS NULL THEN
     RETURN json_build_object('success', false, 'error', 'Failed to check user auth status');
@@ -89,7 +68,6 @@ BEGIN
     RETURN json_build_object('success', false, 'error', 'Invalid role');
   END IF;
 
-  -- Delivery admin is scoped to delivery only: can create captains only
   IF caller_role = 'delivery_company_admin' AND normalized_role <> 'captain' THEN
     RETURN json_build_object('success', false, 'error', 'Delivery admin can create captains only');
   END IF;
@@ -104,6 +82,19 @@ BEGIN
 
   IF EXISTS (SELECT 1 FROM auth.users WHERE email = LOWER(TRIM(user_email))) THEN
     RETURN json_build_object('success', false, 'error', 'Email already registered');
+  END IF;
+
+  IF caller_role = 'delivery_company_admin' AND normalized_role = 'captain' THEN
+    SELECT dc.id
+    INTO caller_company_id
+    FROM public.delivery_companies dc
+    WHERE dc.admin_id = caller_uid
+    ORDER BY dc.created_at DESC
+    LIMIT 1;
+
+    IF caller_company_id IS NULL THEN
+      RETURN json_build_object('success', false, 'error', 'No delivery company linked to this admin. Owner must create company first');
+    END IF;
   END IF;
 
   new_user_id := gen_random_uuid();
@@ -153,6 +144,7 @@ BEGIN
       is_active,
       verification_status,
       contact_phone,
+      delivery_company_id,
       created_at,
       updated_at
     )
@@ -164,6 +156,7 @@ BEGIN
       TRUE,
       'pending',
       user_phone,
+      caller_company_id,
       NOW(),
       NOW()
     )
@@ -174,14 +167,8 @@ BEGIN
       is_active = EXCLUDED.is_active,
       verification_status = EXCLUDED.verification_status,
       contact_phone = EXCLUDED.contact_phone,
+      delivery_company_id = COALESCE(EXCLUDED.delivery_company_id, public.captains.delivery_company_id),
       updated_at = NOW();
-  END IF;
-
-  -- Auto-link new captain to the delivery admin who created him.
-  IF caller_role = 'delivery_company_admin' AND normalized_role = 'captain' THEN
-    INSERT INTO public.delivery_admin_captains(admin_id, captain_id)
-    VALUES (caller_uid, new_user_id)
-    ON CONFLICT (admin_id, captain_id) DO NOTHING;
   END IF;
 
   RETURN json_build_object('success', true, 'user_id', new_user_id, 'message', 'User created successfully');
@@ -190,6 +177,7 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
+-- 4) admin_update_user: delivery admin can update captains in same delivery_company_id only.
 CREATE OR REPLACE FUNCTION public.admin_update_user(
   p_user_id TEXT,
   new_full_name TEXT DEFAULT NULL,
@@ -224,19 +212,21 @@ BEGIN
     RETURN json_build_object('success', false, 'error', 'User not found');
   END IF;
 
-  -- Delivery admin is scoped to captains only
   IF caller_role = 'delivery_company_admin' THEN
     IF target_role <> 'captain' THEN
       RETURN json_build_object('success', false, 'error', 'Delivery admin can update captains only');
     END IF;
+
     IF NOT EXISTS (
       SELECT 1
-      FROM public.delivery_admin_captains dac
-      WHERE dac.admin_id = caller_uid
-        AND dac.captain_id::text = uid
+      FROM public.captains c
+      JOIN public.delivery_companies dc ON dc.id = c.delivery_company_id
+      WHERE c.id::text = uid
+        AND dc.admin_id = caller_uid
     ) THEN
       RETURN json_build_object('success', false, 'error', 'Captain is خارج نطاق مسؤول الدليفري');
     END IF;
+
     IF new_role IS NOT NULL AND lower(trim(new_role)) <> 'captain' THEN
       RETURN json_build_object('success', false, 'error', 'Delivery admin cannot change role from captain');
     END IF;
@@ -302,6 +292,7 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
+-- 5) admin_toggle_user_status: delivery admin scoped by captain.delivery_company_id.
 CREATE OR REPLACE FUNCTION public.admin_toggle_user_status(p_user_id TEXT, p_active BOOLEAN)
 RETURNS JSON
 LANGUAGE plpgsql
@@ -334,9 +325,10 @@ BEGIN
 
   IF caller_role = 'delivery_company_admin' AND NOT EXISTS (
     SELECT 1
-    FROM public.delivery_admin_captains dac
-    WHERE dac.admin_id = caller_uid
-      AND dac.captain_id::text = uid
+    FROM public.captains c
+    JOIN public.delivery_companies dc ON dc.id = c.delivery_company_id
+    WHERE c.id::text = uid
+      AND dc.admin_id = caller_uid
   ) THEN
     RETURN json_build_object('success', false, 'error', 'Captain is خارج نطاق مسؤول الدليفري');
   END IF;
@@ -370,6 +362,7 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
+-- 6) admin_delete_user: delivery admin scoped by captain.delivery_company_id.
 CREATE OR REPLACE FUNCTION public.admin_delete_user(p_user_id TEXT)
 RETURNS JSON
 LANGUAGE plpgsql
@@ -403,9 +396,10 @@ BEGIN
 
   IF caller_role = 'delivery_company_admin' AND NOT EXISTS (
     SELECT 1
-    FROM public.delivery_admin_captains dac
-    WHERE dac.admin_id = caller_uid
-      AND dac.captain_id::text = uid
+    FROM public.captains c
+    JOIN public.delivery_companies dc ON dc.id = c.delivery_company_id
+    WHERE c.id::text = uid
+      AND dc.admin_id = caller_uid
   ) THEN
     RETURN json_build_object('success', false, 'error', 'Captain is خارج نطاق مسؤول الدليفري');
   END IF;
@@ -436,29 +430,13 @@ GRANT EXECUTE ON FUNCTION public.admin_delete_user(TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_update_user(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.admin_toggle_user_status(TEXT, BOOLEAN) TO authenticated;
 
-INSERT INTO public.captains (
-  id,
-  status,
-  is_online,
-  is_available,
-  is_active,
-  verification_status,
-  contact_phone,
-  created_at,
-  updated_at
-)
-SELECT
-  p.id,
-  'offline',
-  FALSE,
-  TRUE,
-  TRUE,
-  'pending',
-  p.phone,
-  p.created_at,
-  NOW()
-FROM public.profiles p
-LEFT JOIN public.captains c ON c.id = p.id
-WHERE p.role = 'captain'
-  AND c.id IS NULL
-ON CONFLICT (id) DO NOTHING;
+-- 7) Drop old mapping artifacts.
+DO $$
+BEGIN
+  IF to_regclass('public.delivery_admin_captains') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS trg_delivery_admin_captains_company ON public.delivery_admin_captains';
+  END IF;
+END $$;
+
+DROP FUNCTION IF EXISTS public.sync_captain_company_from_admin();
+DROP TABLE IF EXISTS public.delivery_admin_captains;

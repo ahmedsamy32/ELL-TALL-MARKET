@@ -492,53 +492,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  // تسجيل بواسطة Facebook
-  Future<void> _handleFacebookRegister() async {
-    try {
-      AppLogger.debug("فحص الاتصال قبل تسجيل Facebook...");
-      if (!await _checkInternetAndShowDialog()) return;
-
-      if (!mounted) return;
-
-      AppLogger.debug("بدء تسجيل دخول Facebook...");
-      final authProvider = Provider.of<SupabaseProvider>(
-        context,
-        listen: false,
-      );
-
-      SnackBarHelper.showLoading(context, '🔄 جاري التسجيل بواسطة فيسبوك...');
-
-      final success = await authProvider.signInWithFacebook();
-      if (!mounted) return;
-
-      // إخفاء مؤشر التحميل
-      ScaffoldMessenger.of(context).clearSnackBars();
-
-      AppLogger.info("نتيجة تسجيل Facebook: $success");
-
-      if (success) {
-        AppLogger.info("نجح تسجيل Facebook");
-        SnackBarHelper.showSuccess(
-          context,
-          '✅ تم التسجيل بواسطة فيسبوك بنجاح!',
-        );
-        Navigator.pushReplacementNamed(context, AppRoutes.home);
-      } else {
-        AppLogger.warning("فشل تسجيل Facebook");
-        SnackBarHelper.showError(context, '❌ فشل التسجيل بواسطة فيسبوك');
-      }
-    } catch (e) {
-      AppLogger.error("خطأ في Facebook", e);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).clearSnackBars();
-      SnackBarHelper.showError(
-        context,
-        '❌ حدث خطأ في التسجيل بواسطة فيسبوك',
-        duration: const Duration(seconds: 4),
-      );
-    }
-  }
-
   // عرض حوار عدم وجود اتصال بالإنترنت
   void _showNoInternetDialog() {
     showDialog(
@@ -1302,19 +1255,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     label: 'Google',
                     backgroundColor: Colors.white,
                     borderColor: Colors.red.shade100,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                // زر Facebook
-                Expanded(
-                  child: _buildSocialButton(
-                    onTap: authProvider.isLoading
-                        ? null
-                        : _handleFacebookRegister,
-                    iconPath: 'assets/icons/icons8-facebook-96.png',
-                    label: 'Facebook',
-                    backgroundColor: Colors.white,
-                    borderColor: Colors.blue.shade100,
                   ),
                 ),
               ],

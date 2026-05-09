@@ -23,6 +23,7 @@ import 'firebase_options.dart';
 // Core & Utils
 import 'core/logger.dart';
 import 'utils/app_routes.dart';
+import 'utils/navigation_service.dart';
 
 // Services
 import 'services/network_manager.dart';
@@ -57,40 +58,6 @@ import 'generated/l10n.dart';
 // -----------------------------------------------------------------------------
 // SERVICES & UTILITIES
 // -----------------------------------------------------------------------------
-
-/// Service providing global access to navigation state and common navigation methods.
-class NavigationService {
-  static GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
-
-  static Future<dynamic> navigateTo(String routeName, {Object? arguments}) {
-    final navigatorState = navigatorKey.currentState;
-    if (navigatorState == null) {
-      AppLogger.error('❌ NavigationService: navigatorState is null');
-      return Future.value(null);
-    }
-    return navigatorState.pushNamed(routeName, arguments: arguments);
-  }
-
-  static void goBack() {
-    final navigatorState = navigatorKey.currentState;
-    if (navigatorState == null) {
-      AppLogger.error('❌ NavigationService: navigatorState is null');
-      return;
-    }
-    if (navigatorState.canPop()) {
-      navigatorState.pop();
-    }
-  }
-
-  static Future<dynamic> replaceWith(String routeName, {Object? arguments}) {
-    final navigatorState = navigatorKey.currentState;
-    if (navigatorState == null) {
-      AppLogger.error('❌ NavigationService: navigatorState is null');
-      return Future.value(null);
-    }
-    return navigatorState.pushReplacementNamed(routeName, arguments: arguments);
-  }
-}
 
 /// Handler for Firebase Messaging background messages.
 @pragma('vm:entry-point')

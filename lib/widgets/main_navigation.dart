@@ -8,7 +8,6 @@ import 'package:ell_tall_market/screens/user/home_screen.dart';
 import 'package:ell_tall_market/screens/user/order_history_screen.dart';
 import 'package:ell_tall_market/screens/user/favorites_screen.dart';
 import 'package:ell_tall_market/screens/user/profile_screen.dart';
-import 'package:ell_tall_market/screens/shared/advanced_map_screen.dart';
 import 'package:ell_tall_market/screens/common/notifications_screen.dart';
 import 'package:ell_tall_market/widgets/role_based_drawer.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
@@ -47,7 +46,6 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
   // Location state
   String? _currentAddress;
   bool _isLoadingLocation = false;
-  LatLng? _selectedPosition;
 
   final GoogleMapsApiService _mapsApi = GoogleMapsApiService();
 
@@ -134,7 +132,6 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
       final address = prefs.getString('last_address');
 
       if (lat != null && lng != null && mounted) {
-        _selectedPosition = LatLng(lat, lng);
         final locationProvider = context.read<LocationProvider>();
         locationProvider.setLocation(latitude: lat, longitude: lng);
 
@@ -242,10 +239,6 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
       final lastPosition = await Geolocator.getLastKnownPosition();
       if (lastPosition != null && mounted) {
         // عرض الموقع فوراً بدون انتظار GPS
-        _selectedPosition = LatLng(
-          lastPosition.latitude,
-          lastPosition.longitude,
-        );
         final locationProvider = context.read<LocationProvider>();
         locationProvider.setLocation(
           latitude: lastPosition.latitude,
@@ -300,10 +293,6 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
       // ━━━━━ الخطوة 3: تحديث بالموقع الدقيق ━━━━━
       if (!mounted) return;
 
-      _selectedPosition = LatLng(
-        accuratePosition.latitude,
-        accuratePosition.longitude,
-      );
       final locationProvider = context.read<LocationProvider>();
       locationProvider.setLocation(
         latitude: accuratePosition.latitude,
@@ -536,53 +525,14 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
                     _buildAddressOption(
                       context,
                       title: 'التوصيل إلى عنوان آخر',
-                      subtitle: 'اختر موقع على الخريطة',
+                      subtitle: 'تم إيقاف اختيار الموقع من الخريطة مؤقتاً',
                       icon: Icons.add_location_alt,
-                      onTap: () async {
+                      onTap: () {
                         Navigator.pop(parentContext);
-
-                        final messenger = ScaffoldMessenger.of(parentContext);
-
-                        // الحصول على userId من authProvider
-                        final result = await Navigator.push(
-                          parentContext,
-                          MaterialPageRoute(
-                            builder: (context) => AdvancedMapScreen(
-                              userType: MapUserType.customer,
-                              actionType: MapActionType.pickLocation,
-                              initialPosition: _selectedPosition,
-                              onLocationSelected: (position, address) {
-                                AppLogger.info('موقع محدد: $address');
-                              },
-                            ),
-                          ),
-                        );
-
-                        if (!mounted) return;
-                        if (result == null) return;
-
-                        final pos = result['position'] as LatLng?;
-                        setState(() {
-                          _selectedPosition = pos;
-                          _currentAddress = result['address'];
-                        });
-
-                        // تحديث LocationProvider وجلب المتاجر القريبة
-                        if (pos != null) {
-                          final locationProvider = context
-                              .read<LocationProvider>();
-                          locationProvider.setLocation(
-                            latitude: pos.latitude,
-                            longitude: pos.longitude,
-                            address: result['address'],
-                          );
-                          _fetchNearbyStores(pos.latitude, pos.longitude);
-                        }
-
-                        messenger.showSnackBar(
-                          SnackBar(
+                        ScaffoldMessenger.of(parentContext).showSnackBar(
+                          const SnackBar(
                             content: Text(
-                              'تم تحديد العنوان: ${result['address']}',
+                              'تم إيقاف اختيار الموقع من الخريطة مؤقتاً',
                             ),
                             behavior: SnackBarBehavior.floating,
                           ),

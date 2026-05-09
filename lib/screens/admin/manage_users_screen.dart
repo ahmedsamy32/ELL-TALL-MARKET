@@ -1,3 +1,7 @@
+import 'dart:typed_data';
+import 'package:image_picker/image_picker.dart';
+import 'package:ell_tall_market/services/supabase_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
@@ -1017,442 +1021,589 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
     UserRole selectedRole = user.role; // حفظ الدور الحالي
     bool obscurePassword = true; // متغير لإظهار/إخفاء كلمة المرور
 
+    final imagePicker = ImagePicker();
+    XFile? pickedImage;
+    Uint8List? pickedImageBytes;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => SafeArea(
-          child: SingleChildScrollView(
-            child: Container(
-              margin: const EdgeInsets.only(top: 20),
-              padding: const EdgeInsets.all(24),
-              constraints: const BoxConstraints(maxWidth: 500),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(24),
+        builder: (context, setSheetState) {
+          Future<void> pickAvatarImage() async {
+            try {
+              final file = await imagePicker.pickImage(
+                source: ImageSource.gallery,
+                imageQuality: 85,
+                maxWidth: 1024,
+              );
+
+              if (file == null) return;
+
+              final bytes = await file.readAsBytes();
+              if (!context.mounted) return;
+              setSheetState(() {
+                pickedImage = file;
+                pickedImageBytes = bytes;
+              });
+            } catch (e) {
+              AppLogger.error('Pick user avatar error', e);
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('فشل اختيار الصورة، حاول مرة أخرى'),
+                  behavior: SnackBarBehavior.floating,
                 ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                          Icons.edit,
-                          color: Colors.blue,
-                          size: 24,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Text(
-                        'تعديل المستخدم',
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).colorScheme.onSurface,
-                          letterSpacing: -0.5,
-                          height: 1.2,
-                        ),
-                      ),
-                    ],
+              );
+            }
+          }
+
+          return SafeArea(
+            child: SingleChildScrollView(
+              child: Container(
+                margin: const EdgeInsets.only(top: 20),
+                padding: const EdgeInsets.all(24),
+                constraints: const BoxConstraints(maxWidth: 500),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
                   ),
-                  const SizedBox(height: 24),
-                  TextFormField(
-                    controller: nameController,
-                    decoration: InputDecoration(
-                      labelText: 'الاسم الكامل',
-                      prefixIcon: const Icon(Icons.person),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: emailController,
-                    decoration: InputDecoration(
-                      labelText: 'البريد الإلكتروني',
-                      prefixIcon: const Icon(Icons.email),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                    ),
-                    keyboardType: TextInputType.emailAddress,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: phoneController,
-                    decoration: InputDecoration(
-                      labelText: 'رقم الهاتف',
-                      prefixIcon: const Icon(Icons.phone),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                    ),
-                    keyboardType: TextInputType.phone,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: passwordController,
-                    decoration: InputDecoration(
-                      labelText: 'كلمة المرور',
-                      prefixIcon: const Icon(Icons.lock),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          obscurePassword
-                              ? Icons.visibility_outlined
-                              : Icons.visibility_off_outlined,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            obscurePassword = !obscurePassword;
-                          });
-                        },
-                        tooltip: obscurePassword
-                            ? 'إظهار كلمة المرور'
-                            : 'إخفاء كلمة المرور',
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      filled: true,
-                      fillColor: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                    ),
-                    obscureText: obscurePassword,
-                  ),
-                  const SizedBox(height: 16),
-                  // Role Selection
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest
-                          .withValues(alpha: 0.3),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.outline.withValues(alpha: 0.3),
-                      ),
-                    ),
-                    child: DropdownButtonFormField<UserRole>(
-                      initialValue: selectedRole,
-                      decoration: InputDecoration(
-                        labelText: 'الدور',
-                        prefixIcon: Icon(_getRoleIcon(selectedRole)),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 12,
-                        ),
-                      ),
-                      items: [
-                        DropdownMenuItem(
-                          value: UserRole.client,
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.person_outline,
-                                color: AntColors.primary,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 8),
-                              const Text('عميل'),
-                            ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.edit,
+                            color: Colors.blue,
+                            size: 24,
                           ),
                         ),
-                        DropdownMenuItem(
-                          value: UserRole.merchant,
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.store_outlined,
-                                color: AntColors.success,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 8),
-                              const Text('تاجر'),
-                            ],
-                          ),
-                        ),
-                        DropdownMenuItem(
-                          value: UserRole.captain,
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.delivery_dining_outlined,
-                                color: AntColors.warning,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 8),
-                              const Text('كابتن'),
-                            ],
-                          ),
-                        ),
-                        DropdownMenuItem(
-                          value: UserRole.admin,
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.admin_panel_settings_outlined,
-                                color: AntColors.error,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 8),
-                              const Text('مدير'),
-                            ],
-                          ),
-                        ),
-                        DropdownMenuItem(
-                          value: UserRole.deliveryCompanyAdmin,
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.local_shipping_outlined,
-                                color: Colors.indigo,
-                                size: 20,
-                              ),
-                              const SizedBox(width: 8),
-                              const Text('مسؤول شركة توصيل'),
-                            ],
+                        const SizedBox(width: 16),
+                        Text(
+                          'تعديل المستخدم',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.onSurface,
+                            letterSpacing: -0.5,
+                            height: 1.2,
                           ),
                         ),
                       ],
-                      onChanged: (UserRole? newRole) {
-                        if (newRole != null) {
-                          setState(() {
-                            selectedRole = newRole;
-                          });
-                        }
-                      },
-                      borderRadius: BorderRadius.circular(12),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(context),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AntColors.textSecondary,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 12,
-                            ),
-                            side: BorderSide(
-                              color: AntColors.textSecondary.withValues(
-                                alpha: 0.3,
+                    const SizedBox(height: 24),
+
+                    // Avatar Section
+                    Center(
+                      child: Stack(
+                        children: [
+                          Container(
+                            width: 100,
+                            height: 100,
+                            decoration: BoxDecoration(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.surfaceContainerHighest,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.blue.withValues(alpha: 0.5),
+                                width: 2,
                               ),
-                              width: 1.5,
+                              image: pickedImageBytes != null
+                                  ? DecorationImage(
+                                      image: MemoryImage(pickedImageBytes!),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : user.avatarUrl != null &&
+                                        user.avatarUrl!.isNotEmpty
+                                  ? DecorationImage(
+                                      image: NetworkImage(user.avatarUrl!),
+                                      fit: BoxFit.cover,
+                                    )
+                                  : null,
                             ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                            child:
+                                pickedImageBytes == null &&
+                                    (user.avatarUrl == null ||
+                                        user.avatarUrl!.isEmpty)
+                                ? Icon(
+                                    Icons.person,
+                                    size: 50,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  )
+                                : null,
+                          ),
+                          Positioned(
+                            bottom: 0,
+                            right: 0,
+                            child: Material(
+                              color: Colors.blue,
+                              shape: const CircleBorder(),
+                              child: InkWell(
+                                onTap: pickAvatarImage,
+                                customBorder: const CircleBorder(),
+                                child: const Padding(
+                                  padding: EdgeInsets.all(8.0),
+                                  child: Icon(
+                                    Icons.camera_alt,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                          child: Text(
-                            'إلغاء',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
+                    TextFormField(
+                      controller: nameController,
+                      decoration: InputDecoration(
+                        labelText: 'الاسم الكامل',
+                        prefixIcon: const Icon(Icons.person),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.3),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: emailController,
+                      decoration: InputDecoration(
+                        labelText: 'البريد الإلكتروني',
+                        prefixIcon: const Icon(Icons.email),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.3),
+                      ),
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: phoneController,
+                      decoration: InputDecoration(
+                        labelText: 'رقم الهاتف',
+                        prefixIcon: const Icon(Icons.phone),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.3),
+                      ),
+                      keyboardType: TextInputType.phone,
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: passwordController,
+                      decoration: InputDecoration(
+                        labelText: 'كلمة المرور',
+                        prefixIcon: const Icon(Icons.lock),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              obscurePassword = !obscurePassword;
+                            });
+                          },
+                          tooltip: obscurePassword
+                              ? 'إظهار كلمة المرور'
+                              : 'إخفاء كلمة المرور',
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        filled: true,
+                        fillColor: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.3),
+                      ),
+                      obscureText: obscurePassword,
+                    ),
+                    const SizedBox(height: 16),
+                    // Role Selection
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .surfaceContainerHighest
+                            .withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.outline.withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: DropdownButtonFormField<UserRole>(
+                        initialValue: selectedRole,
+                        decoration: InputDecoration(
+                          labelText: 'الدور',
+                          prefixIcon: Icon(_getRoleIcon(selectedRole)),
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                        ),
+                        items: [
+                          DropdownMenuItem(
+                            value: UserRole.client,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.person_outline,
+                                  color: AntColors.primary,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                const Text('عميل'),
+                              ],
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: UserRole.merchant,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.store_outlined,
+                                  color: AntColors.success,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                const Text('تاجر'),
+                              ],
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: UserRole.captain,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.delivery_dining_outlined,
+                                  color: AntColors.warning,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                const Text('كابتن'),
+                              ],
+                            ),
+                          ),
+                          DropdownMenuItem(
+                            value: UserRole.admin,
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.admin_panel_settings_outlined,
+                                  color: AntColors.error,
+                                  size: 20,
+                                ),
+                                const SizedBox(width: 8),
+                                const Text('مدير'),
+                              ],
+                            ),
+                          ),
+                        ],
+                        onChanged: (UserRole? newRole) {
+                          if (newRole != null) {
+                            setSheetState(() {
+                              selectedRole = newRole;
+                            });
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AntColors.textSecondary,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 12,
+                              ),
+                              side: BorderSide(
+                                color: AntColors.textSecondary.withValues(
+                                  alpha: 0.3,
+                                ),
+                                width: 1.5,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: Text(
+                              'إلغاء',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () async {
-                            // التحقق من صحة البيانات
-                            if (nameController.text.trim().isEmpty ||
-                                emailController.text.trim().isEmpty ||
-                                phoneController.text.trim().isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Row(
-                                    children: [
-                                      Icon(Icons.error, color: Colors.white),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Text(
-                                          'يرجى تعبئة جميع الحقول الإلزامية',
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              // التحقق من صحة البيانات
+                              if (nameController.text.trim().isEmpty ||
+                                  emailController.text.trim().isEmpty ||
+                                  phoneController.text.trim().isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Row(
+                                      children: [
+                                        Icon(Icons.error, color: Colors.white),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            'يرجى تعبئة جميع الحقول الإلزامية',
+                                          ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                  backgroundColor: AntColors.error,
-                                  behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-
-                            // التحقق من صحة البريد الإلكتروني
-                            final emailRegex = RegExp(
-                              r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
-                            );
-                            if (!emailRegex.hasMatch(
-                              emailController.text.trim(),
-                            )) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Row(
-                                    children: [
-                                      Icon(Icons.error, color: Colors.white),
-                                      const SizedBox(width: 12),
-                                      Expanded(
-                                        child: Text(
-                                          'البريد الإلكتروني غير صحيح',
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  backgroundColor: AntColors.error,
-                                  behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-
-                            Navigator.pop(context);
-
-                            final messenger = ScaffoldMessenger.of(context);
-
-                            // عرض مؤشر التحميل
-                            messenger.showSnackBar(
-                              SnackBar(
-                                duration: const Duration(hours: 1),
-                                behavior: SnackBarBehavior.floating,
-                                backgroundColor: Theme.of(
-                                  context,
-                                ).colorScheme.surface,
-                                content: Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: AppShimmer.wrap(
-                                        context,
-                                        child: AppShimmer.circle(
-                                          context,
-                                          size: 20,
-                                        ),
-                                      ),
+                                      ],
                                     ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        'جاري تحديث بيانات المستخدم...',
-                                        style: TextStyle(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
+                                    backgroundColor: AntColors.error,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
                                     ),
-                                  ],
-                                ),
-                              ),
-                            );
+                                  ),
+                                );
+                                return;
+                              }
 
-                            try {
-                              // تحديث بيانات المستخدم
-                              final authProvider =
-                                  Provider.of<SupabaseProvider>(
+                              // التحقق من صحة البريد الإلكتروني
+                              final emailRegex = RegExp(
+                                r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
+                              );
+                              if (!emailRegex.hasMatch(
+                                emailController.text.trim(),
+                              )) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Row(
+                                      children: [
+                                        Icon(Icons.error, color: Colors.white),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Text(
+                                            'البريد الإلكتروني غير صحيح',
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    backgroundColor: AntColors.error,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+
+                              Navigator.pop(context);
+
+                              final messenger = ScaffoldMessenger.of(context);
+
+                              // عرض مؤشر التحميل
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  duration: const Duration(hours: 1),
+                                  behavior: SnackBarBehavior.floating,
+                                  backgroundColor: Theme.of(
                                     context,
-                                    listen: false,
-                                  );
+                                  ).colorScheme.surface,
+                                  content: Row(
+                                    children: [
+                                      SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: AppShimmer.wrap(
+                                          context,
+                                          child: AppShimmer.circle(
+                                            context,
+                                            size: 20,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          'جاري تحديث بيانات المستخدم...',
+                                          style: TextStyle(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
 
-                              final success = await authProvider
-                                  .updateUserByAdmin(
-                                    userId: user.id,
-                                    fullName: nameController.text.trim(),
-                                    email: emailController.text.trim(),
-                                    phone: phoneController.text.trim(),
-                                    password: passwordController.text.isNotEmpty
-                                        ? passwordController.text.trim()
-                                        : null,
-                                    role: selectedRole,
-                                  )
-                                  .timeout(
-                                    const Duration(seconds: 15),
-                                    onTimeout: () => false,
-                                  );
+                              try {
+                                // تحديث بيانات المستخدم
+                                final authProvider =
+                                    Provider.of<SupabaseProvider>(
+                                      context,
+                                      listen: false,
+                                    );
 
-                              messenger.hideCurrentSnackBar();
+                                final success = await authProvider
+                                    .updateUserByAdmin(
+                                      userId: user.id,
+                                      fullName: nameController.text.trim(),
+                                      email: emailController.text.trim(),
+                                      phone: phoneController.text.trim(),
+                                      password:
+                                          passwordController.text.isNotEmpty
+                                          ? passwordController.text.trim()
+                                          : null,
+                                      role: selectedRole,
+                                    )
+                                    .timeout(
+                                      const Duration(seconds: 15),
+                                      onTimeout: () => false,
+                                    );
 
-                              if (success) {
-                                // تحديث القائمة بعد التعديل الناجح
-                                await authProvider.fetchAllUsers();
+                                messenger.hideCurrentSnackBar();
 
+                                if (success) {
+                                  // رفع الصورة إذا وجدت
+                                  if (pickedImageBytes != null) {
+                                    try {
+                                      final uploadedUrl =
+                                          await SupabaseService.uploadAvatarBytes(
+                                            imageBytes: pickedImageBytes!,
+                                            fileName:
+                                                pickedImage?.name ??
+                                                'avatar.jpg',
+                                            userId: user.id,
+                                          );
+
+                                      if (uploadedUrl != null) {
+                                        await Supabase.instance.client
+                                            .from('profiles')
+                                            .update({'avatar_url': uploadedUrl})
+                                            .eq('id', user.id);
+                                      }
+                                    } catch (e) {
+                                      AppLogger.error(
+                                        'Upload avatar error during user edit',
+                                        e,
+                                      );
+                                    }
+                                  }
+
+                                  // تحديث القائمة بعد التعديل الناجح
+                                  await authProvider.fetchAllUsers();
+
+                                  if (context.mounted) {
+                                    messenger.showSnackBar(
+                                      SnackBar(
+                                        content: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.check_circle,
+                                              color: Colors.white,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Text(
+                                                'تم تحديث بيانات ${nameController.text.trim()} بنجاح',
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        backgroundColor: AntColors.success,
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        action: SnackBarAction(
+                                          label: 'تم',
+                                          textColor: Colors.white,
+                                          onPressed: () {},
+                                        ),
+                                        duration: const Duration(seconds: 3),
+                                      ),
+                                    );
+                                  }
+                                } else {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.error,
+                                              color: Colors.white,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Text(
+                                                'فشل في تحديث بيانات المستخدم: ${authProvider.error ?? "خطأ غير معروف"}',
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        backgroundColor: AntColors.error,
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        duration: const Duration(seconds: 4),
+                                      ),
+                                    );
+                                  }
+                                }
+                              } catch (e) {
+                                messenger.hideCurrentSnackBar();
                                 if (context.mounted) {
                                   messenger.showSnackBar(
-                                    SnackBar(
-                                      content: Row(
-                                        children: [
-                                          Icon(
-                                            Icons.check_circle,
-                                            color: Colors.white,
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Text(
-                                              'تم تحديث بيانات ${nameController.text.trim()} بنجاح',
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      backgroundColor: AntColors.success,
-                                      behavior: SnackBarBehavior.floating,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      action: SnackBarAction(
-                                        label: 'تم',
-                                        textColor: Colors.white,
-                                        onPressed: () {},
-                                      ),
-                                      duration: const Duration(seconds: 3),
-                                    ),
-                                  );
-                                }
-                              } else {
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
                                       content: Row(
                                         children: [
@@ -1463,7 +1614,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                                           const SizedBox(width: 12),
                                           Expanded(
                                             child: Text(
-                                              'فشل في تحديث بيانات المستخدم: ${authProvider.error ?? "خطأ غير معروف"}',
+                                              'حدث خطأ في التحديث: $e',
                                             ),
                                           ),
                                         ],
@@ -1478,67 +1629,44 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                                   );
                                 }
                               }
-                            } catch (e) {
-                              messenger.hideCurrentSnackBar();
-                              if (context.mounted) {
-                                messenger.showSnackBar(
-                                  SnackBar(
-                                    content: Row(
-                                      children: [
-                                        Icon(Icons.error, color: Colors.white),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Text('حدث خطأ في التحديث: $e'),
-                                        ),
-                                      ],
-                                    ),
-                                    backgroundColor: AntColors.error,
-                                    behavior: SnackBarBehavior.floating,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    duration: const Duration(seconds: 4),
-                                  ),
-                                );
-                              }
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AntColors.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            elevation: 2,
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.save_outlined, size: 18),
-                              const SizedBox(width: 6),
-                              Text(
-                                'حفظ',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AntColors.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 12,
                               ),
-                            ],
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 2,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.save_outlined, size: 18),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'حفظ',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -2794,467 +2922,641 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
     UserRole selectedRole = UserRole.client;
     bool obscurePassword = true; // متغير لإظهار/إخفاء كلمة المرور
 
+    final imagePicker = ImagePicker();
+    XFile? pickedImage;
+    Uint8List? pickedImageBytes;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
-        builder: (context, setState) => SafeArea(
-          child: SingleChildScrollView(
-            child: Container(
-              margin: const EdgeInsets.only(top: 20),
-              padding: const EdgeInsets.all(24),
-              constraints: const BoxConstraints(maxWidth: 500),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(24),
+        builder: (context, setSheetState) {
+          Future<void> pickAvatarImage() async {
+            try {
+              final file = await imagePicker.pickImage(
+                source: ImageSource.gallery,
+                imageQuality: 85,
+                maxWidth: 1024,
+              );
+
+              if (file == null) return;
+
+              final bytes = await file.readAsBytes();
+              if (!context.mounted) return;
+              setSheetState(() {
+                pickedImage = file;
+                pickedImageBytes = bytes;
+              });
+            } catch (e) {
+              AppLogger.error('Pick user avatar error', e);
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('فشل اختيار الصورة، حاول مرة أخرى'),
+                  behavior: SnackBarBehavior.floating,
                 ),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Header with icon and title
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: AntColors.primary.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: AntColors.primary.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            Icons.person_add,
-                            color: AntColors.primary,
-                            size: 28,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Text(
-                            'إضافة مستخدم جديد',
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              color: Theme.of(context).colorScheme.onSurface,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+              );
+            }
+          }
+
+          return SafeArea(
+            child: SingleChildScrollView(
+              child: Container(
+                margin: const EdgeInsets.only(top: 20),
+                padding: const EdgeInsets.all(24),
+                constraints: const BoxConstraints(maxWidth: 500),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surface,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
                   ),
-                  const SizedBox(height: 24),
-                  // Form fields in a scrollable area
-                  Flexible(
-                    child: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header with icon and title
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AntColors.primary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
                         children: [
-                          // Personal Information Section
-                          Text(
-                            'المعلومات الشخصية',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-
-                          TextFormField(
-                            controller: nameController,
-                            decoration: InputDecoration(
-                              labelText: 'الاسم الكامل *',
-                              hintText: 'أدخل الاسم الكامل',
-                              prefixIcon: const Icon(Icons.person_outline),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              filled: true,
-                              fillColor: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest
-                                  .withValues(alpha: 0.3),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-
-                          // Contact Information Section
-                          Text(
-                            'معلومات الاتصال',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-
-                          TextFormField(
-                            controller: emailController,
-                            decoration: InputDecoration(
-                              labelText: 'البريد الإلكتروني *',
-                              hintText: 'example@email.com',
-                              prefixIcon: const Icon(Icons.email_outlined),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              filled: true,
-                              fillColor: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest
-                                  .withValues(alpha: 0.3),
-                            ),
-                            keyboardType: TextInputType.emailAddress,
-                          ),
-                          const SizedBox(height: 16),
-
-                          TextFormField(
-                            controller: phoneController,
-                            decoration: InputDecoration(
-                              labelText: 'رقم الهاتف *',
-                              hintText: '+20xxxxxxxxxx',
-                              prefixIcon: const Icon(Icons.phone_outlined),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              filled: true,
-                              fillColor: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest
-                                  .withValues(alpha: 0.3),
-                            ),
-                            keyboardType: TextInputType.phone,
-                          ),
-                          const SizedBox(height: 16),
-
-                          TextFormField(
-                            controller: passwordController,
-                            decoration: InputDecoration(
-                              labelText: 'كلمة المرور *',
-                              hintText: 'أدخل كلمة مرور قوية',
-                              prefixIcon: const Icon(Icons.lock_outlined),
-                              suffixIcon: IconButton(
-                                icon: Icon(
-                                  obscurePassword
-                                      ? Icons.visibility_outlined
-                                      : Icons.visibility_off_outlined,
-                                ),
-                                onPressed: () {
-                                  setState(() {
-                                    obscurePassword = !obscurePassword;
-                                  });
-                                },
-                                tooltip: obscurePassword
-                                    ? 'إظهار كلمة المرور'
-                                    : 'إخفاء كلمة المرور',
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              filled: true,
-                              fillColor: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest
-                                  .withValues(alpha: 0.3),
-                            ),
-                            obscureText: obscurePassword,
-                          ),
-                          const SizedBox(height: 20),
-
-                          // Role Selection Section
-                          Text(
-                            'نوع المستخدم',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-
                           Container(
+                            padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              border: Border.all(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.outline.withValues(alpha: 0.3),
-                              ),
+                              color: AntColors.primary.withValues(alpha: 0.2),
                               borderRadius: BorderRadius.circular(12),
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .surfaceContainerHighest
-                                  .withValues(alpha: 0.3),
                             ),
-                            child: DropdownButtonFormField<UserRole>(
-                              initialValue: selectedRole,
-                              decoration: const InputDecoration(
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-                                border: InputBorder.none,
+                            child: Icon(
+                              Icons.person_add,
+                              color: AntColors.primary,
+                              size: 28,
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Text(
+                              'إضافة مستخدم جديد',
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.onSurface,
                               ),
-                              items: UserRole.values.map((role) {
-                                return DropdownMenuItem(
-                                  value: role,
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        _getRoleIcon(role),
-                                        color: _getUserTypeColor(role),
-                                        size: 20,
-                                      ),
-                                      const SizedBox(width: 12),
-                                      Text(
-                                        _getUserTypeText(role),
-                                        style: const TextStyle(fontSize: 16),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }).toList(),
-                              onChanged: (value) {
-                                if (value != null) {
-                                  selectedRole = value;
-                                }
-                              },
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Action buttons
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(context),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: AntColors.textSecondary,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 14,
-                            ),
-                            side: BorderSide(
-                              color: AntColors.textSecondary.withValues(
-                                alpha: 0.3,
+                    const SizedBox(height: 24),
+                    // Form fields in a scrollable area
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Avatar Section
+                            Center(
+                              child: Stack(
+                                children: [
+                                  Container(
+                                    width: 100,
+                                    height: 100,
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.surfaceContainerHighest,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .primary
+                                            .withValues(alpha: 0.5),
+                                        width: 2,
+                                      ),
+                                      image: pickedImageBytes != null
+                                          ? DecorationImage(
+                                              image: MemoryImage(
+                                                pickedImageBytes!,
+                                              ),
+                                              fit: BoxFit.cover,
+                                            )
+                                          : null,
+                                    ),
+                                    child: pickedImageBytes == null
+                                        ? Icon(
+                                            Icons.person,
+                                            size: 50,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
+                                          )
+                                        : null,
+                                  ),
+                                  Positioned(
+                                    bottom: 0,
+                                    right: 0,
+                                    child: Material(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                      shape: const CircleBorder(),
+                                      child: InkWell(
+                                        onTap: pickAvatarImage,
+                                        customBorder: const CircleBorder(),
+                                        child: const Padding(
+                                          padding: EdgeInsets.all(8.0),
+                                          child: Icon(
+                                            Icons.camera_alt,
+                                            color: Colors.white,
+                                            size: 20,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                              width: 1.5,
                             ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                            const SizedBox(height: 24),
+
+                            // Personal Information Section
+                            Text(
+                              'المعلومات الشخصية',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
                             ),
-                          ),
-                          child: Text(
-                            'إلغاء',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w600,
+                            const SizedBox(height: 12),
+
+                            TextFormField(
+                              controller: nameController,
+                              decoration: InputDecoration(
+                                labelText: 'الاسم الكامل *',
+                                hintText: 'أدخل الاسم الكامل',
+                                prefixIcon: const Icon(Icons.person_outline),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest
+                                    .withValues(alpha: 0.3),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+
+                            // Contact Information Section
+                            Text(
+                              'معلومات الاتصال',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+
+                            TextFormField(
+                              controller: emailController,
+                              decoration: InputDecoration(
+                                labelText: 'البريد الإلكتروني *',
+                                hintText: 'example@email.com',
+                                prefixIcon: const Icon(Icons.email_outlined),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest
+                                    .withValues(alpha: 0.3),
+                              ),
+                              keyboardType: TextInputType.emailAddress,
+                            ),
+                            const SizedBox(height: 16),
+
+                            TextFormField(
+                              controller: phoneController,
+                              decoration: InputDecoration(
+                                labelText: 'رقم الهاتف *',
+                                hintText: '+20xxxxxxxxxx',
+                                prefixIcon: const Icon(Icons.phone_outlined),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest
+                                    .withValues(alpha: 0.3),
+                              ),
+                              keyboardType: TextInputType.phone,
+                            ),
+                            const SizedBox(height: 16),
+
+                            TextFormField(
+                              controller: passwordController,
+                              decoration: InputDecoration(
+                                labelText: 'كلمة المرور *',
+                                hintText: 'أدخل كلمة مرور قوية',
+                                prefixIcon: const Icon(Icons.lock_outlined),
+                                suffixIcon: IconButton(
+                                  icon: Icon(
+                                    obscurePassword
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined,
+                                  ),
+                                  onPressed: () {
+                                    setSheetState(() {
+                                      obscurePassword = !obscurePassword;
+                                    });
+                                  },
+                                  tooltip: obscurePassword
+                                      ? 'إظهار كلمة المرور'
+                                      : 'إخفاء كلمة المرور',
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                filled: true,
+                                fillColor: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest
+                                    .withValues(alpha: 0.3),
+                              ),
+                              obscureText: obscurePassword,
+                            ),
+                            const SizedBox(height: 20),
+
+                            // Role Selection Section
+                            Text(
+                              'نوع المستخدم',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+
+                            Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.outline.withValues(alpha: 0.3),
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest
+                                    .withValues(alpha: 0.3),
+                              ),
+                              child: DropdownButtonFormField<UserRole>(
+                                initialValue: selectedRole,
+                                decoration: const InputDecoration(
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  border: InputBorder.none,
+                                ),
+                                items: UserRole.values
+                                    .where(
+                                      (role) =>
+                                          role != UserRole.deliveryCompanyAdmin,
+                                    )
+                                    .map((role) {
+                                      return DropdownMenuItem(
+                                        value: role,
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              _getRoleIcon(role),
+                                              color: _getUserTypeColor(role),
+                                              size: 20,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Text(
+                                              _getUserTypeText(role),
+                                              style: const TextStyle(
+                                                fontSize: 16,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    })
+                                    .toList(),
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    selectedRole = value;
+                                  }
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AntColors.textSecondary,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 14,
+                              ),
+                              side: BorderSide(
+                                color: AntColors.textSecondary.withValues(
+                                  alpha: 0.3,
+                                ),
+                                width: 1.5,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: Text(
+                              'إلغاء',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () async {
-                            // التحقق من صحة البيانات
-                            if (nameController.text.trim().isEmpty ||
-                                emailController.text.trim().isEmpty ||
-                                phoneController.text.trim().isEmpty ||
-                                passwordController.text.trim().isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Row(
-                                    children: [
-                                      Icon(Icons.warning, color: Colors.white),
-                                      const SizedBox(width: 12),
-                                      const Expanded(
-                                        child: Text(
-                                          'يرجى ملء جميع الحقول المطلوبة',
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () async {
+                              // التحقق من صحة البيانات
+                              if (nameController.text.trim().isEmpty ||
+                                  emailController.text.trim().isEmpty ||
+                                  phoneController.text.trim().isEmpty ||
+                                  passwordController.text.trim().isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.warning,
+                                          color: Colors.white,
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                  backgroundColor: AntColors.warning,
-                                  behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-
-                            // التحقق من صحة البريد الإلكتروني
-                            final emailRegex = RegExp(
-                              r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
-                            );
-                            if (!emailRegex.hasMatch(
-                              emailController.text.trim(),
-                            )) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Row(
-                                    children: [
-                                      Icon(Icons.warning, color: Colors.white),
-                                      const SizedBox(width: 12),
-                                      const Expanded(
-                                        child: Text(
-                                          'يرجى إدخال بريد إلكتروني صحيح',
+                                        const SizedBox(width: 12),
+                                        const Expanded(
+                                          child: Text(
+                                            'يرجى ملء جميع الحقول المطلوبة',
+                                          ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                  backgroundColor: AntColors.warning,
-                                  behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-
-                            // التحقق من طول كلمة المرور
-                            if (passwordController.text.trim().length < 6) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Row(
-                                    children: [
-                                      Icon(Icons.warning, color: Colors.white),
-                                      const SizedBox(width: 12),
-                                      const Expanded(
-                                        child: Text(
-                                          'كلمة المرور يجب أن تكون 6 أحرف على الأقل',
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  backgroundColor: AntColors.warning,
-                                  behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-
-                            Navigator.pop(context);
-
-                            final messenger = ScaffoldMessenger.of(context);
-
-                            // عرض مؤشر التحميل
-                            messenger.showSnackBar(
-                              SnackBar(
-                                duration: const Duration(hours: 1),
-                                behavior: SnackBarBehavior.floating,
-                                backgroundColor: Theme.of(
-                                  context,
-                                ).colorScheme.surface,
-                                content: Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: AppShimmer.wrap(
-                                        context,
-                                        child: AppShimmer.circle(
-                                          context,
-                                          size: 20,
-                                        ),
-                                      ),
+                                      ],
                                     ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Text(
-                                        'جاري إضافة المستخدم...',
-                                        style: TextStyle(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurface,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
+                                    backgroundColor: AntColors.warning,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
                                     ),
-                                  ],
-                                ),
-                              ),
-                            );
+                                  ),
+                                );
+                                return;
+                              }
 
-                            try {
-                              // إضافة المستخدم الجديد
-                              final authProvider =
-                                  Provider.of<SupabaseProvider>(
+                              // التحقق من صحة البريد الإلكتروني
+                              final emailRegex = RegExp(
+                                r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
+                              );
+                              if (!emailRegex.hasMatch(
+                                emailController.text.trim(),
+                              )) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.warning,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        const Expanded(
+                                          child: Text(
+                                            'يرجى إدخال بريد إلكتروني صحيح',
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    backgroundColor: AntColors.warning,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+
+                              // التحقق من طول كلمة المرور
+                              if (passwordController.text.trim().length < 6) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.warning,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 12),
+                                        const Expanded(
+                                          child: Text(
+                                            'كلمة المرور يجب أن تكون 6 أحرف على الأقل',
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    backgroundColor: AntColors.warning,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+
+                              Navigator.pop(context);
+
+                              final messenger = ScaffoldMessenger.of(context);
+
+                              // عرض مؤشر التحميل
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  duration: const Duration(hours: 1),
+                                  behavior: SnackBarBehavior.floating,
+                                  backgroundColor: Theme.of(
                                     context,
-                                    listen: false,
-                                  );
+                                  ).colorScheme.surface,
+                                  content: Row(
+                                    children: [
+                                      SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: AppShimmer.wrap(
+                                          context,
+                                          child: AppShimmer.circle(
+                                            context,
+                                            size: 20,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          'جاري إضافة المستخدم...',
+                                          style: TextStyle(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
 
-                              final newUserId = await authProvider
-                                  .addUser(
-                                    fullName: nameController.text.trim(),
-                                    email: emailController.text.trim(),
-                                    phone: phoneController.text.trim(),
-                                    password: passwordController.text.trim(),
-                                    role: selectedRole,
-                                  )
-                                  .timeout(
-                                    const Duration(seconds: 15),
-                                    onTimeout: () => null,
-                                  );
+                              try {
+                                // إضافة المستخدم الجديد
+                                final authProvider =
+                                    Provider.of<SupabaseProvider>(
+                                      context,
+                                      listen: false,
+                                    );
 
-                              messenger.hideCurrentSnackBar();
+                                final newUserId = await authProvider
+                                    .addUser(
+                                      fullName: nameController.text.trim(),
+                                      email: emailController.text.trim(),
+                                      phone: phoneController.text.trim(),
+                                      password: passwordController.text.trim(),
+                                      role: selectedRole,
+                                    )
+                                    .timeout(
+                                      const Duration(seconds: 15),
+                                      onTimeout: () => null,
+                                    );
 
-                              if (newUserId != null) {
-                                // تحديث القائمة بعد الإضافة الناجحة
-                                await authProvider.fetchAllUsers();
+                                messenger.hideCurrentSnackBar();
 
+                                if (newUserId != null) {
+                                  // رفع الصورة إذا وجدت
+                                  if (pickedImageBytes != null) {
+                                    try {
+                                      final uploadedUrl =
+                                          await SupabaseService.uploadAvatarBytes(
+                                            imageBytes: pickedImageBytes!,
+                                            fileName:
+                                                pickedImage?.name ??
+                                                'avatar.jpg',
+                                            userId: newUserId,
+                                          );
+
+                                      if (uploadedUrl != null) {
+                                        await Supabase.instance.client
+                                            .from('profiles')
+                                            .update({'avatar_url': uploadedUrl})
+                                            .eq('id', newUserId);
+                                      }
+                                    } catch (e) {
+                                      AppLogger.error(
+                                        'Upload avatar error during user creation',
+                                        e,
+                                      );
+                                    }
+                                  }
+
+                                  // تحديث القائمة بعد الإضافة الناجحة
+                                  await authProvider.fetchAllUsers();
+
+                                  if (context.mounted) {
+                                    messenger.showSnackBar(
+                                      SnackBar(
+                                        content: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.check_circle,
+                                              color: Colors.white,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Text(
+                                                'تم إضافة المستخدم ${nameController.text.trim()} بنجاح',
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        backgroundColor: AntColors.success,
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        action: SnackBarAction(
+                                          label: 'تم',
+                                          textColor: Colors.white,
+                                          onPressed: () {},
+                                        ),
+                                        duration: const Duration(seconds: 3),
+                                      ),
+                                    );
+                                  }
+                                } else {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Row(
+                                          children: [
+                                            Icon(
+                                              Icons.error,
+                                              color: Colors.white,
+                                            ),
+                                            const SizedBox(width: 12),
+                                            Expanded(
+                                              child: Text(
+                                                'فشل في إضافة المستخدم: ${authProvider.error ?? "خطأ غير معروف"}',
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        backgroundColor: AntColors.error,
+                                        behavior: SnackBarBehavior.floating,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        duration: const Duration(seconds: 4),
+                                      ),
+                                    );
+                                  }
+                                }
+                              } catch (e) {
+                                messenger.hideCurrentSnackBar();
                                 if (context.mounted) {
                                   messenger.showSnackBar(
-                                    SnackBar(
-                                      content: Row(
-                                        children: [
-                                          Icon(
-                                            Icons.check_circle,
-                                            color: Colors.white,
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Text(
-                                              'تم إضافة المستخدم ${nameController.text.trim()} بنجاح',
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      backgroundColor: AntColors.success,
-                                      behavior: SnackBarBehavior.floating,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      action: SnackBarAction(
-                                        label: 'تم',
-                                        textColor: Colors.white,
-                                        onPressed: () {},
-                                      ),
-                                      duration: const Duration(seconds: 3),
-                                    ),
-                                  );
-                                }
-                              } else {
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
                                     SnackBar(
                                       content: Row(
                                         children: [
@@ -3265,7 +3567,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                                           const SizedBox(width: 12),
                                           Expanded(
                                             child: Text(
-                                              'فشل في إضافة المستخدم: ${authProvider.error ?? "خطأ غير معروف"}',
+                                              'حدث خطأ في الإضافة: $e',
                                             ),
                                           ),
                                         ],
@@ -3280,67 +3582,44 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
                                   );
                                 }
                               }
-                            } catch (e) {
-                              messenger.hideCurrentSnackBar();
-                              if (context.mounted) {
-                                messenger.showSnackBar(
-                                  SnackBar(
-                                    content: Row(
-                                      children: [
-                                        Icon(Icons.error, color: Colors.white),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                          child: Text('حدث خطأ في الإضافة: $e'),
-                                        ),
-                                      ],
-                                    ),
-                                    backgroundColor: AntColors.error,
-                                    behavior: SnackBarBehavior.floating,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    duration: const Duration(seconds: 4),
-                                  ),
-                                );
-                              }
-                            }
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AntColors.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 14,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            elevation: 2,
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.person_add_outlined, size: 18),
-                              const SizedBox(width: 6),
-                              Text(
-                                'إضافة',
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AntColors.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 14,
                               ),
-                            ],
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 2,
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.person_add_outlined, size: 18),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'إضافة',
+                                  style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }

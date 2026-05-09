@@ -20,7 +20,7 @@ import 'manage_orders_screen.dart';
 import 'manage_categories_screen.dart';
 import 'manage_coupons_screen.dart';
 import 'captain_reports_screen.dart';
-import '../captain/delivery_company_dashboard_screen.dart';
+import 'manage_delivery_company_screen.dart';
 import 'analytics_screen.dart';
 import 'dynamic_ui_builder_screen.dart';
 import 'manage_banners_screen.dart';
@@ -45,7 +45,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     const ManageCategoriesScreen(),
     const ManageCouponsScreen(),
     const CaptainReportsScreen(),
-    const DeliveryCompanyDashboardScreen(),
+    const ManageDeliveryCompanyScreen(),
     const AnalyticsScreen(),
     const AppSettingsScreen(),
     const DynamicUIBuilderScreen(),
@@ -60,7 +60,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     (Icons.category_rounded, 'الفئات'),
     (Icons.local_offer_rounded, 'الكوبونات'),
     (Icons.assessment_rounded, 'تقارير الكباتن'),
-    (Icons.local_shipping_rounded, 'شركة التوصيل'),
+    (Icons.local_shipping_rounded, 'إدارة المكاتب'),
     (Icons.analytics_rounded, 'الإحصائيات'),
     (Icons.settings_rounded, 'الإعدادات'),
     (Icons.design_services_rounded, 'منشئ الواجهات'),

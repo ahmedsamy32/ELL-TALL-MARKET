@@ -36,6 +36,45 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   bool _isResolvingInitialOrder = false;
   String? _initialLoadError;
 
+  OrderStatus _simplifyStatusForClient(OrderStatus status) {
+    switch (status) {
+      case OrderStatus.pending:
+        return OrderStatus.pending;
+      case OrderStatus.confirmed:
+        return OrderStatus.confirmed;
+      case OrderStatus.preparing:
+      case OrderStatus.ready:
+        return OrderStatus.preparing;
+      case OrderStatus.inTransit:
+      case OrderStatus.pickedUp:
+        return OrderStatus.inTransit;
+      case OrderStatus.delivered:
+        return OrderStatus.delivered;
+      case OrderStatus.cancelled:
+        return OrderStatus.cancelled;
+    }
+  }
+
+  String _clientStatusLabel(OrderStatus status) {
+    final simplified = _simplifyStatusForClient(status);
+    if (simplified == OrderStatus.pending) {
+      return 'في انتظار قبول المتجر';
+    }
+    if (simplified == OrderStatus.confirmed) {
+      return 'تم قبول الطلب';
+    }
+    if (simplified == OrderStatus.preparing) {
+      return 'جاري تجهيز الطلب';
+    }
+    if (simplified == OrderStatus.inTransit) {
+      return 'جارٍ التوصيل';
+    }
+    if (simplified == OrderStatus.delivered) {
+      return 'تم الاستلام';
+    }
+    return 'ملغي';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1026,7 +1065,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  status.displayName,
+                  _clientStatusLabel(status),
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,
@@ -1081,15 +1120,14 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   }
 
   List<Map<String, dynamic>> _buildTrackingEvents(OrderModel order) {
-    final status = OrderStatusExtension.fromDbValue(order.status.value);
+    final status = _simplifyStatusForClient(
+      OrderStatusExtension.fromDbValue(order.status.value),
+    );
 
     int rankOf(OrderStatus s) {
       const flow = <OrderStatus>[
-        OrderStatus.pending,
         OrderStatus.confirmed,
         OrderStatus.preparing,
-        OrderStatus.ready,
-        OrderStatus.pickedUp,
         OrderStatus.inTransit,
         OrderStatus.delivered,
       ];
@@ -1121,8 +1159,6 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
 
     final isConfirmed = done(OrderStatus.confirmed);
     final isPreparing = done(OrderStatus.preparing);
-    final isReady = done(OrderStatus.ready);
-    final isPickedUp = done(OrderStatus.pickedUp);
     final isInTransit = done(OrderStatus.inTransit);
     final isDelivered = done(OrderStatus.delivered);
 
@@ -1142,7 +1178,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
         'isCompleted': isConfirmed,
       },
       {
-        'title': 'جاري التحضير',
+        'title': 'جاري تجهيز الطلب',
         'time': isPreparing
             ? (order.preparedAt ?? order.acceptedAt ?? order.createdAt)
             : null,
@@ -1151,25 +1187,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
         'isCompleted': isPreparing,
       },
       {
-        'title': 'جاهز للتوصيل',
-        'time': isReady
-            ? (order.preparedAt ?? order.acceptedAt ?? order.createdAt)
-            : null,
-        'icon': Icons.shopping_bag_rounded,
-        'color': Colors.purple,
-        'isCompleted': isReady,
-      },
-      {
-        'title': 'تم استلامه من المتجر',
-        'time': isPickedUp
-            ? (order.pickedUpAt ?? order.preparedAt ?? order.acceptedAt)
-            : null,
-        'icon': Icons.handshake_rounded,
-        'color': Colors.cyan,
-        'isCompleted': isPickedUp,
-      },
-      {
-        'title': 'في الطريق',
+        'title': 'جارٍ التوصيل',
         'time': isInTransit
             ? (order.pickedUpAt ?? order.preparedAt ?? order.acceptedAt)
             : null,
@@ -1178,7 +1196,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
         'isCompleted': isInTransit,
       },
       {
-        'title': 'تم التوصيل',
+        'title': 'تم الاستلام',
         'time': isDelivered
             ? (order.deliveredAt ?? order.updatedAt ?? order.createdAt)
             : null,

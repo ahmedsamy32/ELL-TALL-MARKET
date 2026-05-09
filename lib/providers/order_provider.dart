@@ -314,7 +314,9 @@ class OrderProvider with ChangeNotifier {
     try {
       final response = await _supabase
           .from('orders')
-          .select('*')
+          .select(
+            '*, store:stores!store_id(name, address, phone, latitude, longitude), client:profiles!client_id(full_name, phone)',
+          )
           .order('created_at', ascending: false);
 
       _orders = (response as List).map((o) => OrderModel.fromMap(o)).toList();
@@ -481,7 +483,11 @@ class OrderProvider with ChangeNotifier {
     String? captainId,
   }) async {
     try {
-      String statusString = status is String ? status : status.toString();
+      final String statusString = status is String
+          ? status
+          : status is OrderStatus
+          ? status.value
+          : status.toString();
 
       AppLogger.info(
         '🔵 PROVIDER DEBUG: بدء updateOrderStatus للطلب: $orderId مع الحالة: $statusString',
@@ -559,6 +565,13 @@ class OrderProvider with ChangeNotifier {
           AppLogger.info(
             '🚚 الطلب جاهز للتسليم وينتظر تعيين كابتن من شركة التوصيل',
           );
+
+          // إشعار مكتب شركة التوصيل فقط (office-first flow)
+          await NotificationServiceEnhanced.instance
+              .notifyCaptainsOfAvailableOrder(
+                orderId: updatedOrder.id,
+                storeName: updatedOrder.storeName ?? 'المتجر',
+              );
         }
 
         // إذا تم تعيين كابتن يدوياً، نرسل له إشعار

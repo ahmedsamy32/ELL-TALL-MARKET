@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -10,11 +12,13 @@ import 'package:ell_tall_market/models/captain_model.dart';
 import 'package:ell_tall_market/models/order_enums.dart';
 import 'package:ell_tall_market/models/order_model.dart' hide OrderStatus;
 import 'package:ell_tall_market/models/notification_model.dart';
+import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/services/captain_service.dart';
 import 'package:ell_tall_market/services/notification_service.dart';
+import 'package:ell_tall_market/services/supabase_service.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
@@ -35,6 +39,8 @@ class _DeliveryCompanyDashboardScreenState
   RealtimeChannel? _captainsChannel;
 
   bool _isCaptainsLoading = true;
+  String? _companyId;
+  String? _companyName;
   List<CaptainModel> _captains = [];
   int _selectedBottomIndex = 0;
   int _selectedOrdersTabIndex = 0;
@@ -42,6 +48,8 @@ class _DeliveryCompanyDashboardScreenState
 
   static const Duration _autoAssignDelay = Duration(seconds: 60);
   final Map<String, Timer> _autoAssignTimers = {};
+  final Set<String> _autoAssignQueue = <String>{};
+  bool _isAutoAssigning = false;
 
   @override
   void initState() {
@@ -65,6 +73,7 @@ class _DeliveryCompanyDashboardScreenState
     final orderProvider = context.read<OrderProvider>();
     await orderProvider.fetchAllOrders();
     await orderProvider.subscribeToDeliveryDashboardOrders();
+    await _loadCompanyId();
     await _loadCaptains();
     await _subscribeCaptainsRealtime();
     await _activateNotifications();
@@ -78,13 +87,40 @@ class _DeliveryCompanyDashboardScreenState
     try {
       await Future.wait([
         orderProvider.fetchAllOrders(),
-        _loadCaptains(),
         _reloadNotificationsOnly(),
       ]);
+      await _loadCompanyId();
+      await _loadCaptains();
     } finally {
       if (mounted) {
         setState(() => _isRefreshing = false);
       }
+    }
+  }
+
+  bool get _canManageCaptains {
+    final role = context.read<SupabaseProvider>().currentProfile?.role.value;
+    return role == 'delivery_company_admin';
+  }
+
+  Future<void> _loadCompanyId() async {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return;
+
+    try {
+      final response = await _supabase
+          .from('delivery_companies')
+          .select('id, company_name')
+          .eq('admin_id', userId)
+          .maybeSingle();
+
+      if (!mounted) return;
+      setState(() {
+        _companyId = response?['id'] as String?;
+        _companyName = response?['company_name'] as String?;
+      });
+    } catch (e) {
+      AppLogger.error('Failed to load delivery company id', e);
     }
   }
 
@@ -129,9 +165,25 @@ class _DeliveryCompanyDashboardScreenState
     setState(() => _isCaptainsLoading = true);
 
     try {
+      if (_canManageCaptains && (_companyId == null || _companyId!.isEmpty)) {
+        await _loadCompanyId();
+      }
+
+      final deliveryCompanyId = _canManageCaptains ? _companyId : null;
+      if (_canManageCaptains &&
+          (deliveryCompanyId == null || deliveryCompanyId.isEmpty)) {
+        if (!mounted) return;
+        setState(() {
+          _captains = [];
+          _isCaptainsLoading = false;
+        });
+        return;
+      }
+
       final captains = await CaptainService.getCaptains(
         orderBy: 'updated_at',
         ascending: false,
+        deliveryCompanyId: deliveryCompanyId,
       );
       if (!mounted) return;
       setState(() {
@@ -172,6 +224,7 @@ class _DeliveryCompanyDashboardScreenState
       _autoAssignTimers[orderId]?.cancel();
       _autoAssignTimers.remove(orderId);
     }
+    _autoAssignQueue.removeWhere((id) => !readyOrderIds.contains(id));
 
     // Start timers for newly ready orders.
     for (final order in readyOrders) {
@@ -185,63 +238,104 @@ class _DeliveryCompanyDashboardScreenState
   Future<void> _handleAutoAssignTimeout(String orderId) async {
     _autoAssignTimers.remove(orderId);
     if (!mounted) return;
+    _autoAssignQueue.add(orderId);
+    await _runAutoAssignQueue();
+  }
 
-    final orderProvider = context.read<OrderProvider>();
+  bool _isActiveOrderStatus(OrderStatus status) {
+    return status == OrderStatus.pending ||
+        status == OrderStatus.confirmed ||
+        status == OrderStatus.preparing ||
+        status == OrderStatus.ready ||
+        status == OrderStatus.pickedUp ||
+        status == OrderStatus.inTransit;
+  }
 
-    OrderModel? targetOrder;
-    for (final order in orderProvider.orders) {
-      if (order.id == orderId) {
-        targetOrder = order;
-        break;
+  Future<void> _runAutoAssignQueue() async {
+    if (_isAutoAssigning) return;
+    _isAutoAssigning = true;
+    try {
+      if (!mounted) return;
+      final orderProvider = context.read<OrderProvider>();
+
+      final dueOrders =
+          orderProvider.orders
+              .where(
+                (order) =>
+                    _autoAssignQueue.contains(order.id) &&
+                    order.status == OrderStatus.ready &&
+                    order.captainId == null,
+              )
+              .toList()
+            ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+      final dueOrderIds = dueOrders.map((order) => order.id).toSet();
+      _autoAssignQueue.removeWhere((id) => !dueOrderIds.contains(id));
+
+      if (dueOrders.isEmpty) return;
+
+      // Refresh captains list before selecting eligible ones.
+      await _loadCaptains();
+      if (!mounted) return;
+
+      final busyCaptainIds = orderProvider.orders
+          .where(
+            (order) =>
+                order.captainId != null && _isActiveOrderStatus(order.status),
+          )
+          .map((order) => order.captainId!)
+          .toSet();
+
+      final eligibleCaptains = _captains
+          .where(
+            (captain) =>
+                captain.isOnline &&
+                captain.isAvailable &&
+                captain.status != 'busy' &&
+                !busyCaptainIds.contains(captain.id),
+          )
+          .toList();
+
+      if (eligibleCaptains.isEmpty) {
+        AppLogger.warning('⏱️ انتهت 60ث ولا يوجد كباتن متصلين ومتاحين حالياً');
+        return;
       }
-    }
 
-    // Already assigned or no longer ready -> no auto assignment needed.
-    if (targetOrder == null ||
-        targetOrder.status != OrderStatus.ready ||
-        targetOrder.captainId != null) {
-      return;
-    }
+      final assignmentsCount = dueOrders.length < eligibleCaptains.length
+          ? dueOrders.length
+          : eligibleCaptains.length;
 
-    // Refresh captains list before selecting the first eligible one.
-    await _loadCaptains();
+      for (var i = 0; i < assignmentsCount; i++) {
+        final order = dueOrders[i];
+        final captain = eligibleCaptains[i];
 
-    CaptainModel? firstEligibleCaptain;
-    for (final captain in _captains) {
-      final isEligible =
-          captain.isOnline && captain.isAvailable && captain.status != 'busy';
-      if (isEligible) {
-        firstEligibleCaptain = captain;
-        break;
+        final success = await orderProvider.assignCaptainToOrder(
+          orderId: order.id,
+          captainId: captain.id,
+        );
+
+        if (!mounted) return;
+        if (success) {
+          _autoAssignQueue.remove(order.id);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'تم التعيين التلقائي للطلب #${order.id.substring(0, 8).toUpperCase()} إلى ${_captainDisplayName(captain)}',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
       }
-    }
-
-    if (firstEligibleCaptain == null) {
-      AppLogger.warning(
-        '⏱️ انتهت 60ث للطلب $orderId ولا يوجد كابتن متصل ومتاح حالياً',
-      );
-      return;
-    }
-
-    final success = await orderProvider.assignCaptainToOrder(
-      orderId: orderId,
-      captainId: firstEligibleCaptain.id,
-    );
-
-    if (!mounted) return;
-    if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'تم التعيين التلقائي للطلب #${orderId.substring(0, 8).toUpperCase()} إلى ${_captainDisplayName(firstEligibleCaptain)}',
-          ),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+    } finally {
+      _isAutoAssigning = false;
     }
   }
 
   String get _companyNameOrAccount {
+    final companyName = _companyName?.trim();
+    if (companyName != null && companyName.isNotEmpty) return companyName;
+
     final profile = context.read<SupabaseProvider>().currentProfile;
     final fullName = profile?.fullName?.trim();
     if (fullName != null && fullName.isNotEmpty) return fullName;
@@ -422,10 +516,14 @@ class _DeliveryCompanyDashboardScreenState
           ),
         );
 
+        final captainsBody = _buildCaptainsBody(isCompact: isCompact);
+
         return Scaffold(
           backgroundColor: Colors.white,
           body: _selectedBottomIndex == 0
               ? dashboardBody
+              : _selectedBottomIndex == 1
+              ? captainsBody
               : const CaptainWalletScreen(),
           bottomNavigationBar: NavigationBar(
             selectedIndex: _selectedBottomIndex,
@@ -437,6 +535,11 @@ class _DeliveryCompanyDashboardScreenState
                 icon: Icon(Icons.dashboard_outlined),
                 selectedIcon: Icon(Icons.dashboard_rounded),
                 label: 'اللوحة',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.people_outline),
+                selectedIcon: Icon(Icons.people_rounded),
+                label: 'الكباتن',
               ),
               NavigationDestination(
                 icon: Icon(Icons.account_balance_wallet_outlined),
@@ -862,14 +965,6 @@ class _DeliveryCompanyDashboardScreenState
                 child: Row(
                   children: [
                     _buildMetricChip(
-                      'كل الطلبات',
-                      orderProvider.orders.length,
-                      Icons.receipt_long_rounded,
-                      colorScheme.primary,
-                      width: 94,
-                    ),
-                    const SizedBox(width: 10),
-                    _buildMetricChip(
                       'جاهزة',
                       readyCount,
                       Icons.hourglass_empty_rounded,
@@ -908,13 +1003,6 @@ class _DeliveryCompanyDashboardScreenState
                 spacing: 12,
                 runSpacing: 12,
                 children: [
-                  _buildMetricChip(
-                    'كل الطلبات',
-                    orderProvider.orders.length,
-                    Icons.receipt_long_rounded,
-                    colorScheme.primary,
-                    width: 94,
-                  ),
                   _buildMetricChip(
                     'جاهزة',
                     readyCount,
@@ -1134,6 +1222,97 @@ class _DeliveryCompanyDashboardScreenState
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildCaptainsBody({required bool isCompact}) {
+    final showFullPageShimmer =
+        _isRefreshing || (_isCaptainsLoading && _captains.isEmpty);
+
+    return SafeArea(
+      child: ColoredBox(
+        color: Colors.white,
+        child: ResponsiveCenter(
+          maxWidth: 1200,
+          child: showFullPageShimmer
+              ? _buildDashboardFullPageShimmer()
+              : RefreshIndicator(
+                  onRefresh: _refreshAll,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                    children: [
+                      _buildTopBlueHeader(),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'الكباتن',
+                              style: Theme.of(context).textTheme.titleLarge
+                                  ?.copyWith(fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                          if (_canManageCaptains)
+                            FilledButton.icon(
+                              onPressed: _showAddCaptainSheet,
+                              icon: const Icon(Icons.person_add_alt_1_rounded),
+                              label: const Text('إضافة كابتن'),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      _buildCaptainSummaryRow(isCompact: isCompact),
+                      const SizedBox(height: 16),
+                      if (_captains.isEmpty)
+                        _buildEmptyState(
+                          'لا يوجد كباتن مرتبطون بهذه الشركة حالياً',
+                          Icons.group_off_outlined,
+                        )
+                      else
+                        ..._captains.map(
+                          (captain) => Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _buildCaptainCard(captain),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCaptainCard(CaptainModel captain) {
+    final status = _captainStatusText(captain);
+    final statusColor = _captainStatusColor(captain);
+    final phone = captain.contactPhone ?? captain.profilePhone ?? 'بدون هاتف';
+
+    return Card(
+      elevation: 0,
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: CircleAvatar(
+          backgroundColor: statusColor.withValues(alpha: 0.15),
+          child: Icon(Icons.person, color: statusColor),
+        ),
+        title: Text(
+          _captainDisplayName(captain),
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          '$phone\n${captain.vehicleTypeDisplayName} • ⭐ ${captain.rating.toStringAsFixed(1)} • $status',
+        ),
+        isThreeLine: true,
+        trailing: IconButton(
+          tooltip: phone == 'بدون هاتف' ? 'لا يوجد رقم هاتف' : 'اتصال مباشر',
+          onPressed: phone == 'بدون هاتف'
+              ? null
+              : () => _launchPhoneCall(phone),
+          icon: const Icon(Icons.phone_rounded),
+        ),
+      ),
     );
   }
 
@@ -1455,6 +1634,9 @@ class _DeliveryCompanyDashboardScreenState
     final captain = order.captainId == null
         ? null
         : _captainById(order.captainId!);
+    final storeAddressText = order.storeAddress?.trim().isNotEmpty == true
+        ? order.storeAddress!
+        : 'عنوان المتجر غير متوفر';
 
     return Card(
       elevation: 0,
@@ -1509,42 +1691,18 @@ class _DeliveryCompanyDashboardScreenState
                 ],
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Icon(
-                    Icons.location_on_outlined,
-                    size: 18,
-                    color: colorScheme.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      order.deliveryAddress,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
+              _buildAddressInfoRow(
+                label: 'عنوان العميل',
+                address: order.deliveryAddress,
+                icon: Icons.location_on_outlined,
+                iconColor: Colors.green,
               ),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  Icon(
-                    Icons.store_mall_directory_outlined,
-                    size: 18,
-                    color: colorScheme.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      order.storeAddress?.trim().isNotEmpty == true
-                          ? order.storeAddress!
-                          : 'عنوان المتجر غير متوفر',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
+              _buildAddressInfoRow(
+                label: 'عنوان المتجر',
+                address: storeAddressText,
+                icon: Icons.storefront_outlined,
+                iconColor: Colors.orange,
               ),
               const SizedBox(height: 8),
               Row(
@@ -1615,6 +1773,50 @@ class _DeliveryCompanyDashboardScreenState
     );
   }
 
+  Widget _buildAddressInfoRow({
+    required String label,
+    required String address,
+    required IconData icon,
+    required Color iconColor,
+  }) {
+    final theme = Theme.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 2),
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: iconColor.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 16, color: iconColor),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                address,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   bool get _captainsLoadingFallback => _isCaptainsLoading || _captains.isEmpty;
 
   String _orderActionHint(OrderModel order) {
@@ -1632,13 +1834,28 @@ class _DeliveryCompanyDashboardScreenState
       return;
     }
 
+    final orderProvider = context.read<OrderProvider>();
+    final blockedCaptainIds = orderProvider.orders
+        .where(
+          (existingOrder) =>
+              existingOrder.captainId != null &&
+              (existingOrder.status == OrderStatus.ready ||
+                  existingOrder.status == OrderStatus.confirmed ||
+                  existingOrder.status == OrderStatus.preparing ||
+                  existingOrder.status == OrderStatus.pickedUp ||
+                  existingOrder.status == OrderStatus.inTransit),
+        )
+        .map((existingOrder) => existingOrder.captainId!)
+        .toSet();
+
     final availableCaptains =
         _captains
             .where(
               (captain) =>
                   captain.isOnline &&
                   captain.isAvailable &&
-                  captain.status != 'busy',
+                  captain.status != 'busy' &&
+                  !blockedCaptainIds.contains(captain.id),
             )
             .toList()
           ..sort(
@@ -1712,25 +1929,19 @@ class _DeliveryCompanyDashboardScreenState
                           constraints: const BoxConstraints(maxHeight: 420),
                           child: ListView.separated(
                             shrinkWrap: true,
-                            itemCount: _captains.length,
+                            itemCount: availableCaptains.length,
                             separatorBuilder: (_, _) =>
                                 const Divider(height: 1),
                             itemBuilder: (context, index) {
-                              final captain = _captains[index];
-                              final isAssignable =
-                                  captain.isOnline &&
-                                  captain.isAvailable &&
-                                  captain.status != 'busy';
+                              final captain = availableCaptains[index];
                               final status = _captainStatusText(captain);
                               final statusColor = _captainStatusColor(captain);
 
                               return ListTile(
                                 contentPadding: EdgeInsets.zero,
-                                onTap: isAssignable
-                                    ? () => setSheetState(
-                                        () => selectedCaptainId = captain.id,
-                                      )
-                                    : null,
+                                onTap: () => setSheetState(
+                                  () => selectedCaptainId = captain.id,
+                                ),
                                 leading: CircleAvatar(
                                   backgroundColor: statusColor.withValues(
                                     alpha: 0.15,
@@ -1739,11 +1950,8 @@ class _DeliveryCompanyDashboardScreenState
                                 ),
                                 title: Text(
                                   _captainDisplayName(captain),
-                                  style: TextStyle(
+                                  style: const TextStyle(
                                     fontWeight: FontWeight.w700,
-                                    color: isAssignable
-                                        ? null
-                                        : Theme.of(context).disabledColor,
                                   ),
                                 ),
                                 subtitle: Text(
@@ -1752,9 +1960,7 @@ class _DeliveryCompanyDashboardScreenState
                                   '⭐ ${captain.rating.toStringAsFixed(1)} • $status',
                                   style: TextStyle(color: statusColor),
                                 ),
-                                trailing: isAssignable
-                                    ? Radio<String>(value: captain.id)
-                                    : const Icon(Icons.lock_outline_rounded),
+                                trailing: Radio<String>(value: captain.id),
                               );
                             },
                           ),
@@ -1867,6 +2073,383 @@ class _DeliveryCompanyDashboardScreenState
       case OrderStatus.cancelled:
         return Colors.red;
     }
+  }
+
+  Future<void> _showAddCaptainSheet() async {
+    if (!_canManageCaptains || !mounted) return;
+    final rootOverlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (rootOverlay == null) return;
+
+    final nameController = TextEditingController();
+    final emailController = TextEditingController();
+    final phoneController = TextEditingController();
+    final passwordController = TextEditingController();
+    final imagePicker = ImagePicker();
+    XFile? pickedImage;
+    Uint8List? pickedImageBytes;
+    bool isSubmitting = false;
+    bool obscurePassword = true;
+    bool showValidationErrors = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          OverlayEntry? overlayEntry;
+
+          void showAboveSheetSnackBar(
+            String message, {
+            Color? backgroundColor,
+          }) {
+            if (!mounted || !rootOverlay.mounted) return;
+
+            overlayEntry?.remove();
+            overlayEntry = OverlayEntry(
+              builder: (overlayContext) => Positioned(
+                left: 16,
+                right: 16,
+                bottom: MediaQuery.viewInsetsOf(overlayContext).bottom + 24,
+                child: Material(
+                  color: Colors.transparent,
+                  child: SafeArea(
+                    minimum: const EdgeInsets.only(bottom: 8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: backgroundColor ?? Colors.black87,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        message,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+
+            rootOverlay.insert(overlayEntry!);
+            Timer(const Duration(seconds: 3), () {
+              overlayEntry?.remove();
+              overlayEntry = null;
+            });
+          }
+
+          Future<void> pickAvatarImage() async {
+            try {
+              final file = await imagePicker.pickImage(
+                source: ImageSource.gallery,
+                imageQuality: 85,
+                maxWidth: 1024,
+              );
+
+              if (file == null) return;
+
+              final bytes = await file.readAsBytes();
+              if (!context.mounted) return;
+              setSheetState(() {
+                pickedImage = file;
+                pickedImageBytes = bytes;
+                showValidationErrors = false;
+              });
+            } catch (e) {
+              AppLogger.error('Pick captain avatar error', e);
+              if (!context.mounted) return;
+              showAboveSheetSnackBar('فشل اختيار الصورة، حاول مرة أخرى');
+            }
+          }
+
+          return SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 12,
+                bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
+              ),
+              child: SingleChildScrollView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'إضافة كابتن جديد',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color:
+                              showValidationErrors && pickedImageBytes == null
+                              ? Theme.of(context).colorScheme.error
+                              : Colors.transparent,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 30,
+                            backgroundColor: Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerHighest,
+                            backgroundImage: pickedImageBytes == null
+                                ? null
+                                : MemoryImage(pickedImageBytes!),
+                            child: pickedImageBytes == null
+                                ? const Icon(Icons.person_outline, size: 30)
+                                : null,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: isSubmitting ? null : pickAvatarImage,
+                              icon: const Icon(Icons.photo_camera_outlined),
+                              label: Text(
+                                pickedImage == null
+                                    ? 'اختيار صورة الكابتن'
+                                    : 'تغيير الصورة',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (showValidationErrors && pickedImageBytes == null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, right: 12),
+                        child: Text(
+                          'الصورة الشخصية مطلوبة',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nameController,
+                      onChanged: (_) {
+                        if (showValidationErrors) {
+                          setSheetState(() => showValidationErrors = false);
+                        }
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'الاسم الكامل *',
+                        prefixIcon: const Icon(Icons.person_outline),
+                        border: const OutlineInputBorder(),
+                        errorText:
+                            showValidationErrors &&
+                                nameController.text.trim().isEmpty
+                            ? 'الاسم الكامل مطلوب'
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: emailController,
+                      onChanged: (_) {
+                        if (showValidationErrors) {
+                          setSheetState(() => showValidationErrors = false);
+                        }
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'البريد الإلكتروني *',
+                        prefixIcon: const Icon(Icons.email_outlined),
+                        border: const OutlineInputBorder(),
+                        errorText:
+                            showValidationErrors &&
+                                emailController.text.trim().isEmpty
+                            ? 'البريد الإلكتروني مطلوب'
+                            : null,
+                      ),
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: phoneController,
+                      onChanged: (_) {
+                        if (showValidationErrors) {
+                          setSheetState(() => showValidationErrors = false);
+                        }
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'رقم الهاتف *',
+                        prefixIcon: const Icon(Icons.phone_outlined),
+                        border: const OutlineInputBorder(),
+                        errorText:
+                            showValidationErrors &&
+                                phoneController.text.trim().isEmpty
+                            ? 'رقم الهاتف مطلوب'
+                            : null,
+                      ),
+                      keyboardType: TextInputType.phone,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: passwordController,
+                      obscureText: obscurePassword,
+                      onChanged: (_) {
+                        if (showValidationErrors) {
+                          setSheetState(() => showValidationErrors = false);
+                        }
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'كلمة المرور *',
+                        prefixIcon: const Icon(Icons.lock_outlined),
+                        border: const OutlineInputBorder(),
+                        errorText:
+                            showValidationErrors &&
+                                passwordController.text.trim().isEmpty
+                            ? 'كلمة المرور مطلوبة'
+                            : null,
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
+                          onPressed: () => setSheetState(
+                            () => obscurePassword = !obscurePassword,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: isSubmitting
+                            ? null
+                            : () async {
+                                if (nameController.text.trim().isEmpty ||
+                                    emailController.text.trim().isEmpty ||
+                                    phoneController.text.trim().isEmpty ||
+                                    passwordController.text.trim().isEmpty ||
+                                    pickedImageBytes == null) {
+                                  setSheetState(() {
+                                    showValidationErrors = true;
+                                  });
+                                  showAboveSheetSnackBar(
+                                    'يرجى ملء جميع الحقول المطلوبة وإرفاق صورة شخصية',
+                                    backgroundColor: Colors.red,
+                                  );
+                                  return;
+                                }
+
+                                setSheetState(() => isSubmitting = true);
+
+                                final authProvider = context
+                                    .read<SupabaseProvider>();
+                                final navigator = Navigator.of(sheetContext);
+
+                                final newUserId = await authProvider.addUser(
+                                  fullName: nameController.text.trim(),
+                                  email: emailController.text.trim(),
+                                  phone: phoneController.text.trim(),
+                                  password: passwordController.text.trim(),
+                                  role: UserRole.captain,
+                                );
+
+                                if (!mounted) return;
+
+                                if (newUserId != null) {
+                                  if (pickedImageBytes != null) {
+                                    try {
+                                      final uploadedUrl =
+                                          await SupabaseService.uploadAvatarBytes(
+                                            imageBytes: pickedImageBytes!,
+                                            fileName:
+                                                pickedImage?.name ??
+                                                'avatar.jpg',
+                                            userId: newUserId,
+                                          );
+
+                                      if (uploadedUrl != null) {
+                                        await _supabase
+                                            .from('profiles')
+                                            .update({'avatar_url': uploadedUrl})
+                                            .eq('id', newUserId);
+                                        await _supabase
+                                            .from('captains')
+                                            .update({
+                                              'profile_image_url': uploadedUrl,
+                                            })
+                                            .eq('id', newUserId);
+                                      }
+                                    } catch (e) {
+                                      AppLogger.error(
+                                        'Update captain avatar error',
+                                        e,
+                                      );
+                                      showAboveSheetSnackBar(
+                                        'تم إضافة الكابتن، لكن فشل رفع الصورة',
+                                      );
+                                    }
+                                  }
+
+                                  navigator.pop();
+                                  await _refreshAll();
+                                  if (!mounted) return;
+                                  showAboveSheetSnackBar(
+                                    'تم إضافة الكابتن بنجاح',
+                                  );
+                                } else {
+                                  setSheetState(() => isSubmitting = false);
+                                  showAboveSheetSnackBar(
+                                    authProvider.error ??
+                                        'فشل في إضافة الكابتن',
+                                  );
+                                }
+                              },
+                        child: const Text('إضافة كابتن'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 }
 

@@ -1346,7 +1346,7 @@ class _CartScreenState extends State<CartScreen> {
                             ),
                           ),
                           Text(
-                            '${cartProvider.subtotal.toStringAsFixed(2)} ج.م',
+                            '${(cartProvider.subtotal - discount).toStringAsFixed(2)} ج.م',
                             style: theme.textTheme.headlineSmall?.copyWith(
                               fontWeight: FontWeight.bold,
                               color: colorScheme.primary,

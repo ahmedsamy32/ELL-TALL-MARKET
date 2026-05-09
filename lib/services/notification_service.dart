@@ -1293,7 +1293,7 @@ class NotificationServiceEnhanced {
     );
 
     // Handle navigation if needed
-    _handleNotificationAction(message.data);
+    handleNotificationAction(message.data);
   }
 
   /// Handle app launched from notification
@@ -1310,7 +1310,7 @@ class NotificationServiceEnhanced {
     );
 
     // Handle navigation if needed
-    _handleNotificationAction(message.data);
+    handleNotificationAction(message.data);
   }
 
   /// Handle local notification tap
@@ -1319,7 +1319,7 @@ class NotificationServiceEnhanced {
 
     if (response.payload != null) {
       final data = jsonDecode(response.payload!);
-      _handleNotificationAction(data);
+      handleNotificationAction(data);
 
       // Track analytics
       trackNotificationInteraction(
@@ -1330,11 +1330,48 @@ class NotificationServiceEnhanced {
     }
   }
 
-  /// Handle notification actions (navigation, etc.)
-  void _handleNotificationAction(Map<String, dynamic> data) {
+  /// Handle notification actions (navigation, etc.) publicly so screens can use it
+  void handleNotificationAction(Map<String, dynamic> data) {
     try {
-      AppLogger.info('$_logTag Navigating to notifications screen');
-      // Always navigate to the notifications screen when a notification is tapped
+      final actionUrl = data['action_url'] as String?;
+      final targetRole = data['target_role'] as String?;
+      final type = data['type'] as String?;
+
+      AppLogger.info('$_logTag Handling notification action: data=$data');
+
+      // أولاً: استخدام المسار المباشر إذا تم تمريره في الإشعار
+      if (actionUrl != null && actionUrl.isNotEmpty) {
+        NavigationService.navigateTo(actionUrl);
+        return;
+      }
+
+      // ثانياً: التوجيه الذكي بناءً على النوع ودور المستخدم في حالة عدم وجود actionUrl
+      if (type == 'new_order' ||
+          type == 'order_status_change' ||
+          type == 'available_order') {
+        if (targetRole == 'merchant') {
+          // التاجر -> شاشة طلبات المتجر
+          NavigationService.navigateTo(AppRoutes.merchantOrders);
+        } else if (targetRole == 'admin') {
+          // مدير النظام -> إدارة الطلبات
+          NavigationService.navigateTo(AppRoutes.manageOrders);
+        } else if (targetRole == 'captain' ||
+            data['audience'] == 'delivery_office') {
+          // مكتب التوصيل أو الكابتن
+          if (data['audience'] == 'delivery_office') {
+            NavigationService.navigateTo(AppRoutes.deliveryCompanyDashboard);
+          } else {
+            NavigationService.navigateTo(AppRoutes.captainOrders);
+          }
+        } else {
+          // العميل العادي -> تتبع الطلب
+          NavigationService.navigateTo(AppRoutes.orderHistory);
+        }
+        return;
+      }
+
+      // توجيه افتراضي في حالة عدم تطابق الشروط السابقة
+      AppLogger.info('$_logTag Navigating to default notifications screen');
       NavigationService.navigateTo(AppRoutes.notifications);
     } catch (e) {
       if (kDebugMode) {
@@ -1730,38 +1767,43 @@ class NotificationServiceEnhanced {
 
   // ===== Captain Notification Helpers =====
 
-  /// إرسال إشعار للكباتن عن طلب متاح للتوصيل
+  // ===== Captain Notification Helpers =====
+  /// إرسال إشعار لمكتب شركة التوصيل عن طلب متاح للتوصيل
+  ///
+  /// ملاحظة مهمة:
+  /// - لا يتم الإرسال المباشر للكباتن هنا.
+  /// - المكتب هو من يعيّن الكابتن المتاح.
+  /// - في حال انتهاء المهلة، يتم التعيين التلقائي من لوحة شركة التوصيل.
   Future<bool> notifyCaptainsOfAvailableOrder({
     required String orderId,
     required String storeName,
     String? area,
   }) async {
     try {
-      AppLogger.info('Sending available order notification to captains');
-
-      // جلب الكباتن المتصلين حالياً
-      final captainsResponse = await _supabase
-          .from('captains')
-          .select('id')
-          .eq('status', 'online')
-          .eq('is_active', true)
-          .eq('is_available', true);
-
-      final captains = captainsResponse as List;
-      if (captains.isEmpty) {
-        AppLogger.warning('⚠️ No online captains found to notify');
-        return false;
-      }
+      AppLogger.info('Sending available order notification to delivery office');
 
       final areaText = area != null ? ' في منطقة $area' : '';
       bool anySent = false;
 
-      for (final captain in captains) {
-        final captainId = captain['id'] as String?;
-        if (captainId == null) continue;
+      // إشعار مكتب شركة التوصيل أيضاً (delivery_company_admin)
+      // ملاحظة: شاشة شركة التوصيل الحالية تقرأ targetRole = captain.
+      final deliveryAdminsResponse = await _supabase
+          .from('profiles')
+          .select('id')
+          .eq('role', 'delivery_company_admin');
+
+      final deliveryAdmins = deliveryAdminsResponse as List;
+      if (deliveryAdmins.isEmpty) {
+        AppLogger.warning('⚠️ No delivery company admins found to notify');
+        return false;
+      }
+
+      for (final admin in deliveryAdmins) {
+        final adminId = admin['id'] as String?;
+        if (adminId == null) continue;
 
         final sent = await sendSmartNotification(
-          clientId: captainId,
+          clientId: adminId,
           title: '🚗 طلب جديد متاح للتوصيل',
           message: 'طلب جديد من متجر $storeName$areaText متاح للاستلام',
           type: NotificationType.order,
@@ -1772,6 +1814,7 @@ class NotificationServiceEnhanced {
             'target_role': 'captain',
             'order_id': orderId,
             'store_name': storeName,
+            'audience': 'delivery_office',
             if (area != null) 'area': area,
           },
         );
@@ -1779,7 +1822,7 @@ class NotificationServiceEnhanced {
       }
 
       AppLogger.info(
-        '✅ Available order notification sent to ${captains.length} captains',
+        '✅ Available order notification sent to ${deliveryAdmins.length} delivery admins',
       );
       return anySent;
     } catch (e) {

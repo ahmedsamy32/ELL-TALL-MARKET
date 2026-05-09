@@ -432,6 +432,8 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
         } else if (_storeStreetController.text.trim().isEmpty) {
           scrollToKey(_storeMapSectionKey);
           _storeStreetFocus.requestFocus();
+        } else if (_storePosition == null) {
+          scrollToKey(_storeMapSectionKey);
         }
         return;
       }
@@ -469,6 +471,13 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
         _showWarningMessage('يرجى إكمال بيانات المتجر');
         enableAutovalidate();
         _formKey.currentState?.validate();
+        focusFirstInvalidField();
+        return false;
+      }
+
+      if (_storePosition == null) {
+        _showWarningMessage('يرجى اختيار موقع المتجر من الخريطة');
+        enableAutovalidate();
         focusFirstInvalidField();
         return false;
       }
@@ -537,6 +546,8 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
           .eq('is_active', true)
           .order('name');
 
+      if (!mounted) return;
+
       setState(() {
         _categories = List<Map<String, dynamic>>.from(response);
         _isLoadingCategories = false;
@@ -553,6 +564,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
       }
     } catch (e) {
       AppLogger.error("[RegisterMerchant] خطأ في تحميل الفئات", e);
+      if (!mounted) return;
       setState(() => _isLoadingCategories = false);
 
       // عرض رسالة للمستخدم
@@ -1077,6 +1089,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                               textInputAction: TextInputAction.done,
                               onFieldSubmitted: (_) {
                                 if (_validateStep(0)) {
+                                  FocusScope.of(context).unfocus();
                                   setState(() => _currentStep = 1);
                                 }
                               },
@@ -1149,8 +1162,8 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                               cityFocus: _storeCityFocus,
                               streetFocus: _storeStreetFocus,
                               position: _storePosition,
-                              requirePosition: false,
-                              showMapPicker: false,
+                              requirePosition: true,
+                              showMapPicker: true,
                               onPositionChanged: (pos) {
                                 setState(() {
                                   _storePosition = pos;
@@ -1172,7 +1185,8 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                                   : null,
                               updateLocationProvider: false,
                               refreshNearbyStores: false,
-                              autofillAllFieldsFromMap: true,
+                              autofillAllFieldsFromMap: false,
+                              autofillGovernorateCityFromMap: false,
                             ),
                           ),
                           const SizedBox(height: 16),
@@ -1194,6 +1208,9 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                           Container(
                             key: _storeCategorySectionKey,
                             child: DropdownButtonFormField<String>(
+                              key: ValueKey<String>(
+                                'mobile-store-category-${_selectedCategory ?? 'none'}-${_categories.length}',
+                              ),
                               initialValue: _selectedCategory,
                               decoration: InputDecoration(
                                 labelText: 'فئة المتجر',
@@ -1514,6 +1531,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
             onPressed: _isLoading
                 ? null
                 : () {
+                    FocusScope.of(context).unfocus();
                     setState(() => _currentStep -= 1);
                   },
             icon: const Icon(Icons.arrow_back_rounded, size: 18),
@@ -1525,6 +1543,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
             onPressed: _isLoading
                 ? null
                 : () async {
+                    FocusScope.of(context).unfocus();
                     if (!isLast) {
                       if (_validateStep(_currentStep)) {
                         // في خطوة بيانات المتجر، تحقّق من تفرّد الاسم قبل المتابعة
@@ -1532,6 +1551,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                           final ok = await _checkStoreNameUnique();
                           if (!ok) return; // لا تنتقل للخطوة التالية
                         }
+                        if (!mounted) return;
                         setState(() => _currentStep += 1);
                       }
                     } else {
@@ -2080,8 +2100,8 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
             cityFocus: _storeCityFocus,
             streetFocus: _storeStreetFocus,
             position: _storePosition,
-            requirePosition: false,
-            showMapPicker: false,
+            requirePosition: true,
+            showMapPicker: true,
             onPositionChanged: (pos) => setState(() => _storePosition = pos),
             onGovernorateChanged: _handleStoreGovernorateSelection,
             onCityChanged: _handleStoreCitySelection,
@@ -2094,7 +2114,8 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
             areaOptions: _hasOwnerZoneOptions ? _areaOptions : null,
             updateLocationProvider: false,
             refreshNearbyStores: false,
-            autofillAllFieldsFromMap: true,
+            autofillAllFieldsFromMap: false,
+            autofillGovernorateCityFromMap: false,
           ),
         ),
         const SizedBox(height: 16),
@@ -2112,6 +2133,9 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
         Container(
           key: _storeCategorySectionKey,
           child: DropdownButtonFormField<String>(
+            key: ValueKey<String>(
+              'web-store-category-${_selectedCategory ?? 'none'}-${_categories.length}',
+            ),
             initialValue: _selectedCategory,
             decoration: InputDecoration(
               labelText: 'فئة المتجر',

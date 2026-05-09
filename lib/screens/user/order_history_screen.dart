@@ -17,6 +17,45 @@ class OrderHistoryScreen extends StatefulWidget {
   State<OrderHistoryScreen> createState() => _OrderHistoryScreenState();
 }
 
+OrderStatus _simplifyStatusForClient(OrderStatus status) {
+  switch (status) {
+    case OrderStatus.pending:
+      return OrderStatus.pending;
+    case OrderStatus.confirmed:
+      return OrderStatus.confirmed;
+    case OrderStatus.preparing:
+    case OrderStatus.ready:
+      return OrderStatus.preparing;
+    case OrderStatus.inTransit:
+    case OrderStatus.pickedUp:
+      return OrderStatus.inTransit;
+    case OrderStatus.delivered:
+      return OrderStatus.delivered;
+    case OrderStatus.cancelled:
+      return OrderStatus.cancelled;
+  }
+}
+
+String _clientStatusLabel(OrderStatus status) {
+  final simplified = _simplifyStatusForClient(status);
+  if (simplified == OrderStatus.pending) {
+    return 'في انتظار قبول المتجر';
+  }
+  if (simplified == OrderStatus.confirmed) {
+    return 'تم قبول الطلب';
+  }
+  if (simplified == OrderStatus.preparing) {
+    return 'جاري تجهيز الطلب';
+  }
+  if (simplified == OrderStatus.inTransit) {
+    return 'جارٍ التوصيل';
+  }
+  if (simplified == OrderStatus.delivered) {
+    return 'تم الاستلام';
+  }
+  return 'ملغي';
+}
+
 class _OrderHistoryScreenState extends State<OrderHistoryScreen>
     with SingleTickerProviderStateMixin {
   TabController? _tabController;
@@ -642,7 +681,7 @@ class _OrderGroupCardState extends State<_OrderGroupCard> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
-                      status.displayName,
+                      _clientStatusLabel(status),
                       style: TextStyle(
                         fontSize: 12,
                         color: colorScheme.onPrimaryContainer,

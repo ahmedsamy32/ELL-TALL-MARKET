@@ -14,7 +14,6 @@ import 'package:ell_tall_market/models/address_model.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/utils/validators.dart';
 import 'package:ell_tall_market/screens/shared/advanced_map_screen.dart';
-import 'package:ell_tall_market/services/location_service.dart';
 import 'package:ell_tall_market/services/address_service.dart';
 import 'package:ell_tall_market/services/delivery_zone_pricing_service.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
@@ -201,14 +200,77 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String _normalizeZoneValue(String? input) {
     var value = (input ?? '').trim().toLowerCase();
     value = value
+        .replaceAll('أ', 'ا')
+        .replaceAll('إ', 'ا')
+        .replaceAll('آ', 'ا')
+        .replaceAll('ى', 'ي')
+        .replaceAll('ؤ', 'و')
+        .replaceAll('ئ', 'ي')
+        .replaceAll('ة', 'ه')
+        .replaceAll('ـ', '')
         .replaceFirst(RegExp(r'^محافظة\s+'), '')
         .replaceFirst(RegExp(r'^مدينة\s+'), '')
         .replaceFirst(RegExp(r'^مركز\s+'), '')
         .replaceFirst(RegExp(r'^حي\s+'), '')
         .replaceFirst(RegExp(r'^منطقة\s+'), '')
+        .replaceAll(RegExp(r'[\-–—_,،.]'), ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
     return value;
+  }
+
+  List<String> _zoneGovernorateOptions() {
+    final map = <String, String>{};
+    for (final zone in _activeDeliveryZones) {
+      final raw = zone.governorate.trim();
+      if (raw.isEmpty) continue;
+      final normalized = _normalizeZoneValue(raw);
+      map.putIfAbsent(normalized, () => raw);
+    }
+    return map.values.toList()..sort();
+  }
+
+  List<String> _zoneCityOptionsForGovernorate(String governorate) {
+    final selectedGov = _normalizeZoneValue(governorate);
+    if (selectedGov.isEmpty) return const <String>[];
+
+    final map = <String, String>{};
+    for (final zone in _activeDeliveryZones) {
+      final zoneGov = _normalizeZoneValue(zone.governorate);
+      if (zoneGov != selectedGov) continue;
+
+      final rawCity = (zone.city ?? '').trim();
+      if (rawCity.isEmpty) continue;
+
+      final normalizedCity = _normalizeZoneValue(rawCity);
+      map.putIfAbsent(normalizedCity, () => rawCity);
+    }
+    return map.values.toList()..sort();
+  }
+
+  List<String> _zoneAreaOptionsForGovernorateAndCity(
+    String governorate,
+    String city,
+  ) {
+    final selectedGov = _normalizeZoneValue(governorate);
+    final selectedCity = _normalizeZoneValue(city);
+    if (selectedGov.isEmpty || selectedCity.isEmpty) return const <String>[];
+
+    final map = <String, String>{};
+    for (final zone in _activeDeliveryZones) {
+      final zoneGov = _normalizeZoneValue(zone.governorate);
+      if (zoneGov != selectedGov) continue;
+
+      final zoneCity = _normalizeZoneValue(zone.city);
+      if (zoneCity.isEmpty || zoneCity != selectedCity) continue;
+
+      final rawArea = (zone.area ?? '').trim();
+      if (rawArea.isEmpty) continue;
+
+      final normalizedArea = _normalizeZoneValue(rawArea);
+      map.putIfAbsent(normalizedArea, () => rawArea);
+    }
+    return map.values.toList()..sort();
   }
 
   DeliveryZonePricingModel? _resolveDeliveryZone(AddressModel? address) {
@@ -253,36 +315,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   double _calculateTotalDeliveryFee(CartProvider cartProvider) {
-    double totalDeliveryFee = 0.0;
-    bool hasAppDelivery = false;
-    final processedStores = <String>{};
-
-    for (final item in cartProvider.cartItems) {
-      final product = item['product'] as Map<String, dynamic>?;
-      final store = product?['stores'] as Map<String, dynamic>?;
-
-      final storeId = (store?['id'] ?? item['store_id'] ?? product?['store_id'])
-          ?.toString();
-      if (storeId == null || storeId.isEmpty) continue;
-
-      if (processedStores.contains(storeId)) continue;
-      processedStores.add(storeId);
-
-      final deliveryMode = store?['delivery_mode'] as String? ?? 'store';
-
-      if (deliveryMode == 'store') {
-        final fee = (store?['delivery_fee'] as num?)?.toDouble() ?? 0.0;
-        totalDeliveryFee += fee;
-      } else {
-        hasAppDelivery = true;
-      }
-    }
-
-    if (hasAppDelivery) {
-      totalDeliveryFee += _getAppDeliveryFeeBySelectedZone();
-    }
-
-    return totalDeliveryFee;
+    if (_selectedAddress == null) return 0.0;
+    return _getAppDeliveryFeeBySelectedZone();
   }
 
   // حساب الخصم الإجمالي
@@ -305,148 +339,121 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
     final storesOutOfRange = <String>[];
     final processedStores = <String>{};
+    final storeAdminCache = <String, Map<String, String?>>{};
 
+    final addressGov = _normalizeZoneValue(address.governorate);
     final addressCity = _normalizeZoneValue(address.city);
 
-    // نظام المدينة: لو مفيش إحداثيات، نعتمد على تطابق المدينة فقط.
-    if (address.latitude == null || address.longitude == null) {
-      for (var item in cartProvider.cartItems) {
-        final product = item['product'] as Map<String, dynamic>?;
-        if (product == null || product['stores'] == null) continue;
-
-        final store = product['stores'] as Map<String, dynamic>;
-        final storeId = store['id'] as String? ?? '';
-        final storeName = store['name'] as String? ?? 'متجر غير معروف';
-
-        if (processedStores.contains(storeId)) continue;
-        processedStores.add(storeId);
-
-        final storeCity = _normalizeZoneValue(store['city'] as String?);
-        if (addressCity.isNotEmpty &&
-            storeCity.isNotEmpty &&
-            storeCity != addressCity) {
-          storesOutOfRange.add(storeName);
-        }
-      }
-
-      return storesOutOfRange;
-    }
-
-    AppLogger.info('📍 التحقق من نطاق التوصيل للعنوان:');
-    AppLogger.info('  Lat: ${address.latitude}, Lng: ${address.longitude}');
+    AppLogger.info('📍 التحقق من التطابق حسب المحافظة + المدينة فقط');
+    AppLogger.info('  المحافظة: ${address.governorate}');
+    AppLogger.info('  المدينة: ${address.city}');
 
     for (var item in cartProvider.cartItems) {
       final product = item['product'] as Map<String, dynamic>?;
-      if (product != null && product['stores'] != null) {
-        final store = product['stores'] as Map<String, dynamic>;
-        final storeId = store['id'] as String? ?? '';
-        final storeName = store['name'] as String? ?? 'متجر غير معروف';
+      final store = product?['stores'] as Map<String, dynamic>?;
 
-        // تجنب التحقق من نفس المتجر مرتين
-        if (processedStores.contains(storeId)) continue;
-        processedStores.add(storeId);
+      final storeId =
+          (store?['id'] ?? item['store_id'] ?? product?['store_id'])
+              ?.toString()
+              .trim() ??
+          '';
+      if (storeId.isEmpty || processedStores.contains(storeId)) continue;
+      processedStores.add(storeId);
 
-        // ✅ شرط النظام الجديد: المتجر لازم يكون في نفس مدينة العميل
-        final storeCity = _normalizeZoneValue(store['city'] as String?);
-        if (addressCity.isNotEmpty &&
-            storeCity.isNotEmpty &&
-            storeCity != addressCity) {
-          AppLogger.warning(
-            '  ❌ اختلاف المدينة: المتجر في ${store['city']} والعميل في ${address.city}',
-          );
-          storesOutOfRange.add(storeName);
-          continue;
-        }
+      var storeName = (store?['name']?.toString().trim().isNotEmpty ?? false)
+          ? store!['name'].toString().trim()
+          : 'متجر غير معروف';
 
-        try {
-          AppLogger.info('🏪 التحقق من متجر: $storeName (ID: $storeId)');
+      String? rawStoreGov = store?['governorate']?.toString();
+      String? rawStoreCity = store?['city']?.toString();
 
-          // استخدام PostGIS للتحقق من إمكانية التوصيل
-          final deliveryCheck = await LocationService.canDeliverToLocation(
-            storeId: storeId,
-            latitude: address.latitude!,
-            longitude: address.longitude!,
-          );
+      // fallback: بعض العناصر لا تحتوي الحقول الإدارية داخل cart payload.
+      // في الوضع الصارم نجلبها مباشرة من stores حتى لا نُخرج المتجر خطأً.
+      if ((rawStoreGov == null || rawStoreGov.trim().isEmpty) ||
+          (rawStoreCity == null || rawStoreCity.trim().isEmpty)) {
+        if (!storeAdminCache.containsKey(storeId)) {
+          try {
+            final storeRow = await _supabase
+                .from('stores')
+                .select('name, governorate, city')
+                .eq('id', storeId)
+                .maybeSingle();
 
-          if (deliveryCheck != null) {
-            final canDeliver = deliveryCheck['can_deliver'] as bool? ?? false;
-            final distance = deliveryCheck['distance_km'] as double? ?? 0.0;
-
-            AppLogger.info('  📊 النتيجة:');
-            AppLogger.info('    - يمكن التوصيل: $canDeliver');
-            AppLogger.info('    - المسافة: ${distance.toStringAsFixed(2)} كم');
-
-            if (!canDeliver) {
-              AppLogger.warning('  ❌ المتجر خارج نطاق التوصيل');
-              storesOutOfRange.add(storeName);
-            } else {
-              AppLogger.info('  ✅ المتجر داخل نطاق التوصيل');
-            }
-          } else {
-            // تنفيذ تحقق يدوي إذا فشلت وظيفة RPC أو لم ترجع بيانات
-
-            // 1. التحقق من تطابق المحافظة (Strict Governorate Check)
-            final storeGov = store['governorate'] as String?;
-            final addrGov = address.governorate;
-
-            if (storeGov != null &&
-                addrGov != null &&
-                storeGov.trim().isNotEmpty &&
-                addrGov.trim().isNotEmpty &&
-                storeGov.trim() != addrGov.trim()) {
-              AppLogger.warning(
-                '  ❌ اختلاف المحافظة: المتجر في $storeGov والعميل في $addrGov',
-              );
-              storesOutOfRange.add(storeName);
-              continue;
-            }
-
-            // 2. التحقق من المسافة حسب نظام التوصيل (Distance Check by Delivery Mode)
-            final deliveryMode = store['delivery_mode'] as String? ?? 'store';
-            final storeLat = (store['latitude'] as num?)?.toDouble();
-            final storeLng = (store['longitude'] as num?)?.toDouble();
-
-            // تحديد نطاق التوصيل حسب النظام
-            final double radius;
-            if (deliveryMode == 'app') {
-              // نظام توصيل التطبيق - يستخدم إعدادات الأدمن
-              radius = _settingsProvider.appSettings.appDeliveryMaxDistance;
-              AppLogger.info('  📦 نظام التوصيل: التطبيق (نطاق $radius كم)');
-            } else {
-              // نظام توصيل المتجر - يستخدم نطاق المتجر
-              radius = (store['delivery_radius_km'] as num?)?.toDouble() ?? 7.0;
-              AppLogger.info('  🏪 نظام التوصيل: المتجر (نطاق $radius كم)');
-            }
-
-            if (storeLat != null && storeLng != null) {
-              final distance = LocationService.calculateDistance(
-                lat1: address.latitude!,
-                lon1: address.longitude!,
-                lat2: storeLat,
-                lon2: storeLng,
-              );
-
-              AppLogger.info(
-                '  📏 التحقق اليدوي: المسافة ${distance.toStringAsFixed(2)} كم، النطاق $radius كم',
-              );
-
-              if (distance > radius) {
-                AppLogger.warning('  ❌ المتجر خارج نطاق التوصيل (تحقق يدوي)');
-                storesOutOfRange.add(storeName);
-              } else {
-                AppLogger.info('  ✅ المتجر داخل نطاق التوصيل (تحقق يدوي)');
-              }
-            } else {
-              AppLogger.info(
-                'ℹ️ لا توجد إحداثيات للمتجر "$storeName" - السماح بالطلب',
-              );
-            }
+            storeAdminCache[storeId] = {
+              'name': storeRow?['name']?.toString(),
+              'governorate': storeRow?['governorate']?.toString(),
+              'city': storeRow?['city']?.toString(),
+            };
+          } catch (e) {
+            AppLogger.warning(
+              '⚠️ فشل جلب المحافظة/المدينة للمتجر $storeId من جدول stores',
+              e,
+            );
+            storeAdminCache[storeId] = const {
+              'name': null,
+              'governorate': null,
+              'city': null,
+            };
           }
-        } catch (e) {
-          AppLogger.error('  ❌ خطأ في التحقق من المتجر: $e');
-          // في حالة الخطأ، نسمح بالطلب (قد يكون خطأ تقني مؤقت)
-          AppLogger.warning('  ⚠️ السماح بالطلب بسبب خطأ تقني');
         }
+
+        final cached = storeAdminCache[storeId]!;
+        rawStoreGov = (rawStoreGov == null || rawStoreGov.trim().isEmpty)
+            ? cached['governorate']
+            : rawStoreGov;
+        rawStoreCity = (rawStoreCity == null || rawStoreCity.trim().isEmpty)
+            ? cached['city']
+            : rawStoreCity;
+
+        final cachedName = (cached['name'] ?? '').trim();
+        if (storeName == 'متجر غير معروف' && cachedName.isNotEmpty) {
+          storeName = cachedName;
+        }
+      }
+
+      final storeGov = _normalizeZoneValue(rawStoreGov);
+      final storeCity = _normalizeZoneValue(rawStoreCity);
+
+      // سياسة صارمة:
+      // 1) المحافظة + المدينة يجب أن تكون مكتملة لدى العميل والمتجر.
+      // 2) يجب أن تتطابق القيم حرفياً بعد التطبيع.
+      final clientDataIncomplete = addressGov.isEmpty || addressCity.isEmpty;
+      final storeDataIncomplete = storeGov.isEmpty || storeCity.isEmpty;
+      final governorateMismatch =
+          addressGov.isNotEmpty &&
+          storeGov.isNotEmpty &&
+          storeGov != addressGov;
+      final cityMismatch =
+          addressCity.isNotEmpty &&
+          storeCity.isNotEmpty &&
+          storeCity != addressCity;
+      final isOutOfRange =
+          clientDataIncomplete ||
+          storeDataIncomplete ||
+          governorateMismatch ||
+          cityMismatch;
+
+      if (isOutOfRange) {
+        if (clientDataIncomplete) {
+          AppLogger.warning(
+            '  ⚠️ بيانات عنوان العميل غير مكتملة (المحافظة/المدينة) - اعتبار خارج النطاق',
+          );
+        }
+        if (storeDataIncomplete) {
+          AppLogger.warning(
+            '  ⚠️ بيانات موقع المتجر غير مكتملة (المحافظة/المدينة) - اعتبار خارج النطاق',
+          );
+        }
+        AppLogger.warning(
+          '  ❌ المتجر "$storeName" خارج النطاق الإداري: '
+          'محافظة المتجر (${rawStoreGov ?? 'غير محددة'}) '
+          'مدينة المتجر (${rawStoreCity ?? 'غير محددة'}) '
+          '| محافظة العميل (${address.governorate ?? 'غير محددة'}) '
+          'مدينة العميل (${address.city})',
+        );
+        storesOutOfRange.add(storeName);
+      } else {
+        AppLogger.info('  ✅ المتجر "$storeName" مطابق للمحافظة والمدينة');
       }
     }
 
@@ -1677,7 +1684,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 const SizedBox(height: 16),
                               ],
 
-                              AddressFormSection(
+                              AddressLocationFormSection(
+                                userType: MapUserType.customer,
                                 formKey: _addressFormKey,
                                 formType: AddressFormType.residential,
                                 governorateController: _governorateController,
@@ -1696,44 +1704,34 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                                 cityFocus: _cityFocus,
                                 streetFocus: _streetFocus,
                                 position: _newAddressPosition,
-                                requirePosition: true,
-                                onPickFromMap: () async {
-                                  await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => AdvancedMapScreen(
-                                        userType: MapUserType.customer,
-                                        actionType: MapActionType.pickLocation,
-                                        initialPosition: _newAddressPosition,
-                                        onLocationSelectedDetails: (details) {
-                                          setSheetState(() {
-                                            _newAddressPosition =
-                                                details.position;
-                                            final components =
-                                                AddressService.extractComponentsFromDetails(
-                                                  details,
-                                                );
-                                            _governorateController.text =
-                                                components['governorate'] ?? '';
-                                            _cityController.text =
-                                                components['city'] ?? '';
-                                            if ((components['area'] ?? '')
-                                                .isNotEmpty) {
-                                              _areaController.text =
-                                                  components['area']!;
-                                            }
-                                            if ((components['street'] ?? '')
-                                                .isNotEmpty) {
-                                              _streetController.text =
-                                                  components['street']!;
-                                            }
-                                          });
-                                          setState(() {});
-                                        },
-                                      ),
-                                    ),
-                                  );
+                                onPositionChanged: (pos) {
+                                  setSheetState(() {
+                                    _newAddressPosition = pos;
+                                  });
                                 },
+                                onGovernorateChanged: (value) {
+                                  setSheetState(() {
+                                    _cityController.clear();
+                                    _areaController.clear();
+                                  });
+                                },
+                                onCityChanged: (value) {
+                                  setSheetState(() {
+                                    _areaController.clear();
+                                  });
+                                },
+                                governorateOptions: _zoneGovernorateOptions(),
+                                cityOptions: _zoneCityOptionsForGovernorate(
+                                  _governorateController.text,
+                                ),
+                                areaOptions:
+                                    _zoneAreaOptionsForGovernorateAndCity(
+                                      _governorateController.text,
+                                      _cityController.text,
+                                    ),
+                                autofillAllFieldsFromMap: true,
+                                requirePosition: true,
+                                showMapPicker: true,
                               ),
                             ],
                           );
@@ -1769,17 +1767,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('يرجى ملء جميع الحقول المطلوبة'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    // التحقق من اختيار الموقع
-    if (_newAddressPosition == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى اختيار الموقع من الخريطة'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -1832,8 +1819,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         'landmark': _landmarkController.text.trim().isEmpty
             ? null
             : _landmarkController.text.trim(),
-        'latitude': _newAddressPosition!.latitude,
-        'longitude': _newAddressPosition!.longitude,
+        'latitude': _newAddressPosition?.latitude,
+        'longitude': _newAddressPosition?.longitude,
         'is_default': isFirstAddress,
       };
 
@@ -2500,66 +2487,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     ColorScheme colorScheme,
     ThemeData theme,
   ) {
-    // جمع تفاصيل كل متجر مع رسوم التوصيل
-    final merchantStoreDetails = <Map<String, dynamic>>[];
-    final appDeliveryCount = <String, int>{};
-    final processedStores = <String>{};
-
-    // تحليل كل منتج في السلة
-    for (var item in cartProvider.cartItems) {
-      final product = item['product'] as Map<String, dynamic>?;
-      if (product != null && product['stores'] != null) {
-        final store = product['stores'] as Map<String, dynamic>;
-        final storeId = store['id'] as String? ?? '';
-        final storeName = store['name'] as String? ?? 'المتجر';
-
-        // تجنب إضافة نفس المتجر مرتين
-        if (processedStores.contains(storeId)) continue;
-        processedStores.add(storeId);
-
-        // الحقول الصحيحة: delivery_mode
-        final deliveryMode = store['delivery_mode'] as String? ?? 'store';
-
-        if (deliveryMode == 'store') {
-          // المتاجر التي توصل بنفسها
-          final fee = (store['delivery_fee'] as num?)?.toDouble() ?? 0.0;
-          merchantStoreDetails.add({
-            'name': storeName,
-            'fee': fee,
-            'mode': 'store',
-          });
-        } else {
-          // متاجر توصيل التطبيق - نعد كم متجر
-          appDeliveryCount[storeId] = 1;
-        }
-      }
-    }
-
-    // الحصول على رسوم التوصيل من إعدادات التطبيق/المنطقة
+    // رسوم التوصيل = سعر المنطقة فقط
     final matchedZone = _resolveDeliveryZone(_selectedAddress);
-    final appDeliveryFee = appDeliveryCount.isNotEmpty
-        ? _getAppDeliveryFeeBySelectedZone()
-        : 0.0;
+    final zoneDeliveryFee = _calculateTotalDeliveryFee(cartProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // عرض تفاصيل المتاجر التي توصل بنفسها
-        ...merchantStoreDetails.map((storeDetail) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: _buildSummaryRow(
-              'رسوم توصيل ${storeDetail['name']}',
-              storeDetail['fee'],
-              colorScheme,
-            ),
-          );
-        }),
-
-        // عرض رسوم توصيل التطبيق (بدون أسماء المتاجر)
-        if (appDeliveryFee > 0) ...[
-          if (merchantStoreDetails.isNotEmpty) const SizedBox(height: 8),
-          _buildSummaryRow('رسوم التوصيل', appDeliveryFee, colorScheme),
+        if (zoneDeliveryFee > 0) ...[
+          _buildSummaryRow('رسوم التوصيل', zoneDeliveryFee, colorScheme),
           if (matchedZone != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -2570,9 +2506,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ),
               ),
             ),
+        ] else ...[
+          Text(
+            'اختر عنوان التوصيل لحساب رسوم المنطقة',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
         ],
-
-        // (تم حذف عرض "إجمالي رسوم التوصيل" حسب المطلوب)
       ],
     );
   }
@@ -3520,7 +3461,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       }
 
       // إنشاء طلب لكل متجر
-      for (var entry in itemsByStore.entries) {
+      final groupDeliveryFee = _calculateTotalDeliveryFee(cartProvider);
+      final entries = itemsByStore.entries.toList();
+
+      for (var i = 0; i < entries.length; i++) {
+        final entry = entries[i];
         String storeId = entry.key;
         List<Map<String, dynamic>> storeItems = entry.value;
 
@@ -3535,17 +3480,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           }
         }
 
-        // حساب رسوم التوصيل لهذا المتجر
-        double deliveryFee = 0.0;
-        if (storeData != null) {
-          final deliveryMode = storeData['delivery_mode'] as String? ?? 'store';
-          if (deliveryMode == 'store') {
-            deliveryFee =
-                (storeData['delivery_fee'] as num?)?.toDouble() ?? 0.0;
-          } else {
-            deliveryFee = _getAppDeliveryFeeBySelectedZone();
-          }
-        }
+        // رسوم التوصيل = سعر المنطقة فقط (مرة واحدة على أول طلب)
+        final deliveryFee = i == 0 ? groupDeliveryFee : 0.0;
 
         double cashFee = 0.0; // إزالة رسوم الكاش لأنها غير موجودة في السلة
         double taxAmount = 0.0; // إزالة الضريبة لأنها غير موجودة في السلة
