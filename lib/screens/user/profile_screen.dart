@@ -6,12 +6,14 @@ import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 import 'package:ell_tall_market/providers/banner_provider.dart';
+import 'package:ell_tall_market/providers/app_settings_provider.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/models/banner_model.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/widgets/user_coupons_sheet.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:ell_tall_market/utils/helpers.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -35,14 +37,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _didRequestProfileOnce = false;
   bool _didHandleMissingProfileOnce = false;
   String _appVersion = '';
+  static const String _defaultSupportEmail = 'support@elltall.com';
+  static const String _defaultSupportPhone = '+20 123 456 7890';
+  static const String _defaultSupportWebsite = 'https://www.elltall.com';
 
   @override
   void initState() {
     super.initState();
     _initPackageInfo();
-
-    // Trigger a single profile fetch when the screen first opens.
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Provider.of<AppSettingsProvider>(context, listen: false).loadSettings();
+
+      // Trigger a single profile fetch when the screen first opens.
       if (!mounted || _didRequestProfileOnce) return;
       _didRequestProfileOnce = true;
 
@@ -216,6 +223,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _buildLoginCallToAction(context),
             const SizedBox(height: 12),
             _buildSellWithUsCallToAction(context),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(child: _buildAboutAppCallToAction(context)),
+                const SizedBox(width: 12),
+                Expanded(child: _buildSupportCallToAction(context)),
+              ],
+            ),
             const SizedBox(height: 32),
           ],
         ),
@@ -271,6 +286,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
       label: const Text('تسجيل الدخول أو إنشاء حساب'),
       style: FilledButton.styleFrom(
         minimumSize: const Size(double.infinity, 56),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+    );
+  }
+
+  Widget _buildAboutAppCallToAction(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: () => Navigator.pushNamed(context, AppRoutes.aboutApp),
+      icon: const Icon(Icons.info_outline_rounded),
+      label: const Text('عن التطبيق'),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(double.infinity, 52),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+    );
+  }
+
+  Widget _buildSupportCallToAction(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: () => _showSupportSheet(context),
+      icon: const Icon(Icons.support_agent_rounded),
+      label: const Text('تواصل معنا'),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(double.infinity, 52),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       ),
     );
@@ -669,11 +708,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onTap: () =>
                 Navigator.pushNamed(context, AppRoutes.termsConditions),
           ),
+          _buildMenuItem(
+            context,
+            icon: Icons.support_agent_rounded,
+            title: 'تواصل معنا',
+            onTap: () => _showSupportSheet(context),
+          ),
           const SizedBox(height: 8),
           _buildMenuItem(
             context,
             icon: Icons.store_outlined,
             title: 'بع معنا',
+            titleColor: Colors.green,
             onTap: () =>
                 Navigator.pushNamed(context, AppRoutes.registerMerchant),
           ),
@@ -831,6 +877,231 @@ class _ProfileScreenState extends State<ProfileScreen> {
   // ===========================================================================
   // 7. Action Dialogs & Sheets
   // ===========================================================================
+  void _showSupportSheet(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final parentContext = context;
+    final settingsProvider = Provider.of<AppSettingsProvider>(
+      parentContext,
+      listen: false,
+    );
+    final supportEmail = _resolveSupportValue(
+      settingsProvider.appSettings.supportEmail,
+      _defaultSupportEmail,
+    );
+    final supportPhoneDisplay = _resolveSupportValue(
+      settingsProvider.appSettings.supportPhone,
+      _defaultSupportPhone,
+    );
+    final supportPhoneDial = _normalizePhone(supportPhoneDisplay);
+    final supportWebsiteRaw = _resolveSupportValue(
+      settingsProvider.appSettings.supportWebsite,
+      _defaultSupportWebsite,
+    );
+    final supportWebsiteUrl = _normalizeUrl(supportWebsiteRaw);
+    final supportWebsiteLabel = _displayWebsite(supportWebsiteRaw);
+
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      backgroundColor: colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'تواصل معنا',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _buildSupportRow(
+                  context,
+                  icon: Icons.email_outlined,
+                  label: 'البريد الإلكتروني',
+                  value: supportEmail,
+                  actionLabel: 'إرسال',
+                  actionIcon: Icons.send_rounded,
+                  onAction: () =>
+                      _openSupportEmail(parentContext, supportEmail),
+                ),
+                const SizedBox(height: 12),
+                _buildSupportRow(
+                  context,
+                  icon: Icons.phone_outlined,
+                  label: 'الهاتف',
+                  value: supportPhoneDisplay,
+                  actionLabel: 'اتصال',
+                  actionIcon: Icons.phone_rounded,
+                  onAction: () =>
+                      _openSupportPhone(parentContext, supportPhoneDial),
+                ),
+                const SizedBox(height: 12),
+                _buildSupportRow(
+                  context,
+                  icon: Icons.language_rounded,
+                  label: 'الموقع الإلكتروني',
+                  value: supportWebsiteLabel,
+                  actionLabel: 'فتح',
+                  actionIcon: Icons.open_in_new_rounded,
+                  onAction: () =>
+                      _openSupportWebsite(parentContext, supportWebsiteUrl),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSupportRow(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required String value,
+    required String actionLabel,
+    required IconData actionIcon,
+    required VoidCallback onAction,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onAction,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: colorScheme.primary, size: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      value,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: colorScheme.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: onAction,
+                icon: Icon(actionIcon, size: 18),
+                label: Text(actionLabel),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _resolveSupportValue(String value, String fallback) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? fallback : trimmed;
+  }
+
+  String _normalizePhone(String value) {
+    return value.replaceAll(RegExp(r'\s+'), '');
+  }
+
+  String _normalizeUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final hasScheme =
+        trimmed.startsWith('http://') || trimmed.startsWith('https://');
+    return hasScheme ? trimmed : 'https://$trimmed';
+  }
+
+  String _displayWebsite(String value) {
+    final trimmed = value.trim();
+    if (trimmed.startsWith('https://')) {
+      return trimmed.substring('https://'.length);
+    }
+    if (trimmed.startsWith('http://')) {
+      return trimmed.substring('http://'.length);
+    }
+    return trimmed;
+  }
+
+  Future<void> _openSupportEmail(BuildContext context, String email) async {
+    await _runSupportAction(
+      context,
+      () => Helpers.sendEmail(email),
+      'تعذر فتح البريد الإلكتروني',
+    );
+  }
+
+  Future<void> _openSupportPhone(BuildContext context, String phone) async {
+    await _runSupportAction(
+      context,
+      () => Helpers.makePhoneCall(phone),
+      'تعذر فتح تطبيق الاتصال',
+    );
+  }
+
+  Future<void> _openSupportWebsite(BuildContext context, String url) async {
+    await _runSupportAction(
+      context,
+      () => Helpers.launchURL(url),
+      'تعذر فتح الموقع',
+    );
+  }
+
+  Future<void> _runSupportAction(
+    BuildContext context,
+    Future<void> Function() action,
+    String errorMessage,
+  ) async {
+    try {
+      await action();
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(errorMessage)));
+    }
+  }
+
   void _showLogoutDialog(BuildContext context, SupabaseProvider authProvider) {
     bool isLoading = false;
     showDialog(

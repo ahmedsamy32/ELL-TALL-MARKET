@@ -1685,6 +1685,7 @@ class _CaptainDashboardState extends State<CaptainDashboard>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
         initialChildSize: 0.7,
@@ -2039,6 +2040,12 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
           onTap: () {
             if (!notification.isRead) provider.markAsRead(notification.id);
             Navigator.pop(context);
+            final data = Map<String, dynamic>.from(notification.data ?? {});
+            data.putIfAbsent('target_role', () => notification.targetRole);
+            if (!data.containsKey('type') && notification.type != null) {
+              data['type'] = notification.type!.value;
+            }
+            NotificationServiceEnhanced.instance.handleNotificationAction(data);
           },
         ),
       ),

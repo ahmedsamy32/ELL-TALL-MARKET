@@ -2,12 +2,14 @@ import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/cart_model.dart';
 import '../core/logger.dart';
+import 'store_wallet_service.dart';
 
 /// خدمة سلة التسوق المحسنة
 /// متوافقة مع الوثائق الرسمية لـ Supabase v2.10.2
 /// تدعم العمليات الفورية والتحليلات المتقدمة
 class CartService {
   static final SupabaseClient _supabase = Supabase.instance.client;
+  static const double _walletCloseThreshold = -10.0;
 
   // ================================
   // 🛒 Cart Management Operations
@@ -16,11 +18,21 @@ class CartService {
   /// الحصول على سلة المستخدم أو إنشاؤها إذا لم تكن موجودة
   static Future<CartModel?> getUserCart(String userId) async {
     try {
+      final authUser = _supabase.auth.currentUser;
+      if (authUser == null) {
+        AppLogger.warning('محاولة جلب السلة بدون تسجيل دخول');
+        return null;
+      }
+      if (authUser.id != userId) {
+        AppLogger.warning('معرف المستخدم لا يطابق جلسة الدخول الحالية');
+      }
+      final effectiveUserId = authUser.id;
+
       // البحث عن سلة موجودة
       final response = await _supabase
           .from('carts')
           .select()
-          .eq('user_id', userId)
+          .eq('user_id', effectiveUserId)
           .maybeSingle();
 
       if (response != null) {
@@ -28,7 +40,7 @@ class CartService {
       }
 
       // إنشاء سلة جديدة إذا لم تكن موجودة
-      return await createNewCart(userId);
+      return await createNewCart(effectiveUserId);
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في جلب السلة: ${e.message}', e);
       return null;
@@ -41,7 +53,17 @@ class CartService {
   /// إنشاء سلة جديدة للمستخدم
   static Future<CartModel?> createNewCart(String userId) async {
     try {
-      final cartData = {'user_id': userId};
+      final authUser = _supabase.auth.currentUser;
+      if (authUser == null) {
+        AppLogger.warning('محاولة إنشاء سلة بدون تسجيل دخول');
+        return null;
+      }
+      if (authUser.id != userId) {
+        AppLogger.warning('معرف المستخدم لا يطابق جلسة الدخول الحالية');
+      }
+
+      final effectiveUserId = authUser.id;
+      final cartData = {'user_id': effectiveUserId};
 
       final response = await _supabase
           .from('carts')
@@ -49,7 +71,7 @@ class CartService {
           .select()
           .single();
 
-      AppLogger.info('تم إنشاء سلة جديدة للمستخدم: $userId');
+      AppLogger.info('تم إنشاء سلة جديدة للمستخدم: $effectiveUserId');
       return CartModel.fromMap(response);
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في إنشاء السلة: ${e.message}', e);
@@ -90,7 +112,9 @@ class CartService {
                 latitude,
                 longitude,
                 governorate,
-                delivery_radius_km
+                delivery_radius_km,
+                is_open,
+                is_active
               )
             )
           ''')
@@ -170,7 +194,27 @@ class CartService {
         throw Exception('المنتج غير متوفر أو الكمية المطلوبة غير كافية');
       }
 
-      // البحث عن المنتج بنفس الخيارات
+      final store = product['stores'] as Map<String, dynamic>?;
+      final storeId = (store?['id'] ?? product['store_id'])?.toString() ?? '';
+      final storeName = (store?['name'] as String?)?.trim().isNotEmpty == true
+          ? store!['name'].toString()
+          : 'المتجر';
+      final isOpen = store?['is_open'] as bool? ?? true;
+      final isActive = store?['is_active'] as bool? ?? true;
+
+      if (!isOpen || !isActive) {
+        throw Exception('عذراً، $storeName مغلق حالياً');
+      }
+
+      if (storeId.isNotEmpty) {
+        final wallet = await StoreWalletService.getOrCreateWallet(storeId);
+        final balance = (wallet?['balance'] as num?)?.toDouble();
+        if (balance != null && balance <= _walletCloseThreshold) {
+          throw Exception('عذراً، $storeName مغلق مؤقتاً بسبب رصيد المحفظة');
+        }
+      }
+
+      // البحث عن المنتج بنفس RequestOptions
       final items = existingCartItems;
       Map<String, dynamic>? existingItem;
 
@@ -230,6 +274,13 @@ class CartService {
       AppLogger.error('PostgreSQL خطأ في إضافة المنتج للسلة: ${e.message}', e);
       throw Exception('فشل إضافة المنتج للسلة: ${e.message}');
     } catch (e) {
+      final message = e
+          .toString()
+          .replaceFirst(RegExp(r'^Exception:\s*'), '')
+          .trim();
+      if (message.contains('مغلق')) {
+        throw Exception(message);
+      }
       AppLogger.error('خطأ في إضافة المنتج للسلة', e);
       throw Exception('فشل إضافة المنتج للسلة: ${e.toString()}');
     }
@@ -631,7 +682,9 @@ class CartService {
             stores!inner (
               id,
               name,
-              delivery_mode
+              delivery_mode,
+              is_open,
+              is_active
             )
           ''')
           .eq('id', productId)

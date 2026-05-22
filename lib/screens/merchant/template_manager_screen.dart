@@ -15,6 +15,7 @@ class TemplateManagerScreen extends StatefulWidget {
 
 class _TemplateManagerScreenState extends State<TemplateManagerScreen> {
   bool _isLoading = true;
+  bool _isLoadingData = false;
   List<TemplateModel> _templates = [];
 
   @override
@@ -24,6 +25,8 @@ class _TemplateManagerScreenState extends State<TemplateManagerScreen> {
   }
 
   Future<void> _loadTemplates() async {
+    if (_isLoadingData) return;
+    _isLoadingData = true;
     setState(() => _isLoading = true);
     try {
       final templates = await TemplateService.getTemplatesByStore(
@@ -44,6 +47,8 @@ class _TemplateManagerScreenState extends State<TemplateManagerScreen> {
         );
         setState(() => _isLoading = false);
       }
+    } finally {
+      _isLoadingData = false;
     }
   }
 

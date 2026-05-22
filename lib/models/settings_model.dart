@@ -128,6 +128,11 @@ class AppSettingsModel with BaseModelMixin {
   final bool analyticsEnabled; // BOOLEAN DEFAULT TRUE
   final bool crashReports; // BOOLEAN DEFAULT TRUE
 
+  // Support & contact settings
+  final String supportEmail; // بريد الدعم
+  final String supportPhone; // هاتف الدعم
+  final String supportWebsite; // موقع الدعم
+
   // Delivery settings (merged from legacy AppSettings)
   final double appDeliveryBaseFee; // رسوم التوصيل الأساسية
   final double appDeliveryFeePerKm; // رسوم لكل كيلومتر
@@ -155,6 +160,9 @@ class AppSettingsModel with BaseModelMixin {
     this.cacheDuration = 7,
     this.analyticsEnabled = true,
     this.crashReports = true,
+    this.supportEmail = 'support@elltall.com',
+    this.supportPhone = '+20 123 456 7890',
+    this.supportWebsite = 'https://www.elltall.com',
     this.appDeliveryBaseFee = 15.0,
     this.appDeliveryFeePerKm = 3.0,
     this.appDeliveryMaxDistance = 25.0,
@@ -184,6 +192,10 @@ class AppSettingsModel with BaseModelMixin {
       cacheDuration: map['cache_duration'] as int? ?? 7,
       analyticsEnabled: map['analytics_enabled'] as bool? ?? true,
       crashReports: map['crash_reports'] as bool? ?? true,
+      supportEmail: map['support_email'] as String? ?? 'support@elltall.com',
+      supportPhone: map['support_phone'] as String? ?? '+20 123 456 7890',
+      supportWebsite:
+          map['support_website'] as String? ?? 'https://www.elltall.com',
       appDeliveryBaseFee:
           (map['app_delivery_base_fee'] as num?)?.toDouble() ?? 15.0,
       appDeliveryFeePerKm:
@@ -233,6 +245,9 @@ class AppSettingsModel with BaseModelMixin {
       'cache_duration': cacheDuration,
       'analytics_enabled': analyticsEnabled,
       'crash_reports': crashReports,
+      'support_email': supportEmail,
+      'support_phone': supportPhone,
+      'support_website': supportWebsite,
       'app_delivery_base_fee': appDeliveryBaseFee,
       'app_delivery_fee_per_km': appDeliveryFeePerKm,
       'app_delivery_max_distance': appDeliveryMaxDistance,
@@ -259,6 +274,9 @@ class AppSettingsModel with BaseModelMixin {
       'cache_duration': cacheDuration,
       'analytics_enabled': analyticsEnabled,
       'crash_reports': crashReports,
+      'support_email': supportEmail,
+      'support_phone': supportPhone,
+      'support_website': supportWebsite,
       'app_delivery_base_fee': appDeliveryBaseFee,
       'app_delivery_fee_per_km': appDeliveryFeePerKm,
       'app_delivery_max_distance': appDeliveryMaxDistance,
@@ -282,6 +300,9 @@ class AppSettingsModel with BaseModelMixin {
     int? cacheDuration,
     bool? analyticsEnabled,
     bool? crashReports,
+    String? supportEmail,
+    String? supportPhone,
+    String? supportWebsite,
     double? appDeliveryBaseFee,
     double? appDeliveryFeePerKm,
     double? appDeliveryMaxDistance,
@@ -305,6 +326,9 @@ class AppSettingsModel with BaseModelMixin {
       cacheDuration: cacheDuration ?? this.cacheDuration,
       analyticsEnabled: analyticsEnabled ?? this.analyticsEnabled,
       crashReports: crashReports ?? this.crashReports,
+      supportEmail: supportEmail ?? this.supportEmail,
+      supportPhone: supportPhone ?? this.supportPhone,
+      supportWebsite: supportWebsite ?? this.supportWebsite,
       appDeliveryBaseFee: appDeliveryBaseFee ?? this.appDeliveryBaseFee,
       appDeliveryFeePerKm: appDeliveryFeePerKm ?? this.appDeliveryFeePerKm,
       appDeliveryMaxDistance:
@@ -331,6 +355,9 @@ class AppSettingsModel with BaseModelMixin {
     int? cacheDuration,
     bool? analyticsEnabled,
     bool? crashReports,
+    String? supportEmail,
+    String? supportPhone,
+    String? supportWebsite,
     double? appDeliveryBaseFee,
     double? appDeliveryFeePerKm,
     double? appDeliveryMaxDistance,
@@ -350,6 +377,9 @@ class AppSettingsModel with BaseModelMixin {
       cacheDuration: cacheDuration,
       analyticsEnabled: analyticsEnabled,
       crashReports: crashReports,
+      supportEmail: supportEmail,
+      supportPhone: supportPhone,
+      supportWebsite: supportWebsite,
       appDeliveryBaseFee: appDeliveryBaseFee,
       appDeliveryFeePerKm: appDeliveryFeePerKm,
       appDeliveryMaxDistance: appDeliveryMaxDistance,

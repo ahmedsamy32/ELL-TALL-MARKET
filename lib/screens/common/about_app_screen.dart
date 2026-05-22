@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:provider/provider.dart';
+import 'package:ell_tall_market/providers/app_settings_provider.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:ell_tall_market/utils/helpers.dart';
 
 class AboutAppScreen extends StatefulWidget {
   const AboutAppScreen({super.key});
@@ -14,11 +17,15 @@ class AboutAppScreen extends StatefulWidget {
 class _AboutAppScreenState extends State<AboutAppScreen> {
   String _appVersion = '';
   String _buildNumber = '';
+  static const String _defaultSupportEmail = 'support@elltall.com';
+  static const String _defaultSupportPhone = '+20 123 456 7890';
+  static const String _defaultSupportWebsite = 'https://www.elltall.com';
 
   @override
   void initState() {
     super.initState();
     _loadAppInfo();
+    Provider.of<AppSettingsProvider>(context, listen: false).loadSettings();
   }
 
   Future<void> _loadAppInfo() async {
@@ -33,6 +40,22 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final settingsProvider = Provider.of<AppSettingsProvider>(context);
+    final supportEmail = _resolveSupportValue(
+      settingsProvider.appSettings.supportEmail,
+      _defaultSupportEmail,
+    );
+    final supportPhone = _resolveSupportValue(
+      settingsProvider.appSettings.supportPhone,
+      _defaultSupportPhone,
+    );
+    final supportPhoneDial = _normalizePhone(supportPhone);
+    final supportWebsiteRaw = _resolveSupportValue(
+      settingsProvider.appSettings.supportWebsite,
+      _defaultSupportWebsite,
+    );
+    final supportWebsiteUrl = _normalizeUrl(supportWebsiteRaw);
+    final supportWebsiteLabel = _displayWebsite(supportWebsiteRaw);
 
     return Directionality(
       textDirection: TextDirection.rtl,
@@ -235,17 +258,25 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
                             _buildContactItem(
                               Icons.email_outlined,
                               'البريد الإلكتروني',
-                              'support@elltall.com',
+                              supportEmail,
+                              onTap: () =>
+                                  _openSupportEmail(context, supportEmail),
                             ),
                             _buildContactItem(
                               Icons.phone_outlined,
                               'الهاتف',
-                              '+20 123 456 7890',
+                              supportPhone,
+                              onTap: () =>
+                                  _openSupportPhone(context, supportPhoneDial),
                             ),
                             _buildContactItem(
                               Icons.language_rounded,
                               'الموقع الإلكتروني',
-                              'www.elltall.com',
+                              supportWebsiteLabel,
+                              onTap: () => _openSupportWebsite(
+                                context,
+                                supportWebsiteUrl,
+                              ),
                             ),
                           ],
                         ),
@@ -442,36 +473,125 @@ class _AboutAppScreenState extends State<AboutAppScreen> {
   }
 
   // ── Contact Item ──
-  Widget _buildContactItem(IconData icon, String label, String value) {
+  Widget _buildContactItem(
+    IconData icon,
+    String label,
+    String value, {
+    required VoidCallback onTap,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Icon(icon, color: AppColors.grey, size: 20),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[500],
-                  fontFamily: 'Cairo',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Row(
+              children: [
+                Icon(icon, color: AppColors.grey, size: 20),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[500],
+                          fontFamily: 'Cairo',
+                        ),
+                      ),
+                      Text(
+                        value,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          fontFamily: 'Cairo',
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              Text(
-                value,
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  fontFamily: 'Cairo',
+                const Icon(
+                  Icons.open_in_new_rounded,
+                  size: 18,
+                  color: AppColors.grey,
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
+  }
+
+  String _resolveSupportValue(String value, String fallback) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? fallback : trimmed;
+  }
+
+  String _displayWebsite(String value) {
+    final trimmed = value.trim();
+    if (trimmed.startsWith('https://')) {
+      return trimmed.substring('https://'.length);
+    }
+    if (trimmed.startsWith('http://')) {
+      return trimmed.substring('http://'.length);
+    }
+    return trimmed;
+  }
+
+  String _normalizePhone(String value) {
+    return value.replaceAll(RegExp(r'\s+'), '');
+  }
+
+  String _normalizeUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return trimmed;
+    final hasScheme =
+        trimmed.startsWith('http://') || trimmed.startsWith('https://');
+    return hasScheme ? trimmed : 'https://$trimmed';
+  }
+
+  Future<void> _openSupportEmail(BuildContext context, String email) async {
+    await _runContactAction(
+      context,
+      () => Helpers.sendEmail(email),
+      'تعذر فتح البريد الإلكتروني',
+    );
+  }
+
+  Future<void> _openSupportPhone(BuildContext context, String phone) async {
+    await _runContactAction(
+      context,
+      () => Helpers.makePhoneCall(phone),
+      'تعذر فتح تطبيق الاتصال',
+    );
+  }
+
+  Future<void> _openSupportWebsite(BuildContext context, String url) async {
+    await _runContactAction(
+      context,
+      () => Helpers.launchURL(url),
+      'تعذر فتح الموقع',
+    );
+  }
+
+  Future<void> _runContactAction(
+    BuildContext context,
+    Future<void> Function() action,
+    String errorMessage,
+  ) async {
+    try {
+      await action();
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(errorMessage)));
+    }
   }
 }

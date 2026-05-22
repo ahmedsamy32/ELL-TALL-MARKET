@@ -8,6 +8,7 @@ import 'package:ell_tall_market/providers/order_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/services/notification_service.dart';
+import 'package:ell_tall_market/services/store_wallet_service.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_products_screen.dart';
@@ -33,9 +34,12 @@ class MerchantDashboardScreen extends StatefulWidget {
 class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
   int _selectedIndex = 0;
   bool _isInitialized = false; // لمنع التحديث المستمر
+  bool _isLoadingData = false;
   String? _storeId; // تخزين معرف المتجر الحالي لتجنب الاستعلام المتكرر
 
   String? _currentUserId; // لتتبع المستخدم الحالي
+  double? _walletBalance;
+  bool _isWalletLoading = false;
 
   @override
   void initState() {
@@ -97,10 +101,15 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
 
   Future<void> _loadData({bool force = false}) async {
     // منع التحميل المتكرر
+    if (_isLoadingData) {
+      return;
+    }
     if (_isInitialized && !force) {
       AppLogger.info('✅ البيانات محملة بالفعل');
       return;
     }
+
+    _isLoadingData = true;
 
     AppLogger.info('🔄 بدء تحميل بيانات الداشبورد...');
 
@@ -116,75 +125,81 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     );
 
     // Load merchant data first if not already loaded
-    if (authProvider.isLoggedIn && authProvider.currentUser != null) {
-      // تأمين profileId حتى لو كان المزوّد لم يحمّله بعد
-      String? profileId = authProvider.currentUserProfile?.id;
+    try {
+      if (authProvider.isLoggedIn && authProvider.currentUser != null) {
+        // تأمين profileId حتى لو كان المزوّد لم يحمّله بعد
+        String? profileId = authProvider.currentUserProfile?.id;
 
-      if (merchantProvider.selectedMerchant == null &&
-          !merchantProvider.isLoading &&
-          profileId != null) {
-        AppLogger.info('📦 جاري جلب بيانات التاجر عبر profileId...');
-        await merchantProvider.fetchMerchantByProfileId(profileId);
-      }
-
-      final merchant = merchantProvider.selectedMerchant;
-
-      if (merchant != null) {
-        AppLogger.info('✅ تم جلب بيانات التاجر: ${merchant.businessName}');
-
-        final statsCount =
-            merchantProvider.selectedMerchantStats?['total_products'];
-        if (statsCount is int) {
-          productProvider.preloadStoreProductCount(statsCount);
+        if (profileId == null) {
+          AppLogger.info('⏳ لم يتم تحميل profileId بعد');
+          return;
         }
 
-        final storeId = await _ensureStoreId(merchantProvider);
+        if (merchantProvider.selectedMerchant == null &&
+            !merchantProvider.isLoading) {
+          AppLogger.info('📦 جاري جلب بيانات التاجر عبر profileId...');
+          await merchantProvider.fetchMerchantByProfileId(profileId);
+        }
 
-        if (storeId != null) {
-          AppLogger.info('🏪 معرف المتجر: $storeId');
+        final merchant = merchantProvider.selectedMerchant;
 
-          // تحميل عداد المنتجات
-          AppLogger.info('📊 جاري جلب عدد المنتجات...');
-          await productProvider.fetchStoreProductCount(storeId);
-          await productProvider.subscribeToStoreProducts(storeId);
-          AppLogger.info(
-            '✅ عدد المنتجات: ${productProvider.storeProductCount}',
-          );
+        if (merchant != null) {
+          AppLogger.info('✅ تم جلب بيانات التاجر: ${merchant.businessName}');
 
-          // جلب الطلبات
-          if (!orderProvider.isLoading) {
-            AppLogger.info('📦 جاري جلب الطلبات...');
-            await orderProvider.fetchStoreOrders(storeId);
-            await orderProvider.subscribeToStoreOrders(storeId);
-            AppLogger.info('✅ عدد الطلبات: ${orderProvider.orders.length}');
+          final statsCount =
+              merchantProvider.selectedMerchantStats?['total_products'];
+          if (statsCount is int) {
+            productProvider.preloadStoreProductCount(statsCount);
           }
 
-          // جلب الإشعارات للتاجر
-          if (mounted) {
-            final notificationProvider = Provider.of<NotificationProvider>(
-              context,
-              listen: false,
-            );
-            // استخدام loadStoreNotifications بدلاً من loadUserNotifications
-            // لأن إشعارات التاجر محفوظة بـ store_id وليس merchant_id
-            await notificationProvider.loadStoreNotifications(storeId);
-            AppLogger.info('✅ تم تحميل إشعارات المتجر');
+          final storeId = await _ensureStoreId(merchantProvider);
 
-            // تسجيل device token للمتجر (لاستقبال إشعارات الطلبات)
-            try {
-              await NotificationServiceEnhanced.instance
-                  .saveDeviceTokenForStore(storeId);
-              AppLogger.info('✅ تم تسجيل device token للمتجر');
-            } catch (e) {
-              AppLogger.warning('⚠️ فشل تسجيل device token للمتجر', e);
+          if (storeId != null) {
+            AppLogger.info('🏪 معرف المتجر: $storeId');
+
+            await _loadWalletBalance(storeId);
+
+            // تحميل عداد المنتجات
+            AppLogger.info('📊 جاري جلب عدد المنتجات...');
+            await productProvider.fetchStoreProductCount(storeId);
+            await productProvider.subscribeToStoreProducts(storeId);
+            AppLogger.info(
+              '✅ عدد المنتجات: ${productProvider.storeProductCount}',
+            );
+
+            // جلب الطلبات
+            if (!orderProvider.isLoading) {
+              AppLogger.info('📦 جاري جلب الطلبات...');
+              await orderProvider.fetchStoreOrders(storeId);
+              await orderProvider.subscribeToStoreOrders(storeId);
+              AppLogger.info('✅ عدد الطلبات: ${orderProvider.orders.length}');
             }
+
+            // جلب الإشعارات للتاجر
+            if (mounted) {
+              final notificationProvider = Provider.of<NotificationProvider>(
+                context,
+                listen: false,
+              );
+              // استخدام loadStoreNotifications بدلاً من loadUserNotifications
+              // لأن إشعارات التاجر محفوظة بـ store_id وليس merchant_id
+              await notificationProvider.loadStoreNotifications(storeId);
+              AppLogger.info('✅ تم تحميل إشعارات المتجر');
+
+              // تسجيل device token للمتجر (لاستقبال إشعارات الطلبات)
+              try {
+                await NotificationServiceEnhanced.instance
+                    .saveDeviceTokenForStore(storeId);
+                AppLogger.info('✅ تم تسجيل device token للمتجر');
+              } catch (e) {
+                AppLogger.warning('⚠️ فشل تسجيل device token للمتجر', e);
+              }
+            }
+          } else {
+            AppLogger.warning('⚠️ لم يتم العثور على معرف المتجر');
           }
         } else {
-          AppLogger.warning('⚠️ لم يتم العثور على معرف المتجر');
-        }
-      } else {
-        // محاولة احتياطية مباشرة عبر جدول merchants
-        if (profileId != null) {
+          // محاولة احتياطية مباشرة عبر جدول merchants
           try {
             final mRow = await Supabase.instance.client
                 .from('merchants')
@@ -203,22 +218,41 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
           } catch (e) {
             AppLogger.error('❌ فشل محاولة العثور على التاجر احتياطياً', e);
           }
+
+          if (merchantProvider.selectedMerchant == null) {
+            AppLogger.warning('⚠️ لم يتم العثور على بيانات التاجر');
+          }
         }
 
-        if (merchantProvider.selectedMerchant == null) {
-          AppLogger.warning('⚠️ لم يتم العثور على بيانات التاجر');
+        // تم التحميل بنجاح
+        if (mounted) {
+          setState(() {
+            _isInitialized = true;
+          });
+          AppLogger.info('✅ تم تحميل الداشبورد بنجاح');
         }
+      } else {
+        AppLogger.warning('⚠️ المستخدم غير مسجل دخول');
       }
+    } finally {
+      _isLoadingData = false;
+    }
+  }
 
-      // تم التحميل بنجاح
+  Future<void> _loadWalletBalance(String storeId) async {
+    if (_isWalletLoading) return;
+    _isWalletLoading = true;
+
+    try {
+      final wallet = await StoreWalletService.getOrCreateWallet(storeId);
+      final balance = (wallet?['balance'] as num?)?.toDouble();
       if (mounted) {
-        setState(() {
-          _isInitialized = true;
-        });
-        AppLogger.info('✅ تم تحميل الداشبورد بنجاح');
+        setState(() => _walletBalance = balance ?? 0.0);
       }
-    } else {
-      AppLogger.warning('⚠️ المستخدم غير مسجل دخول');
+    } catch (e) {
+      AppLogger.warning('⚠️ فشل تحميل رصيد المحفظة', e);
+    } finally {
+      _isWalletLoading = false;
     }
   }
 
@@ -302,6 +336,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                           showModalBottomSheet(
                             context: context,
                             isScrollControlled: true,
+                            useSafeArea: true,
                             backgroundColor: Colors.transparent,
                             builder: (context) => DraggableScrollableSheet(
                               initialChildSize: 0.7,
@@ -1032,7 +1067,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                   activeOrders,
                   colorScheme,
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
 
                 // التنبيهات الهامة
                 if (pendingOrders > 0)
@@ -1137,6 +1172,8 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     } else {
       greeting = 'مساء الخير';
     }
+    final showNegativeWalletWarning =
+        _walletBalance != null && _walletBalance! < 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1155,6 +1192,10 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
             color: colorScheme.onSurface,
           ),
         ),
+        if (showNegativeWalletWarning) ...[
+          const SizedBox(height: 12),
+          _buildWalletBalanceWarning(colorScheme, textTheme),
+        ],
       ],
     );
   }
@@ -1409,6 +1450,60 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
               Icon(Icons.arrow_forward_ios, size: 16, color: color),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWalletBalanceWarning(
+    ColorScheme colorScheme,
+    TextTheme textTheme,
+  ) {
+    return Card(
+      elevation: 0,
+      color: colorScheme.errorContainer,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: colorScheme.error.withValues(alpha: 0.3),
+          width: 1,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: colorScheme.error),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'رصيد المحفظة بالسالب',
+                    style: textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: colorScheme.error,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'يرجى شحن المحفظة لمتابعة استقبال الطلبات.',
+                    style: textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onErrorContainer,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () {
+                Navigator.pushNamed(context, AppRoutes.merchantWallet);
+              },
+              child: const Text('اشحن الآن'),
+            ),
+          ],
         ),
       ),
     );
@@ -1970,7 +2065,11 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
     BuildContext context,
     NotificationModel notification,
   ) {
-    final data = notification.data ?? {};
+    final data = Map<String, dynamic>.from(notification.data ?? {});
+    data.putIfAbsent('target_role', () => notification.targetRole);
+    if (!data.containsKey('type') && notification.type != null) {
+      data['type'] = notification.type!.value;
+    }
 
     debugPrint('📬 Tapped Notification: ${notification.title}');
     debugPrint('📊 Notification Type: ${notification.type}');

@@ -113,7 +113,7 @@ $$;
 -- Grant execute permission
 GRANT EXECUTE ON FUNCTION public.is_admin() TO authenticated;
 
--- �🔑 Allow admins to INSERT new users (NO RECURSION!)
+-- 🔑 Allow admins to INSERT new users (NO RECURSION!)
 CREATE POLICY "Admins can insert users" ON public.profiles
   FOR INSERT 
   WITH CHECK (public.is_admin());
@@ -438,7 +438,7 @@ CREATE POLICY "stores_delete_policy" ON public.stores
   USING (auth.uid() = merchant_id);
 
 -- ==========================================
--- � STORE SECTIONS
+-- STORE SECTIONS
 -- ==========================================
 -- Menu sections created by merchants for their stores
 CREATE TABLE IF NOT EXISTS public.store_sections (
@@ -470,7 +470,7 @@ CREATE POLICY "Store sections owner manage" ON public.store_sections
   WITH CHECK (EXISTS (SELECT 1 FROM public.stores s WHERE s.id = store_sections.store_id AND s.merchant_id = auth.uid()));
 
 -- ==========================================
--- �👥 CLIENTS & CAPTAINS
+-- 👥 CLIENTS & CAPTAINS
 -- ==========================================
 CREATE TABLE public.clients (
   id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -1832,7 +1832,7 @@ CREATE TRIGGER trigger_ensure_single_default_address
     EXECUTE FUNCTION ensure_single_default_address();
 
 -- ==========================================
--- �🔧 FUNCTIONS & TRIGGERS
+-- 🔧 FUNCTIONS & TRIGGERS
 -- ==========================================
 
 -- دالة لتحديث الوقت

@@ -249,7 +249,7 @@ class _EmailConfirmationScreenState extends State<EmailConfirmationScreen>
         return;
       }
 
-      SnackBarHelper.showLoading(context, '� جاري التحقق من حالة التأكيد...');
+      SnackBarHelper.showLoading(context, 'جاري التحقق من حالة التأكيد...');
 
       // محاولة تسجيل دخول بكلمة المرور الحقيقية
       try {

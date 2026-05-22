@@ -393,6 +393,7 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         decoration: const BoxDecoration(
@@ -1479,6 +1480,7 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
   void _showCouponDetails(CouponModel coupon) {
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         decoration: const BoxDecoration(
@@ -1644,6 +1646,7 @@ ${coupon.minimumOrderAmount > 0 ? "الحد الأدنى للطلب: ${coupon.mi
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         decoration: const BoxDecoration(
@@ -1991,6 +1994,7 @@ ${coupon.minimumOrderAmount > 0 ? "الحد الأدنى للطلب: ${coupon.mi
       body: SafeArea(
         child: RefreshIndicator(
           onRefresh: () async {
+            if (_isRefreshing) return;
             if (mounted) setState(() => _isRefreshing = true);
             try {
               final productProvider = Provider.of<ProductProvider>(

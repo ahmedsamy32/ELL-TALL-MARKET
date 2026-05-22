@@ -93,6 +93,12 @@
 		<string>fbauth2</string>
 		<string>fbshareextension</string>
 	</array>
+	<key>FacebookAppID</key>
+	<string>1282194797038347</string>
+	<key>FacebookClientToken</key>
+	<string>796c1199a358fba415428df390a7f631</string>
+	<key>FacebookDisplayName</key>
+	<string>سوق التل</string>
 
 	<!-- Usage Descriptions for Permissions -->
 	<key>NSLocationWhenInUseUsageDescription</key>

@@ -39,6 +39,7 @@ import 'package:ell_tall_market/screens/admin/admin_dashboard_screen.dart';
 import 'package:ell_tall_market/screens/admin/manage_users_screen.dart';
 import 'package:ell_tall_market/screens/admin/manage_products_screen.dart';
 import 'package:ell_tall_market/screens/admin/manage_orders_screen.dart';
+import 'package:ell_tall_market/screens/admin/store_wallet_topups_screen.dart';
 import 'package:ell_tall_market/screens/admin/manage_categories_screen.dart';
 import 'package:ell_tall_market/screens/admin/manage_coupons_screen.dart';
 import 'package:ell_tall_market/screens/admin/app_settings_screen.dart';
@@ -116,6 +117,7 @@ class AppRoutes {
   static const String manageUsers = '/manage-users';
   static const String manageProducts = '/manage-products';
   static const String manageOrders = '/manage-orders';
+  static const String storeWalletTopups = '/store-wallet-topups';
   static const String manageCategories = '/manage-categories';
   static const String manageCoupons = '/manage-coupons';
   static const String appSettings = '/app-settings';
@@ -192,6 +194,7 @@ class AppRoutes {
       manageUsers: (_) => const ManageUsersScreen(),
       manageProducts: (_) => const ManageProductsScreen(),
       manageOrders: (_) => const ManageOrdersScreen(),
+      storeWalletTopups: (_) => const StoreWalletTopupsScreen(),
       manageCategories: (_) => const ManageCategoriesScreen(),
       manageCoupons: (_) => const ManageCouponsScreen(),
       appSettings: (_) => const AppSettingsScreen(),
@@ -639,7 +642,7 @@ class AppRoutes {
 
   // ===== Navigation Helper Methods =====
 
-  /// تنقل آمن م�� التحقق من المصادقة
+  /// تنقل آمن مع التحقق من المصادقة
   static void navigateTo(
     BuildContext context,
     String routeName, {
@@ -680,7 +683,7 @@ class AppRoutes {
     Navigator.pushReplacementNamed(context, routeName, arguments: arguments);
   }
 
-  /// تنظيف ��ل الشاشات والانتقال لشاشة جديدة
+  /// تنظيف كل الشاشات والانتقال لشاشة جديدة
   static void clearAllAndNavigate(
     BuildContext context,
     String routeName, {
@@ -1300,6 +1303,7 @@ class _OAuthCallbackScreenState extends State<_OAuthCallbackScreen> {
             Text(
               'لا تغلق هذه الصفحة',
               style: TextStyle(fontSize: 13, color: Colors.grey[500]),
+              textAlign: TextAlign.center,
             ),
           ],
         ),

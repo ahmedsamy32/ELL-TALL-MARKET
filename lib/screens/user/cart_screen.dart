@@ -1069,6 +1069,7 @@ class _CartScreenState extends State<CartScreen> {
                               showModalBottomSheet(
                                 context: context,
                                 isScrollControlled: true,
+                                useSafeArea: true,
                                 backgroundColor: Colors.transparent,
                                 builder: (context) => ProductOptionsBottomSheet(
                                   product: product,

@@ -17,6 +17,7 @@ import 'app_settings_screen.dart';
 import 'manage_users_screen.dart';
 import 'manage_products_screen.dart';
 import 'manage_orders_screen.dart';
+import 'store_wallet_topups_screen.dart' show StoreWalletTopupsScreen;
 import 'manage_categories_screen.dart';
 import 'manage_coupons_screen.dart';
 import 'captain_reports_screen.dart';
@@ -42,6 +43,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     const ManageUsersScreen(),
     const ManageProductsScreen(),
     const ManageOrdersScreen(),
+    const StoreWalletTopupsScreen(),
     const ManageCategoriesScreen(),
     const ManageCouponsScreen(),
     const CaptainReportsScreen(),
@@ -57,6 +59,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     (Icons.people_rounded, 'المستخدمين'),
     (Icons.shopping_bag_rounded, 'المنتجات'),
     (Icons.shopping_cart_rounded, 'الطلبات'),
+    (Icons.account_balance_wallet_rounded, 'طلبات الشحن'),
     (Icons.category_rounded, 'الفئات'),
     (Icons.local_offer_rounded, 'الكوبونات'),
     (Icons.assessment_rounded, 'تقارير الكباتن'),
@@ -156,33 +159,37 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Consumer<NotificationProvider>(
       builder: (context, notificationProvider, _) {
         final unreadCount = notificationProvider.getUnreadCountForRole('admin');
-        return Stack(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.notifications_rounded),
-              onPressed: () => _showNotificationsBottomSheet(context),
-            ),
-            if (unreadCount > 0)
-              Positioned(
-                right: 6,
-                top: 6,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  decoration: const BoxDecoration(
-                    color: AppColors.danger,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Text(
-                    unreadCount > 99 ? '99+' : '$unreadCount',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
+        return SafeArea(
+          top: false,
+          bottom: false,
+          child: Stack(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notifications_rounded),
+                onPressed: () => _showNotificationsBottomSheet(context),
+              ),
+              if (unreadCount > 0)
+                Positioned(
+                  right: 6,
+                  top: 6,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: const BoxDecoration(
+                      color: AppColors.danger,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Text(
+                      unreadCount > 99 ? '99+' : '$unreadCount',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         );
       },
     );
@@ -192,6 +199,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
         initialChildSize: 0.7,
@@ -235,22 +243,43 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       const Spacer(),
                       Consumer<NotificationProvider>(
                         builder: (context, provider, _) {
-                          if (provider.getUnreadCountForRole('admin') > 0) {
-                            return TextButton.icon(
-                              onPressed: () {
-                                final uid = Provider.of<SupabaseProvider>(
-                                  context,
-                                  listen: false,
-                                ).currentUser?.id;
-                                if (uid != null) {
-                                  provider.markAllAsRead(uid);
-                                }
-                              },
-                              icon: const Icon(Icons.done_all_rounded),
-                              label: const Text('قراءة الكل'),
-                            );
+                          final unreadCount = provider.getUnreadCountForRole(
+                            'admin',
+                          );
+                          final hasNotifications = provider
+                              .getNotificationsForRole('admin')
+                              .isNotEmpty;
+                          if (!hasNotifications) {
+                            return const SizedBox.shrink();
                           }
-                          return const SizedBox.shrink();
+                          return Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (unreadCount > 0)
+                                TextButton.icon(
+                                  onPressed: () {
+                                    final uid = Provider.of<SupabaseProvider>(
+                                      context,
+                                      listen: false,
+                                    ).currentUser?.id;
+                                    if (uid != null) {
+                                      provider.markAllAsRead(uid);
+                                    }
+                                  },
+                                  icon: const Icon(Icons.done_all_rounded),
+                                  label: const Text('قراءة الكل'),
+                                ),
+                              IconButton(
+                                onPressed: () =>
+                                    _showDeleteAllNotificationsDialog(
+                                      context,
+                                      provider,
+                                    ),
+                                icon: const Icon(Icons.delete_outline),
+                                tooltip: 'مسح الكل',
+                              ),
+                            ],
+                          );
                         },
                       ),
                     ],
@@ -269,6 +298,47 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  void _showDeleteAllNotificationsDialog(
+    BuildContext context,
+    NotificationProvider notificationProvider,
+  ) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.delete_forever_rounded, color: AppColors.danger),
+        title: const Text('حذف جميع الإشعارات'),
+        content: const Text('هل أنت متأكد من حذف جميع الإشعارات؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final userId = Provider.of<SupabaseProvider>(
+                context,
+                listen: false,
+              ).currentUser?.id;
+              if (userId != null) {
+                notificationProvider.deleteUserNotifications(userId);
+              }
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('تم حذف جميع الإشعارات'),
+                  backgroundColor: AppColors.danger,
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+            style: FilledButton.styleFrom(backgroundColor: AppColors.danger),
+            child: const Text('حذف الكل'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showSearchSheet(BuildContext context) {
     final orderProvider = Provider.of<OrderProvider>(context, listen: false);
     final userProvider = Provider.of<UserProvider>(context, listen: false);
@@ -276,6 +346,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSt) {
@@ -1798,6 +1869,12 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
           onTap: () {
             provider.markAsRead(notification.id);
             Navigator.pop(context);
+            final data = Map<String, dynamic>.from(notification.data ?? {});
+            data.putIfAbsent('target_role', () => notification.targetRole);
+            if (!data.containsKey('type') && notification.type != null) {
+              data['type'] = notification.type!.value;
+            }
+            NotificationServiceEnhanced.instance.handleNotificationAction(data);
           },
         ),
       ),

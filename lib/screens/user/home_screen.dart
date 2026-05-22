@@ -94,6 +94,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   void _loadData() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final storeProvider = Provider.of<StoreProvider>(context, listen: false);
       final authProvider = Provider.of<SupabaseProvider>(
         context,
@@ -167,10 +168,13 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       debugPrint('📍 محاولة الحصول على الموقع: $gotLocation');
     }
 
+    if (!mounted) return;
+
     // إذا تم الحصول على الموقع، جلب المتاجر القريبة
     if (locationProvider.hasLocation) {
       // نفعّل تحميل العروض مبكراً لتجنب فجوة بين الشيمرين
       if (!_isLoadingDeals) {
+        if (!mounted) return;
         setState(() => _isLoadingDeals = true);
       }
       debugPrint(

@@ -282,7 +282,7 @@ supabase db push
 
 ---
 
-## � آلية العرض الشرطي | Conditional Display Logic
+## آلية العرض الشرطي | Conditional Display Logic
 
 ### المثال | Example
 

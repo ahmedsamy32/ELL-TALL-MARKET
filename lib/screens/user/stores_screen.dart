@@ -28,6 +28,7 @@ class _StoresScreenState extends State<StoresScreen> {
   String _selectedCategoryId = 'all';
   Map<String, String> _categories = {};
   bool _isLoading = true;
+  bool _isLoadingData = false;
 
   @override
   void initState() {
@@ -51,44 +52,53 @@ class _StoresScreenState extends State<StoresScreen> {
   }
 
   Future<void> _loadData() async {
+    if (_isLoadingData) return;
+    _isLoadingData = true;
     setState(() => _isLoading = true);
-    final storeProvider = Provider.of<StoreProvider>(context, listen: false);
-    final locationProvider = Provider.of<LocationProvider>(
-      context,
-      listen: false,
-    );
-
-    // جلب المتاجر القريبة بناءً على GPS فقط
-    if (!locationProvider.hasLocation) {
-      await locationProvider.getCurrentLocation();
-    }
-
-    if (locationProvider.hasLocation) {
-      await storeProvider.fetchNearbyStores(
-        latitude: locationProvider.latitude!,
-        longitude: locationProvider.longitude!,
-        maxDistanceKm: 15,
+    try {
+      final storeProvider = Provider.of<StoreProvider>(
+        context,
+        listen: false,
       );
-    } else {
-      // في حالة عدم توفر الموقع، لا نعرض متاجر (لا يمكن تحديد النطاق)
-      storeProvider.clear();
+      final locationProvider = Provider.of<LocationProvider>(
+        context,
+        listen: false,
+      );
+
+      // جلب المتاجر القريبة بناءً على GPS فقط
+      if (!locationProvider.hasLocation) {
+        await locationProvider.getCurrentLocation();
+      }
+
+      if (locationProvider.hasLocation) {
+        await storeProvider.fetchNearbyStores(
+          latitude: locationProvider.latitude!,
+          longitude: locationProvider.longitude!,
+          maxDistanceKm: 15,
+        );
+      } else {
+        // في حالة عدم توفر الموقع، لا نعرض متاجر (لا يمكن تحديد النطاق)
+        storeProvider.clear();
+      }
+
+      if (!mounted) return;
+
+      // جلب الفئات لربط الأسماء بالمعرفات
+      final categoryProvider = Provider.of<CategoryProvider>(
+        context,
+        listen: false,
+      );
+      if (categoryProvider.categories.isEmpty) {
+        await categoryProvider.fetchCategories();
+      }
+
+      if (!mounted) return;
+
+      _updateCategoriesFromStores();
+      setState(() => _isLoading = false);
+    } finally {
+      _isLoadingData = false;
     }
-
-    if (!mounted) return;
-
-    // جلب الفئات لربط الأسماء بالمعرفات
-    final categoryProvider = Provider.of<CategoryProvider>(
-      context,
-      listen: false,
-    );
-    if (categoryProvider.categories.isEmpty) {
-      await categoryProvider.fetchCategories();
-    }
-
-    if (!mounted) return;
-
-    _updateCategoriesFromStores();
-    setState(() => _isLoading = false);
   }
 
   void _updateCategoriesFromStores() {

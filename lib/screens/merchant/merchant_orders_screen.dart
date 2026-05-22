@@ -11,6 +11,7 @@ import 'package:ell_tall_market/widgets/order_card.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'dart:async';
 
 class MerchantOrdersScreen extends StatefulWidget {
   const MerchantOrdersScreen({super.key});
@@ -94,7 +95,14 @@ enum MerchantOrderFilter {
 class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
   MerchantOrderFilter _selectedFilter = MerchantOrderFilter.newOrders;
   bool _isInitialized = false; // لمنع التحديث المستمر
+  bool _isLoadingData = false;
   StoreModel? _store; // بيانات المتجر لتحديد وضع التوصيل
+
+  static const Duration _merchantAutoAcceptDuration = Duration(seconds: 60);
+  static const Duration _autoAcceptRetryDelay = Duration(seconds: 10);
+  Timer? _autoAcceptTimer;
+  final Set<String> _autoAcceptInFlight = {};
+  final Map<String, DateTime> _autoAcceptAttempts = {};
 
   /// هل التوصيل عبر التطبيق (كابتن) أم المتجر نفسه؟
   bool get _isAppDelivery => _store?.deliveryMode == 'app';
@@ -141,9 +149,68 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
   @override
   void initState() {
     super.initState();
+    _startAutoAcceptTimer();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadMerchantOrders();
     });
+  }
+
+  @override
+  void dispose() {
+    _autoAcceptTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startAutoAcceptTimer() {
+    _autoAcceptTimer?.cancel();
+    _autoAcceptTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _processAutoAccept();
+    });
+  }
+
+  Future<void> _processAutoAccept() async {
+    if (!mounted || _store == null) return;
+
+    final orderProvider = Provider.of<OrderProvider>(context, listen: false);
+    final now = DateTime.now();
+    final pendingOrders = orderProvider.orders
+        .where((order) => order.status == OrderStatus.pending)
+        .toList();
+
+    if (pendingOrders.isEmpty) return;
+
+    final nextStatus = _isAppDelivery ? OrderStatus.ready : OrderStatus.preparing;
+
+    for (final order in pendingOrders) {
+      if (_autoAcceptInFlight.contains(order.id)) continue;
+
+      final elapsed = now.difference(order.createdAt);
+      if (elapsed < _merchantAutoAcceptDuration) continue;
+
+      final lastAttempt = _autoAcceptAttempts[order.id];
+      if (lastAttempt != null &&
+          now.difference(lastAttempt) < _autoAcceptRetryDelay) {
+        continue;
+      }
+
+      _autoAcceptInFlight.add(order.id);
+      _autoAcceptAttempts[order.id] = now;
+
+      try {
+        final ok = await orderProvider.updateOrderStatus(
+          order.id,
+          nextStatus.dbValue,
+        );
+        if (ok) {
+          _autoAcceptAttempts.remove(order.id);
+        }
+      } finally {
+        _autoAcceptInFlight.remove(order.id);
+      }
+    }
+
+    final pendingIds = pendingOrders.map((o) => o.id).toSet();
+    _autoAcceptAttempts.removeWhere((id, _) => !pendingIds.contains(id));
   }
 
   @override
@@ -159,7 +226,10 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
 
   Future<void> _loadMerchantOrders({bool forceRefresh = false}) async {
     // منع التحديث إذا كانت البيانات محملة بالفعل إلا لو كان Refresh
+    if (_isLoadingData) return;
     if (_isInitialized && !forceRefresh) return;
+
+    _isLoadingData = true;
 
     try {
       final authProvider = Provider.of<SupabaseProvider>(
@@ -176,6 +246,11 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
 
       // تحميل بيانات التاجر أولاً إذا لم تكن محملة
       if (authProvider.isLoggedIn && authProvider.currentUser != null) {
+        if (authProvider.currentUserProfile == null) {
+          debugPrint('⏳ لم يتم تحميل بيانات المستخدم بعد');
+          return;
+        }
+
         if (merchantProvider.selectedMerchant == null &&
             !merchantProvider.isLoading) {
           debugPrint('📥 جلب بيانات التاجر...');
@@ -213,6 +288,8 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
       }
     } catch (e) {
       debugPrint('❌ خطأ في جلب طلبات التاجر: $e');
+    } finally {
+      _isLoadingData = false;
     }
   }
 
@@ -429,6 +506,8 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
         final order = filteredOrders[index];
         return OrderCard(
           order: order,
+          showAutoAcceptCountdown: true,
+          autoAcceptDuration: _merchantAutoAcceptDuration,
           onTap: () {
             _showOrderActions(order);
           },

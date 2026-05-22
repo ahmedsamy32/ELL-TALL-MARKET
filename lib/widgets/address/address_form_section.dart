@@ -197,7 +197,7 @@ class AddressFormSection extends StatelessWidget {
                         governorateController.text = selected;
                         onGovernorateChanged?.call(selected);
                         if (selected.isNotEmpty) {
-                          FocusScope.of(context).requestFocus(cityFocus);
+                          FocusScope.of(context).nextFocus();
                         }
                       },
                       validator: (v) {
@@ -261,7 +261,7 @@ class AddressFormSection extends StatelessWidget {
                         cityController.text = selected;
                         onCityChanged?.call(selected);
                         if (selected.isNotEmpty) {
-                          FocusScope.of(context).requestFocus(streetFocus);
+                          FocusScope.of(context).nextFocus();
                         }
                       },
                       validator: (v) {
@@ -288,7 +288,7 @@ class AddressFormSection extends StatelessWidget {
                       },
                       onChanged: onCityChanged,
                       onFieldSubmitted: (_) =>
-                          FocusScope.of(context).requestFocus(streetFocus),
+                          FocusScope.of(context).nextFocus(),
                     ),
             ),
           ],

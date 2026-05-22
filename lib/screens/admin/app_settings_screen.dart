@@ -161,6 +161,30 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             ),
 
             _buildCard(
+              title: "📞 التواصل والدعم",
+              children: [
+                _buildStringFieldSetting(
+                  "📧 البريد الإلكتروني للدعم",
+                  _currentSettings.supportEmail,
+                  (value) => _updateSetting(supportEmail: value),
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                _buildStringFieldSetting(
+                  "📞 رقم الهاتف للدعم",
+                  _currentSettings.supportPhone,
+                  (value) => _updateSetting(supportPhone: value),
+                  keyboardType: TextInputType.phone,
+                ),
+                _buildStringFieldSetting(
+                  "🌐 موقع الدعم",
+                  _currentSettings.supportWebsite,
+                  (value) => _updateSetting(supportWebsite: value),
+                  keyboardType: TextInputType.url,
+                ),
+              ],
+            ),
+
+            _buildCard(
               title: "🚚 إعدادات التوصيل",
               children: [
                 _buildDeliveryInfoBanner(),
@@ -342,6 +366,28 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     );
   }
 
+  Widget _buildStringFieldSetting(
+    String title,
+    String value,
+    ValueChanged<String> onChanged, {
+    TextInputType keyboardType = TextInputType.text,
+  }) {
+    final controller = TextEditingController(text: value);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: TextField(
+        controller: controller,
+        keyboardType: keyboardType,
+        decoration: InputDecoration(
+          labelText: title,
+          border: const OutlineInputBorder(),
+          suffixIcon: const Icon(Icons.edit),
+        ),
+        onChanged: onChanged,
+      ),
+    );
+  }
+
   Widget _buildDeliveryInfoBanner() {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -409,6 +455,9 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     int? cacheDuration,
     bool? analyticsEnabled,
     bool? crashReports,
+    String? supportEmail,
+    String? supportPhone,
+    String? supportWebsite,
     double? appDeliveryBaseFee,
     double? appDeliveryFeePerKm,
     double? appDeliveryMaxDistance,
@@ -432,6 +481,9 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         cacheDuration: cacheDuration ?? _currentSettings.cacheDuration,
         analyticsEnabled: analyticsEnabled ?? _currentSettings.analyticsEnabled,
         crashReports: crashReports ?? _currentSettings.crashReports,
+        supportEmail: supportEmail ?? _currentSettings.supportEmail,
+        supportPhone: supportPhone ?? _currentSettings.supportPhone,
+        supportWebsite: supportWebsite ?? _currentSettings.supportWebsite,
         appDeliveryBaseFee:
             appDeliveryBaseFee ?? _currentSettings.appDeliveryBaseFee,
         appDeliveryFeePerKm:

@@ -1512,6 +1512,7 @@ class _CaptainReportsScreenState extends State<CaptainReportsScreen>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => _CaptainDetailSheet(captain: captain),
     );

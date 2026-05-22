@@ -2681,6 +2681,12 @@ class _DeliveryNotificationsBottomSheetContent extends StatelessWidget {
           onTap: () {
             if (!notification.isRead) provider.markAsRead(notification.id);
             Navigator.pop(context);
+            final data = Map<String, dynamic>.from(notification.data ?? {});
+            data.putIfAbsent('target_role', () => notification.targetRole);
+            if (!data.containsKey('type') && notification.type != null) {
+              data['type'] = notification.type!.value;
+            }
+            NotificationServiceEnhanced.instance.handleNotificationAction(data);
           },
         ),
       ),

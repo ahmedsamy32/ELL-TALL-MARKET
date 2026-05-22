@@ -22,6 +22,7 @@ class MerchantCouponsScreen extends StatefulWidget {
 class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
   late final MerchantCouponsProvider _couponsProvider;
   bool _isBootstrapping = true;
+  bool _isLoadingData = false;
   String? _initError;
 
   @override
@@ -38,6 +39,8 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
   }
 
   Future<void> _bootstrapData() async {
+    if (_isLoadingData) return;
+    _isLoadingData = true;
     setState(() {
       _isBootstrapping = true;
       _initError = null;
@@ -84,6 +87,7 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
           _isBootstrapping = false;
         });
       }
+      _isLoadingData = false;
     }
   }
 
@@ -601,6 +605,7 @@ class _MerchantCouponsScreenState extends State<MerchantCouponsScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (context) {
         return Padding(
           padding: EdgeInsets.only(

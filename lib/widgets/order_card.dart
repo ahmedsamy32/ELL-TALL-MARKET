@@ -2,17 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'dart:async';
 
 class OrderCard extends StatelessWidget {
   final OrderModel order;
   final VoidCallback onTap;
+  final bool showAutoAcceptCountdown;
+  final Duration autoAcceptDuration;
 
-  const OrderCard({super.key, required this.order, required this.onTap});
+  const OrderCard({
+    super.key,
+    required this.order,
+    required this.onTap,
+    this.showAutoAcceptCountdown = false,
+    this.autoAcceptDuration = const Duration(seconds: 60),
+  });
 
   @override
   Widget build(BuildContext context) {
     final status = OrderStatusExtension.fromDbValue(order.status.value);
     final colorScheme = Theme.of(context).colorScheme;
+    final showCountdown =
+        showAutoAcceptCountdown && status == OrderStatus.pending;
 
     return Semantics(
       label:
@@ -31,6 +42,13 @@ class OrderCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _OrderHeader(order: order),
+                if (showCountdown) ...[
+                  const SizedBox(height: 8),
+                  _AutoAcceptCountdown(
+                    createdAt: order.createdAt,
+                    duration: autoAcceptDuration,
+                  ),
+                ],
                 const SizedBox(height: 12),
                 _OrderContent(
                   order: order,
@@ -44,6 +62,100 @@ class OrderCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _AutoAcceptCountdown extends StatefulWidget {
+  final DateTime createdAt;
+  final Duration duration;
+
+  const _AutoAcceptCountdown({
+    required this.createdAt,
+    required this.duration,
+  });
+
+  @override
+  State<_AutoAcceptCountdown> createState() => _AutoAcceptCountdownState();
+}
+
+class _AutoAcceptCountdownState extends State<_AutoAcceptCountdown> {
+  Timer? _timer;
+  Duration _remaining = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _updateRemaining();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _updateRemaining();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _AutoAcceptCountdown oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.createdAt != widget.createdAt ||
+        oldWidget.duration != widget.duration) {
+      _updateRemaining();
+    }
+  }
+
+  void _updateRemaining() {
+    final elapsed = DateTime.now().difference(widget.createdAt);
+    final remaining = widget.duration - elapsed;
+    final clamped = remaining.isNegative ? Duration.zero : remaining;
+
+    if (!mounted) return;
+    setState(() => _remaining = clamped);
+
+    if (clamped == Duration.zero) {
+      _timer?.cancel();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  String _formatRemaining(Duration duration) {
+    final totalSeconds = duration.inSeconds;
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    final mm = minutes.toString().padLeft(2, '0');
+    final ss = seconds.toString().padLeft(2, '0');
+    return '$mm:$ss';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final totalSeconds = widget.duration.inSeconds == 0 ? 1 : widget.duration.inSeconds;
+    final progress = (_remaining.inSeconds / totalSeconds).clamp(0.0, 1.0);
+
+    return Row(
+      children: [
+        SizedBox(
+          width: 26,
+          height: 26,
+          child: CircularProgressIndicator(
+            value: progress,
+            strokeWidth: 3,
+            backgroundColor: Colors.orange.withValues(alpha: 0.2),
+            valueColor: const AlwaysStoppedAnimation<Color>(Colors.orange),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          'قبول تلقائي خلال ${_formatRemaining(_remaining)}',
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: Colors.orange[700],
+          ),
+        ),
+      ],
     );
   }
 }

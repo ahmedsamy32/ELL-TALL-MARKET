@@ -21,6 +21,7 @@ class _MerchantReportsScreenState extends State<MerchantReportsScreen> {
   String _timeFilter = 'month'; // 'today', 'week', 'month', 'all'
   Future<List<ReviewModel>>? _storeReviewsFuture;
   String? _storeId;
+  bool _isRefreshingReviews = false;
 
   @override
   Widget build(BuildContext context) {
@@ -75,10 +76,16 @@ class _MerchantReportsScreenState extends State<MerchantReportsScreen> {
   }
 
   Future<void> _refreshReviews() async {
-    setState(() {
-      _storeReviewsFuture = _fetchStoreReviews();
-    });
-    await _storeReviewsFuture;
+    if (_isRefreshingReviews) return;
+    _isRefreshingReviews = true;
+    try {
+      setState(() {
+        _storeReviewsFuture = _fetchStoreReviews();
+      });
+      await _storeReviewsFuture;
+    } finally {
+      _isRefreshingReviews = false;
+    }
   }
 
   Future<String?> _getStoreId() async {

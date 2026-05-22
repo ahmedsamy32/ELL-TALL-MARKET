@@ -15,7 +15,7 @@ class BannerService {
   static final SupabaseClient _supabase = Supabase.instance.client;
 
   // ================================
-  // �️ Image Upload Operations
+  // Image Upload Operations
   // ================================
 
   /// رفع صورة البانر إلى Supabase Storage
@@ -82,7 +82,7 @@ class BannerService {
   }
 
   // ================================
-  // �📢 Banner Retrieval Operations
+  // Banner Retrieval Operations
   // ================================
 
   /// جلب جميع البانرات

@@ -32,6 +32,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     with SingleTickerProviderStateMixin {
   StoreModel? _store;
   bool _loading = true;
+  bool _isLoadingData = false;
   bool _saving = false;
   String? _error;
   String? _coverUrl;
@@ -102,7 +103,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     _loadOwnerZones();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _attachMerchantProviderListener();
-      _ensureMerchantAvailable();
+      _load();
     });
   }
 
@@ -355,13 +356,20 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
   }
 
   Future<void> _load() async {
+    if (_isLoadingData) return;
+    _isLoadingData = true;
     final mp = context.read<MerchantProvider>();
     final merchant = mp.selectedMerchant;
-    if (merchant == null) {
-      return _ensureMerchantAvailable();
+    try {
+      if (merchant == null) {
+        await _ensureMerchantAvailable();
+        return;
+      }
+      _currentMerchantId = merchant.id;
+      await _loadForMerchant(merchant.id);
+    } finally {
+      _isLoadingData = false;
     }
-    _currentMerchantId = merchant.id;
-    return _loadForMerchant(merchant.id);
   }
 
   void _attachMerchantProviderListener() {
@@ -373,7 +381,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         _currentMerchantId = m.id;
         // تأجيل التحميل حتى ينتهي الـ build
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _loadForMerchant(m.id);
+          if (mounted) _load();
         });
       }
     };
@@ -1119,6 +1127,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
+        useSafeArea: true,
         backgroundColor: Colors.transparent,
         builder: (ctx) {
           final color = Theme.of(ctx).colorScheme;
@@ -1333,6 +1342,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) {
         final color = Theme.of(ctx).colorScheme;
@@ -2047,6 +2057,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         await showModalBottomSheet<bool>(
           context: context,
           isScrollControlled: true,
+          useSafeArea: true,
           backgroundColor: Colors.transparent,
           builder: (ctx) {
             final color = Theme.of(ctx).colorScheme;
@@ -2235,6 +2246,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         await showModalBottomSheet<bool>(
           context: context,
           isScrollControlled: true,
+          useSafeArea: true,
           backgroundColor: Colors.transparent,
           builder: (ctx) {
             final color = Theme.of(ctx).colorScheme;

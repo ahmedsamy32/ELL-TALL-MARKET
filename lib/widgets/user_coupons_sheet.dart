@@ -18,6 +18,7 @@ class UserCouponsSheet extends StatefulWidget {
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (_) => const UserCouponsSheet(),
     );

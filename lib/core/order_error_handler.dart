@@ -165,8 +165,8 @@ class OrderErrorHandler {
   }) {
     final contextInfo = <String, dynamic>{
       'operation': operation,
-      if (orderId != null) 'orderId': orderId,
-      if (context != null) ...context,
+      'orderId': ?orderId,
+      ...?context,
     };
 
     AppLogger.error('❌ خطأ في عملية الطلب: $contextInfo', error);

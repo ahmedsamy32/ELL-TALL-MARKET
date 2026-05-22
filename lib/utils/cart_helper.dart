@@ -24,6 +24,7 @@ class CartHelper {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (ctx) => ProductOptionsBottomSheet(
         product: product,
@@ -213,6 +214,7 @@ class CartHelper {
             ),
           );
         } else {
+          final errorMessage = (cartProvider.error ?? '').trim();
           messenger.showSnackBar(
             SnackBar(
               content: Row(
@@ -223,7 +225,13 @@ class CartHelper {
                     size: 20,
                   ),
                   const SizedBox(width: 8),
-                  const Text('فشل إضافة المنتج إلى السلة'),
+                  Expanded(
+                    child: Text(
+                      errorMessage.isEmpty
+                          ? 'فشل إضافة المنتج إلى السلة'
+                          : errorMessage,
+                    ),
+                  ),
                 ],
               ),
               backgroundColor: Colors.red,

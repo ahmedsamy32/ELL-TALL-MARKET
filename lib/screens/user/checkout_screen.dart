@@ -16,6 +16,7 @@ import 'package:ell_tall_market/utils/validators.dart';
 import 'package:ell_tall_market/screens/shared/advanced_map_screen.dart';
 import 'package:ell_tall_market/services/address_service.dart';
 import 'package:ell_tall_market/services/delivery_zone_pricing_service.dart';
+import 'package:ell_tall_market/services/store_wallet_service.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/widgets/address/address_form_section.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -34,6 +35,7 @@ class CheckoutScreen extends StatefulWidget {
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
   final SupabaseClient _supabase = Supabase.instance.client;
+  static const double _storeWalletCloseThreshold = -10.0;
 
   late AppSettingsProvider _settingsProvider;
   bool _didInitDependencies = false;
@@ -458,6 +460,77 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
 
     return storesOutOfRange;
+  }
+
+  Future<List<String>?> _getClosedStoresForOrder(
+    CartProvider cartProvider,
+  ) async {
+    final closedStores = <String>[];
+    final processedStores = <String>{};
+    final storeCache = <String, Map<String, dynamic>>{};
+
+    try {
+      for (var item in cartProvider.cartItems) {
+        final product = item['product'] as Map<String, dynamic>?;
+        final store = product?['stores'] as Map<String, dynamic>?;
+
+        final storeId =
+            (store?['id'] ?? item['store_id'] ?? product?['store_id'])
+                ?.toString()
+                .trim() ??
+            '';
+        if (storeId.isEmpty || processedStores.contains(storeId)) continue;
+        processedStores.add(storeId);
+
+        var storeName = (store?['name']?.toString().trim().isNotEmpty ?? false)
+            ? store!['name'].toString().trim()
+            : 'متجر غير معروف';
+
+        bool? isOpen = store?['is_open'] as bool?;
+        bool? isActive = store?['is_active'] as bool?;
+
+        if (isOpen == null ||
+            isActive == null ||
+            storeName == 'متجر غير معروف') {
+          if (!storeCache.containsKey(storeId)) {
+            final storeRow = await _supabase
+                .from('stores')
+                .select('name, is_open, is_active')
+                .eq('id', storeId)
+                .maybeSingle();
+            storeCache[storeId] = {
+              'name': storeRow?['name'],
+              'is_open': storeRow?['is_open'],
+              'is_active': storeRow?['is_active'],
+            };
+          }
+
+          final cached = storeCache[storeId]!;
+          final cachedName = (cached['name'] ?? '').toString().trim();
+          if (storeName == 'متجر غير معروف' && cachedName.isNotEmpty) {
+            storeName = cachedName;
+          }
+          isOpen = isOpen ?? (cached['is_open'] as bool?);
+          isActive = isActive ?? (cached['is_active'] as bool?);
+        }
+
+        if (isOpen == false || isActive == false) {
+          closedStores.add(storeName);
+          continue;
+        }
+
+        final wallet = await StoreWalletService.getOrCreateWallet(storeId);
+        final balance = (wallet?['balance'] as num?)?.toDouble();
+        if (balance != null && balance <= _storeWalletCloseThreshold) {
+          closedStores.add(storeName);
+        }
+      }
+    } catch (e) {
+      AppLogger.error('❌ فشل التحقق من حالة المتاجر', e);
+      return null;
+    }
+
+    return closedStores;
   }
 
   // تطبيق الكوبون
@@ -1136,6 +1209,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -1373,6 +1447,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -1564,6 +1639,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -3352,6 +3428,82 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         return;
       }
 
+      final closedStores = await _getClosedStoresForOrder(cartProvider);
+      if (closedStores == null) {
+        (messenger ?? fallbackMessenger).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر التحقق من حالة المتاجر حالياً'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _swipeValue = 0.0);
+        return;
+      }
+
+      if (closedStores.isNotEmpty) {
+        if (!mounted) return;
+        showDialog(
+          // ignore: use_build_context_synchronously
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(
+                  Icons.store_mall_directory,
+                  color: Colors.red[700],
+                  size: 28,
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'متاجر مغلقة حالياً',
+                    style: TextStyle(fontSize: 18),
+                  ),
+                ),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('لا يمكن إتمام الطلب لأن المتاجر التالية مغلقة:'),
+                const SizedBox(height: 8),
+                ...closedStores.map(
+                  (storeName) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Icon(Icons.store, size: 16, color: Colors.red[700]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            storeName,
+                            style: TextStyle(color: Colors.red[700]),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'يرجى حذف المنتجات من هذه المتاجر أو المحاولة لاحقاً.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('حسناً'),
+              ),
+            ],
+          ),
+        );
+        setState(() => _swipeValue = 0.0);
+        return;
+      }
+
       // التحقق النهائي: جميع المتاجر يجب أن تكون ضمن نطاق التوصيل
       final storesOutOfRange = await _getStoresOutOfRange(
         cartProvider,
@@ -3464,12 +3616,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final groupDeliveryFee = _calculateTotalDeliveryFee(cartProvider);
       final entries = itemsByStore.entries.toList();
 
+      final storeOrders = <Map<String, dynamic>>[];
+
       for (var i = 0; i < entries.length; i++) {
         final entry = entries[i];
-        String storeId = entry.key;
-        List<Map<String, dynamic>> storeItems = entry.value;
+        final storeId = entry.key;
+        final storeItems = entry.value;
 
-        // حساب إجمالي المتجر
         double storeSubtotal = 0;
         Map<String, dynamic>? storeData;
         for (var item in storeItems) {
@@ -3480,19 +3633,116 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           }
         }
 
-        // رسوم التوصيل = سعر المنطقة فقط (مرة واحدة على أول طلب)
         final deliveryFee = i == 0 ? groupDeliveryFee : 0.0;
+        final cashFee = 0.0;
+        final taxAmount = 0.0;
+        final totalAmount = storeSubtotal + deliveryFee + cashFee + taxAmount;
+        final storeName = (storeData?['name'] as String?) ?? 'متجر';
 
-        double cashFee = 0.0; // إزالة رسوم الكاش لأنها غير موجودة في السلة
-        double taxAmount = 0.0; // إزالة الضريبة لأنها غير موجودة في السلة
+        storeOrders.add({
+          'store_id': storeId,
+          'store_name': storeName,
+          'items': storeItems,
+          'delivery_fee': deliveryFee,
+          'cash_fee': cashFee,
+          'tax_amount': taxAmount,
+          'total_amount': totalAmount,
+        });
+      }
 
-        // إنشاء الطلب
+      final insufficientStores = <String>[];
+      try {
+        for (final draft in storeOrders) {
+          final canCover = await _supabase.rpc(
+            'can_store_wallet_cover',
+            params: {
+              'p_store_id': draft['store_id'],
+              'p_total_amount': draft['total_amount'],
+              'p_delivery_fee': draft['delivery_fee'],
+              'p_tax_amount': draft['tax_amount'],
+            },
+          );
+
+          final allowed = canCover == true;
+          if (!allowed) {
+            insufficientStores.add(draft['store_name'] as String? ?? 'متجر');
+          }
+        }
+      } catch (e) {
+        if (!mounted) return;
+        (messenger ?? fallbackMessenger).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر التحقق من رصيد المتاجر حالياً'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _swipeValue = 0.0);
+        return;
+      }
+
+      if (insufficientStores.isNotEmpty) {
+        if (!context.mounted) return;
+        showDialog(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('رصيد المتجر غير كافٍ'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('المتاجر التالية لا يمكنها استقبال الطلب حالياً:'),
+                const SizedBox(height: 8),
+                ...insufficientStores.map(
+                  (storeName) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Icon(Icons.store, size: 16, color: Colors.red[700]),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            storeName,
+                            style: TextStyle(color: Colors.red[700]),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'يرجى اختيار متجر آخر أو المحاولة لاحقاً.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('حسناً'),
+              ),
+            ],
+          ),
+        );
+        setState(() => _swipeValue = 0.0);
+        return;
+      }
+
+      for (final draft in storeOrders) {
+        final storeId = draft['store_id'] as String;
+        final storeItems = List<Map<String, dynamic>>.from(
+          draft['items'] as List,
+        );
+        final deliveryFee = (draft['delivery_fee'] as num).toDouble();
+        final taxAmount = (draft['tax_amount'] as num).toDouble();
+        final totalAmount = (draft['total_amount'] as num).toDouble();
+
         final order = OrderModel(
           id: '',
           clientId: authProvider.currentUser!.id,
           storeId: storeId,
           orderGroupId: orderGroupId,
-          totalAmount: storeSubtotal + deliveryFee + cashFee + taxAmount,
+          totalAmount: totalAmount,
           deliveryFee: deliveryFee,
           taxAmount: taxAmount,
           deliveryAddress: _formatAddressForDisplay(
@@ -3504,8 +3754,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           createdAt: DateTime.now(),
         );
 
-        String? newOrderId = await orderProvider.createOrder(order);
-        // إضافة عناصر الطلب
+        final newOrderId = await orderProvider.createOrder(order);
+        if (newOrderId == null) {
+          final errorMessage = orderProvider.error ?? 'تعذر إنشاء الطلب حالياً';
+          if (!mounted) return;
+          (messenger ?? fallbackMessenger).showSnackBar(
+            SnackBar(content: Text(errorMessage), backgroundColor: Colors.red),
+          );
+          setState(() => _swipeValue = 0.0);
+          return;
+        }
+
         final orderItemsData = storeItems.map((item) {
           final product = item['product'] as Map<String, dynamic>?;
           final productId = item['product_id'] ?? product?['id'];

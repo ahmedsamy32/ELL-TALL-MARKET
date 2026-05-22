@@ -141,7 +141,7 @@ class NotificationServiceEnhanced {
     );
 
     await _localNotifications.initialize(
-      initSettings,
+      settings: initSettings,
       onDidReceiveNotificationResponse: _onLocalNotificationTapped,
     );
 
@@ -204,6 +204,7 @@ class NotificationServiceEnhanced {
     List<String>? tags,
     String? campaignId,
     String? targetRole,
+    String? sourceLabel,
   }) async {
     try {
       AppLogger.info('Sending smart notification to client: $clientId');
@@ -214,6 +215,11 @@ class NotificationServiceEnhanced {
         title: title,
         message: message,
         type: type,
+      );
+
+      final finalMessage = _appendSourceLabel(
+        personalizedContent['message'] ?? message,
+        sourceLabel,
       );
 
       // Check delivery preferences
@@ -228,7 +234,7 @@ class NotificationServiceEnhanced {
         id: _generateNotificationId(),
         userId: clientId,
         title: personalizedContent['title'] ?? title,
-        body: personalizedContent['message'] ?? message,
+        body: finalMessage,
         type: type,
         isRead: false,
         createdAt: DateTime.now(),
@@ -238,6 +244,9 @@ class NotificationServiceEnhanced {
       final finalData = Map<String, dynamic>.from(data ?? {});
       if (targetRole != null) {
         finalData['target_role'] = targetRole;
+      }
+      if (sourceLabel != null && sourceLabel.trim().isNotEmpty) {
+        finalData['source_label'] = sourceLabel.trim();
       }
 
       // Save to database → DB trigger sends FCM push automatically
@@ -666,16 +675,23 @@ class NotificationServiceEnhanced {
     NotificationType type = NotificationType.system,
     Map<String, dynamic>? data,
     String? imageUrl,
+    String? sourceLabel,
   }) async {
     try {
       AppLogger.info('Sending interactive notification...');
+
+      final messageWithSource = _appendSourceLabel(message, sourceLabel);
+      final finalData = Map<String, dynamic>.from(data ?? {});
+      if (sourceLabel != null && sourceLabel.trim().isNotEmpty) {
+        finalData['source_label'] = sourceLabel.trim();
+      }
 
       // Create notification with actions
       final notification = NotificationModel(
         id: _generateNotificationId(),
         userId: clientId,
         title: title,
-        body: message,
+        body: messageWithSource,
         type: type,
         isRead: false,
         createdAt: DateTime.now(),
@@ -690,16 +706,16 @@ class NotificationServiceEnhanced {
         'type': notification.type?.value,
         'is_read': notification.isRead,
         'created_at': notification.createdAt.toIso8601String(),
-        'data': data,
+        'data': finalData,
       });
 
       // Send push notification with actions
       await _sendInteractivePushNotification(
         clientId: clientId,
         title: title,
-        message: message,
+        message: messageWithSource,
         actions: actions,
-        data: data,
+        data: finalData,
         imageUrl: imageUrl,
       );
 
@@ -721,16 +737,23 @@ class NotificationServiceEnhanced {
     NotificationType type = NotificationType.promotion,
     Map<String, dynamic>? data,
     String? actionUrl,
+    String? sourceLabel,
   }) async {
     try {
       AppLogger.info('Sending rich media notification...');
+
+      final messageWithSource = _appendSourceLabel(message, sourceLabel);
+      final finalData = Map<String, dynamic>.from(data ?? {});
+      if (sourceLabel != null && sourceLabel.trim().isNotEmpty) {
+        finalData['source_label'] = sourceLabel.trim();
+      }
 
       // Create rich notification
       final notification = NotificationModel(
         id: _generateNotificationId(),
         userId: clientId,
         title: title,
-        body: message,
+        body: messageWithSource,
         type: type,
         isRead: false,
         createdAt: DateTime.now(),
@@ -746,18 +769,18 @@ class NotificationServiceEnhanced {
         'type': notification.type?.value,
         'is_read': notification.isRead,
         'created_at': notification.createdAt.toIso8601String(),
-        'data': data,
+        'data': finalData,
       });
 
       // Send with media attachments
       await _sendRichMediaPushNotification(
         clientId: clientId,
         title: title,
-        message: message,
+        message: messageWithSource,
         imageUrl: imageUrl,
         videoUrl: videoUrl,
         audioUrl: audioUrl,
-        data: data,
+        data: finalData,
         actionUrl: actionUrl,
       );
 
@@ -1270,10 +1293,10 @@ class NotificationServiceEnhanced {
       );
 
       await _localNotifications.show(
-        notifId,
-        notification.title ?? 'سوق التل',
-        notification.body ?? '',
-        details,
+        id: notifId,
+        title: notification.title ?? 'سوق التل',
+        body: notification.body ?? '',
+        notificationDetails: details,
         payload: message.data.isNotEmpty ? jsonEncode(message.data) : null,
       );
     } catch (e) {
@@ -1333,7 +1356,10 @@ class NotificationServiceEnhanced {
   /// Handle notification actions (navigation, etc.) publicly so screens can use it
   void handleNotificationAction(Map<String, dynamic> data) {
     try {
-      final actionUrl = data['action_url'] as String?;
+      final actionUrl =
+          data['action_url'] as String? ??
+          data['actionUrl'] as String? ??
+          data['actionRoute'] as String?;
       final targetRole = data['target_role'] as String?;
       final type = data['type'] as String?;
 
@@ -1553,6 +1579,11 @@ class NotificationServiceEnhanced {
     String? campaignId,
   ) async {
     try {
+      final authUser = _supabase.auth.currentUser;
+      if (authUser == null) {
+        AppLogger.warning('تخطي تحليل الإشعار لعدم وجود تسجيل دخول');
+        return;
+      }
       final deviceType = kIsWeb ? 'web' : 'mobile';
       // Use deviceType for analytics insert if needed
       await _supabase.from('notification_analytics').insert({
@@ -1650,6 +1681,12 @@ class NotificationServiceEnhanced {
     return {};
   }
 
+  String _appendSourceLabel(String message, String? sourceLabel) {
+    final trimmed = sourceLabel?.trim();
+    if (trimmed == null || trimmed.isEmpty) return message;
+    return '$message - المصدر: $trimmed';
+  }
+
   // ===== Merchant Notification Helpers =====
 
   /// إرسال إشعار للتاجر عند استلام طلب جديد
@@ -1675,8 +1712,13 @@ class NotificationServiceEnhanced {
       }
 
       final storeName = storeResponse['name'] as String? ?? 'متجرك';
-      final bodyText =
-          'لديك طلب جديد بقيمة ${totalAmount.toStringAsFixed(0)} ج.م${clientName != null ? ' من $clientName' : ''}';
+      final sourceLabel = (clientName != null && clientName.trim().isNotEmpty)
+          ? 'عميل ${clientName.trim()}'
+          : 'عميل';
+      final bodyText = _appendSourceLabel(
+        'لديك طلب جديد بقيمة ${totalAmount.toStringAsFixed(0)} ج.م',
+        sourceLabel,
+      );
 
       // إشعار المتجر: يستخدم store_id بدل user_id
       // الـ trigger بيبعت store_id للـ Edge Function
@@ -1694,6 +1736,7 @@ class NotificationServiceEnhanced {
           'store_id': storeId,
           'store_name': storeName,
           'total_amount': totalAmount,
+          'source_label': sourceLabel,
           'action_url': '/merchant/orders/$orderId',
         },
         'created_at': DateTime.now().toIso8601String(),
@@ -1707,7 +1750,146 @@ class NotificationServiceEnhanced {
     }
   }
 
+  Future<bool> notifyMerchantOfTopupStatus({
+    required String storeId,
+    required String topupId,
+    required double amount,
+    required String status,
+  }) async {
+    try {
+      final statusLabel = status == 'approved' ? 'مقبول' : 'مرفوض';
+      final title = status == 'approved'
+          ? '✅ تم قبول طلب الشحن'
+          : '❌ تم رفض طلب الشحن';
+      final bodyText = _appendSourceLabel(
+        'طلب الشحن بقيمة ${amount.toStringAsFixed(0)} ج.م $statusLabel',
+        'الإدارة',
+      );
+
+      await _supabase.from('notifications').insert({
+        'title': title,
+        'body': bodyText,
+        'type': NotificationType.system.value,
+        'target_role': 'merchant',
+        'store_id': storeId,
+        'data': {
+          'type': 'store_wallet_topup_$status',
+          'target_role': 'merchant',
+          'topup_id': topupId,
+          'store_id': storeId,
+          'amount': amount,
+          'status': status,
+          'source_label': 'الإدارة',
+          'action_url': '/merchant/wallet',
+        },
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      AppLogger.info('✅ Topup status notification sent to store: $storeId');
+      return true;
+    } catch (e) {
+      AppLogger.error('❌ Failed to send topup status notification', e);
+      return false;
+    }
+  }
+
+  Future<bool> notifyMerchantOfWalletAdjustment({
+    required String storeId,
+    required String storeName,
+    required double amount,
+    required bool isCredit,
+    String? notes,
+  }) async {
+    try {
+      final verb = isCredit ? 'إضافة' : 'خصم';
+      final title = isCredit
+          ? '✅ إضافة رصيد من الإدارة'
+          : '➖ تم خصم رصيد من الإدارة';
+      final notesText = notes != null && notes.trim().isNotEmpty
+          ? ' - ملاحظة: ${notes.trim()}'
+          : '';
+      final bodyText = _appendSourceLabel(
+        'تم $verb رصيد بقيمة ${amount.toStringAsFixed(0)} ج.م$notesText',
+        'الإدارة',
+      );
+
+      await _supabase.from('notifications').insert({
+        'title': title,
+        'body': bodyText,
+        'type': NotificationType.system.value,
+        'target_role': 'merchant',
+        'store_id': storeId,
+        'data': {
+          'type': 'store_wallet_adjustment',
+          'target_role': 'merchant',
+          'store_id': storeId,
+          'store_name': storeName,
+          'amount': amount,
+          'is_credit': isCredit,
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+          'source_label': 'الإدارة',
+          'action_url': '/merchant/wallet',
+        },
+        'created_at': DateTime.now().toIso8601String(),
+      });
+
+      AppLogger.info(
+        '✅ Wallet adjustment notification sent to store: $storeId',
+      );
+      return true;
+    } catch (e) {
+      AppLogger.error('❌ Failed to send wallet adjustment notification', e);
+      return false;
+    }
+  }
+
   // ===== Admin Notification Helpers =====
+
+  Future<List<String>> _getAdminIds() async {
+    final adminsResponse = await _supabase
+        .from('profiles')
+        .select('id')
+        .eq('role', 'admin');
+    return (adminsResponse as List)
+        .map((row) => row['id'] as String?)
+        .whereType<String>()
+        .toList();
+  }
+
+  Future<bool> _sendNotificationToAdmins({
+    required String title,
+    required String message,
+    required NotificationType type,
+    NotificationPriority priority = NotificationPriority.normal,
+    Map<String, dynamic>? data,
+    String? actionUrl,
+    String? sourceLabel,
+  }) async {
+    final adminIds = await _getAdminIds();
+    if (adminIds.isEmpty) {
+      AppLogger.warning('⚠️ No admin users found to notify');
+      return false;
+    }
+
+    bool anySent = false;
+    for (final adminId in adminIds) {
+      final sent = await sendSmartNotification(
+        clientId: adminId,
+        title: title,
+        message: message,
+        type: type,
+        priority: priority,
+        targetRole: 'admin',
+        data: data,
+        actionUrl: actionUrl,
+        sourceLabel: sourceLabel,
+      );
+      if (sent) anySent = true;
+    }
+
+    AppLogger.info('✅ Admin notifications sent to ${adminIds.length} admins');
+    return anySent;
+  }
 
   /// إرسال إشعار للمديرين عند استلام طلب جديد في النظام
   Future<bool> notifyAdminOfNewOrder({
@@ -1719,48 +1901,360 @@ class NotificationServiceEnhanced {
       AppLogger.info(
         'Sending new order notification to admins for order: $orderId',
       );
-
-      // جلب جميع المستخدمين الأدمن من جدول profiles
-      final adminsResponse = await _supabase
-          .from('profiles')
-          .select('id')
-          .eq('role', 'admin');
-
-      final admins = adminsResponse as List;
-      if (admins.isEmpty) {
-        AppLogger.warning('⚠️ No admin users found to notify');
-        return false;
-      }
-
-      bool anySent = false;
-      for (final admin in admins) {
-        final adminId = admin['id'] as String?;
-        if (adminId == null) continue;
-
-        final sent = await sendSmartNotification(
-          clientId: adminId,
-          title: '📊 طلب جديد في النظام',
-          message:
-              'طلب جديد من متجر $storeName بقيمة ${totalAmount.toStringAsFixed(0)} ج.م',
-          type: NotificationType.order,
-          priority: NotificationPriority.normal,
-          targetRole: 'admin',
-          data: {
-            'type': 'new_order',
-            'target_role': 'admin',
-            'order_id': orderId,
-            'store_name': storeName,
-            'total_amount': totalAmount,
-          },
-          actionUrl: '/admin/orders/$orderId',
-        );
-        if (sent) anySent = true;
-      }
-
-      AppLogger.info('✅ Admin notifications sent to ${admins.length} admins');
-      return anySent;
+      return await _sendNotificationToAdmins(
+        title: '📊 طلب جديد في النظام',
+        message: 'طلب جديد بقيمة ${totalAmount.toStringAsFixed(0)} ج.م',
+        type: NotificationType.order,
+        priority: NotificationPriority.normal,
+        data: {
+          'type': 'new_order',
+          'target_role': 'admin',
+          'order_id': orderId,
+          'store_name': storeName,
+          'total_amount': totalAmount,
+        },
+        actionUrl: '/admin/orders/$orderId',
+        sourceLabel: 'متجر $storeName',
+      );
     } catch (e) {
       AppLogger.error('❌ Failed to send admin notification', e);
+      return false;
+    }
+  }
+
+  Future<bool> notifyAdminOfTopupRequested({
+    required String topupId,
+    required String storeId,
+    required String storeName,
+    required double amount,
+  }) async {
+    try {
+      AppLogger.info('Sending topup request notification to admins');
+      return await _sendNotificationToAdmins(
+        title: '💰 طلب شحن محفظة جديد',
+        message: 'طلب شحن جديد بقيمة ${amount.toStringAsFixed(0)} ج.م',
+        type: NotificationType.system,
+        priority: NotificationPriority.high,
+        data: {
+          'type': 'store_wallet_topup_requested',
+          'target_role': 'admin',
+          'topup_id': topupId,
+          'store_id': storeId,
+          'store_name': storeName,
+          'amount': amount,
+        },
+        actionUrl: '/store-wallet-topups',
+        sourceLabel: 'متجر $storeName',
+      );
+    } catch (e) {
+      AppLogger.error('❌ Failed to send topup request notification', e);
+      return false;
+    }
+  }
+
+  Future<bool> notifyAdminOfTopupReviewed({
+    required String topupId,
+    required String storeId,
+    required String storeName,
+    required double amount,
+    required String status,
+  }) async {
+    try {
+      AppLogger.info('Sending topup review notification to admins');
+      final statusLabel = status == 'approved' ? 'مقبول' : 'مرفوض';
+      return await _sendNotificationToAdmins(
+        title: '🧾 مراجعة طلب شحن',
+        message:
+            'تم $statusLabel طلب الشحن بقيمة ${amount.toStringAsFixed(0)} ج.م',
+        type: NotificationType.system,
+        priority: NotificationPriority.normal,
+        data: {
+          'type': 'store_wallet_topup_reviewed',
+          'target_role': 'admin',
+          'topup_id': topupId,
+          'store_id': storeId,
+          'store_name': storeName,
+          'amount': amount,
+          'status': status,
+        },
+        actionUrl: '/store-wallet-topups',
+        sourceLabel: 'متجر $storeName',
+      );
+    } catch (e) {
+      AppLogger.error('❌ Failed to send topup review notification', e);
+      return false;
+    }
+  }
+
+  Future<bool> notifyAdminOfDeliveryCompanyTopupRequested({
+    required String topupId,
+    required String companyId,
+    required String companyName,
+    required double amount,
+  }) async {
+    try {
+      AppLogger.info('Sending delivery office topup request notification');
+      return await _sendNotificationToAdmins(
+        title: '💼 طلب شحن مكتب توصيل',
+        message: 'طلب شحن جديد بقيمة ${amount.toStringAsFixed(0)} ج.م',
+        type: NotificationType.system,
+        priority: NotificationPriority.high,
+        data: {
+          'type': 'delivery_company_wallet_topup_requested',
+          'target_role': 'admin',
+          'topup_id': topupId,
+          'company_id': companyId,
+          'company_name': companyName,
+          'amount': amount,
+        },
+        actionUrl: '/store-wallet-topups',
+        sourceLabel: 'مكتب $companyName',
+      );
+    } catch (e) {
+      AppLogger.error('Failed to send delivery office topup request', e);
+      return false;
+    }
+  }
+
+  Future<bool> notifyAdminOfDeliveryCompanyTopupReviewed({
+    required String topupId,
+    required String companyId,
+    required String companyName,
+    required double amount,
+    required String status,
+  }) async {
+    try {
+      final statusLabel = status == 'approved' ? 'مقبول' : 'مرفوض';
+      AppLogger.info('Sending delivery office topup review notification');
+      return await _sendNotificationToAdmins(
+        title: '🧾 تحديث طلب شحن مكتب',
+        message:
+            'طلب الشحن بقيمة ${amount.toStringAsFixed(0)} ج.م $statusLabel',
+        type: NotificationType.system,
+        priority: NotificationPriority.high,
+        data: {
+          'type': 'delivery_company_wallet_topup_$status',
+          'target_role': 'admin',
+          'topup_id': topupId,
+          'company_id': companyId,
+          'company_name': companyName,
+          'amount': amount,
+          'status': status,
+        },
+        actionUrl: '/store-wallet-topups',
+        sourceLabel: 'مكتب $companyName',
+      );
+    } catch (e) {
+      AppLogger.error('Failed to send delivery office topup review', e);
+      return false;
+    }
+  }
+
+  Future<bool> notifyDeliveryOfficeOfTopupStatus({
+    required String adminId,
+    required String companyId,
+    required String companyName,
+    required String topupId,
+    required double amount,
+    required String status,
+  }) async {
+    try {
+      final statusLabel = status == 'approved' ? 'مقبول' : 'مرفوض';
+      final title = status == 'approved'
+          ? '✅ تم قبول طلب الشحن'
+          : '❌ تم رفض طلب الشحن';
+      final bodyText = _appendSourceLabel(
+        'طلب الشحن بقيمة ${amount.toStringAsFixed(0)} ج.م $statusLabel',
+        'الإدارة',
+      );
+
+      await sendSmartNotification(
+        clientId: adminId,
+        title: title,
+        message: bodyText,
+        type: NotificationType.system,
+        targetRole: 'delivery_company_admin',
+        sourceLabel: 'الإدارة',
+        data: {
+          'type': 'delivery_company_wallet_topup_$status',
+          'target_role': 'delivery_company_admin',
+          'topup_id': topupId,
+          'company_id': companyId,
+          'company_name': companyName,
+          'amount': amount,
+          'status': status,
+          'source_label': 'الإدارة',
+          'action_url': '/delivery-company-dashboard',
+        },
+        actionUrl: '/delivery-company-dashboard',
+      );
+
+      return true;
+    } catch (e) {
+      AppLogger.error('Failed to send delivery office topup status', e);
+      return false;
+    }
+  }
+
+  Future<bool> notifyDeliveryOfficeOfWalletAdjustment({
+    required String adminId,
+    required String companyId,
+    required String companyName,
+    required double amount,
+    required bool isCredit,
+    String? notes,
+  }) async {
+    try {
+      final verb = isCredit ? 'إضافة' : 'خصم';
+      final title = isCredit
+          ? '✅ إضافة رصيد للمكتب'
+          : '➖ تم خصم رصيد من المكتب';
+      final notesText = notes != null && notes.trim().isNotEmpty
+          ? ' - ملاحظة: ${notes.trim()}'
+          : '';
+      final bodyText = _appendSourceLabel(
+        'تم $verb رصيد بقيمة ${amount.toStringAsFixed(0)} ج.م$notesText',
+        'الإدارة',
+      );
+
+      await sendSmartNotification(
+        clientId: adminId,
+        title: title,
+        message: bodyText,
+        type: NotificationType.system,
+        targetRole: 'delivery_company_admin',
+        sourceLabel: 'الإدارة',
+        data: {
+          'type': 'delivery_company_wallet_adjustment',
+          'target_role': 'delivery_company_admin',
+          'company_id': companyId,
+          'company_name': companyName,
+          'amount': amount,
+          'is_credit': isCredit,
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+          'source_label': 'الإدارة',
+          'action_url': '/delivery-company-dashboard',
+        },
+        actionUrl: '/delivery-company-dashboard',
+      );
+
+      return true;
+    } catch (e) {
+      AppLogger.error('Failed to send delivery office adjustment', e);
+      return false;
+    }
+  }
+
+  Future<bool> notifyAdminOfStoreRegistration({
+    required String storeName,
+    required String ownerName,
+    String? storeId,
+  }) async {
+    try {
+      AppLogger.info('Sending store registration notification to admins');
+      return await _sendNotificationToAdmins(
+        title: '🏪 تسجيل متجر جديد',
+        message: 'تم تسجيل متجر جديد: $storeName بواسطة $ownerName',
+        type: NotificationType.system,
+        priority: NotificationPriority.high,
+        data: {
+          'type': 'store_registration',
+          'target_role': 'admin',
+          'store_id': storeId,
+          'store_name': storeName,
+          'owner_name': ownerName,
+        },
+        actionUrl: '/admin/users',
+        sourceLabel: 'متجر $storeName',
+      );
+    } catch (e) {
+      AppLogger.error('❌ Failed to send store registration notification', e);
+      return false;
+    }
+  }
+
+  Future<bool> notifyAdminOfTransaction({
+    required String storeId,
+    required String storeName,
+    required String transactionId,
+    required String transactionType,
+    required double amount,
+  }) async {
+    try {
+      AppLogger.info('Sending transaction notification to admins');
+      return await _sendNotificationToAdmins(
+        title: '💳 معاملة مالية جديدة',
+        message:
+            'تم تسجيل $transactionType بقيمة ${amount.toStringAsFixed(0)} ج.م',
+        type: NotificationType.system,
+        priority: NotificationPriority.normal,
+        data: {
+          'type': 'financial_transaction',
+          'target_role': 'admin',
+          'transaction_id': transactionId,
+          'transaction_type': transactionType,
+          'store_id': storeId,
+          'store_name': storeName,
+          'amount': amount,
+        },
+        actionUrl: '/store-wallet-topups',
+        sourceLabel: 'متجر $storeName',
+      );
+    } catch (e) {
+      AppLogger.error('❌ Failed to send transaction notification', e);
+      return false;
+    }
+  }
+
+  Future<bool> notifyAdminOfSystemIssue({
+    required String issueType,
+    required String description,
+    Map<String, dynamic>? additionalData,
+  }) async {
+    try {
+      String sourceLabel = '';
+      if (additionalData != null) {
+        final storeName = additionalData['store_name'] as String?;
+        final captainName = additionalData['captain_name'] as String?;
+        final deliveryOfficeName =
+            additionalData['delivery_office_name'] as String?;
+        final deliveryCompanyName =
+            additionalData['delivery_company_name'] as String?;
+        final merchantName = additionalData['merchant_name'] as String?;
+
+        if (storeName != null && storeName.trim().isNotEmpty) {
+          sourceLabel = 'متجر ${storeName.trim()}';
+        } else if (captainName != null && captainName.trim().isNotEmpty) {
+          sourceLabel = 'الكابتن ${captainName.trim()}';
+        } else if (deliveryOfficeName != null &&
+            deliveryOfficeName.trim().isNotEmpty) {
+          sourceLabel = 'مكتب التوصيل ${deliveryOfficeName.trim()}';
+        } else if (deliveryCompanyName != null &&
+            deliveryCompanyName.trim().isNotEmpty) {
+          sourceLabel = 'شركة التوصيل ${deliveryCompanyName.trim()}';
+        } else if (merchantName != null && merchantName.trim().isNotEmpty) {
+          sourceLabel = 'التاجر ${merchantName.trim()}';
+        }
+      }
+
+      AppLogger.info('Sending system issue notification to admins');
+      return await _sendNotificationToAdmins(
+        title: '🚨 مشكلة في النظام',
+        message: '$issueType: $description',
+        type: NotificationType.system,
+        priority: NotificationPriority.high,
+        data: {
+          'type': 'system_issue',
+          'target_role': 'admin',
+          'issue_type': issueType,
+          'description': description,
+          'additional_data': additionalData,
+        },
+        actionUrl: '/admin',
+        sourceLabel: sourceLabel.isNotEmpty ? sourceLabel : null,
+      );
+    } catch (e) {
+      AppLogger.error('❌ Failed to send system issue notification', e);
       return false;
     }
   }
@@ -1809,13 +2303,14 @@ class NotificationServiceEnhanced {
           type: NotificationType.order,
           priority: NotificationPriority.high,
           targetRole: 'captain',
+          sourceLabel: 'متجر $storeName',
           data: {
             'type': 'available_order',
             'target_role': 'captain',
             'order_id': orderId,
             'store_name': storeName,
             'audience': 'delivery_office',
-            if (area != null) 'area': area,
+            'area': ?area,
           },
         );
         if (sent) anySent = true;
@@ -1844,6 +2339,7 @@ class NotificationServiceEnhanced {
       type: NotificationType.order,
       priority: NotificationPriority.high,
       targetRole: 'captain',
+      sourceLabel: 'متجر $storeName',
       data: {
         'type': 'order_assigned',
         'target_role': 'captain',
@@ -1895,12 +2391,17 @@ class NotificationServiceEnhanced {
           statusMessage = 'تم تحديث حالة الطلب';
       }
 
+      final sourceLabel = (clientName != null && clientName.trim().isNotEmpty)
+          ? 'عميل ${clientName.trim()}'
+          : 'النظام';
+
       return await sendSmartNotification(
         clientId: merchantId,
         title: 'تحديث الطلب',
         message: statusMessage,
         type: NotificationType.order,
         targetRole: 'merchant',
+        sourceLabel: sourceLabel,
         data: {
           'type': 'order_status_change',
           'target_role': 'merchant',
@@ -1982,6 +2483,10 @@ class NotificationServiceEnhanced {
           statusMessage = 'تم تحديث حالة طلبك';
       }
 
+      final sourceLabel = (storeName != null && storeName.trim().isNotEmpty)
+          ? 'متجر ${storeName.trim()}'
+          : 'النظام';
+
       return await sendSmartNotification(
         clientId: clientId,
         title: title,
@@ -1989,6 +2494,7 @@ class NotificationServiceEnhanced {
         type: NotificationType.order,
         priority: NotificationPriority.high,
         targetRole: 'client',
+        sourceLabel: sourceLabel,
         data: {
           'type': 'order_status_change',
           'target_role': 'client',

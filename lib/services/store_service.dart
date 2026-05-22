@@ -1007,8 +1007,8 @@ class StoreService {
       final payload = {
         'store_id': storeId,
         'name': name,
-        if (description != null) 'description': description,
-        if (imageUrl != null) 'image_url': imageUrl,
+        'description': ?description,
+        'image_url': ?imageUrl,
         'display_order': displayOrder,
         'is_active': isActive,
       };

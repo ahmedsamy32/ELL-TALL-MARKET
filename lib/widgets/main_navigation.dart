@@ -410,6 +410,7 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
     showModalBottomSheet(
       context: parentContext,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => DraggableScrollableSheet(
         initialChildSize: 0.7,
@@ -433,6 +434,7 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
     showModalBottomSheet(
       context: parentContext,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Container(
         decoration: BoxDecoration(

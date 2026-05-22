@@ -88,6 +88,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     // عرض خيارات اختيار الصورة
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (BuildContext context) {
         return Container(
@@ -648,6 +649,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final confirmed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),

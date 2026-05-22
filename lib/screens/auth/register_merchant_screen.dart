@@ -21,6 +21,7 @@ import 'package:ell_tall_market/screens/shared/advanced_map_screen.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/services/delivery_zone_pricing_service.dart';
 import 'package:ell_tall_market/models/delivery_zone_pricing_model.dart';
+import 'package:ell_tall_market/services/notification_service.dart';
 
 /// شاشة تسجيل التاجر
 ///
@@ -64,6 +65,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
   String? _storeSummaryCity;
   String? _storeSummaryGovernorate;
   List<DeliveryZonePricingModel> _ownerZones = <DeliveryZonePricingModel>[];
+  bool _isLoadingZones = false;
 
   // State - الفئة المختارة
   String? _selectedCategory;
@@ -155,11 +157,19 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
   }
 
   Future<void> _loadOwnerZones() async {
-    final zones = await DeliveryZonePricingService.getActiveZones();
-    if (!mounted) return;
-    setState(() {
-      _ownerZones = zones;
-    });
+    setState(() => _isLoadingZones = true);
+    try {
+      final zones = await DeliveryZonePricingService.getActiveZones();
+      if (!mounted) return;
+      setState(() {
+        _ownerZones = zones;
+        _isLoadingZones = false;
+      });
+    } catch (e, st) {
+      AppLogger.error('[RegisterMerchant] خطأ في تحميل مناطق التوصيل', e, st);
+      if (!mounted) return;
+      setState(() => _isLoadingZones = false);
+    }
   }
 
   List<String> get _governorateOptions {
@@ -849,6 +859,20 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
         "[RegisterMerchant] ✅ تم إنشاء حساب التاجر: ${authResponse!.user!.id}",
       );
 
+      try {
+        await NotificationServiceEnhanced.instance
+            .notifyAdminOfStoreRegistration(
+              storeName: _storeNameController.text.trim(),
+              ownerName: fullName,
+              storeId: null,
+            );
+      } catch (e) {
+        AppLogger.warning(
+          "[RegisterMerchant] ⚠️ فشل إرسال إشعار تسجيل المتجر",
+          e,
+        );
+      }
+
       // ملاحظة مهمة: سيتم إنشاء السجلات التالية تلقائياً عبر trigger:
       // ✅ Profile: في جدول profiles (id, full_name, email, phone, role)
       // ✅ Merchant: في جدول merchants (id, store_name, store_description, address)
@@ -1144,6 +1168,49 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
+                          if (_isLoadingZones) ...[
+                            Row(
+                              children: [
+                                const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'جاري تحميل مناطق التوصيل...',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                          ] else if (!_hasOwnerZoneOptions) ...[
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.info_outline,
+                                  size: 16,
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'لا توجد مناطق توصيل متاحة حالياً، يمكنك إدخال العنوان يدوياً.',
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                          ],
                           Container(
                             key: _storeMapSectionKey,
                             child: AddressLocationFormSection(
@@ -2084,6 +2151,47 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
           ),
         ),
         const SizedBox(height: 16),
+        if (_isLoadingZones) ...[
+          Row(
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'جاري تحميل مناطق التوصيل...',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ] else if (!_hasOwnerZoneOptions) ...[
+          Row(
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 16,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'لا توجد مناطق توصيل متاحة حالياً، يمكنك إدخال العنوان يدوياً.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
         Container(
           key: _storeMapSectionKey,
           child: AddressLocationFormSection(

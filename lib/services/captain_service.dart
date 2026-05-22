@@ -657,7 +657,7 @@ class CaptainService {
 
       await updateCaptain(captainId: captainId, licenseImageUrl: imageUrl);
 
-      AppLogger.info('تم رفع صورة رخصة القيادة');
+      AppLogger.info('تم رفع صورة الرخصة');
       return imageUrl;
     } on StorageException catch (e) {
       AppLogger.error('Storage خطأ في رفع صورة الرخصة: ${e.message}', e);
@@ -813,7 +813,7 @@ class CaptainService {
   }
 
   // ================================
-  // � Advanced Analytics & Management
+  // Advanced Analytics & Management
   // ================================
 
   /// إضافة تقييم للكابتن

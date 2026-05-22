@@ -136,7 +136,10 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
       bool visible,
     ) {
       if (!visible && mounted) {
-        FocusScope.of(context).unfocus();
+        final route = ModalRoute.of(context);
+        if (route == null || route.isCurrent) {
+          FocusScope.of(context).unfocus();
+        }
       }
     });
   }
@@ -350,26 +353,116 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
   }
 
   void _showPermissionDialog(String message) {
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('إذن مطلوب'),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(20),
+            topRight: Radius.circular(20),
           ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await PermissionService().openAppSettings();
-            },
-            child: const Text('فتح الإعدادات'),
-          ),
-        ],
+        ),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'إذن مطلوب',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('إلغاء'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      Navigator.pop(context);
+                      await PermissionService().openAppSettings();
+                    },
+                    child: const Text('فتح الإعدادات'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  Future<bool> _showConfirmSheet({
+    required String title,
+    required String message,
+    required String confirmText,
+    Color? confirmColor,
+  }) async {
+    final result = await showModalBottomSheet<bool>(
+      context: context,
+      useSafeArea: false,
+      backgroundColor: Colors.transparent,
+      builder: (context) => SafeArea(
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(message, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('إلغاء'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      style: confirmColor == null
+                          ? null
+                          : ElevatedButton.styleFrom(
+                              backgroundColor: confirmColor,
+                            ),
+                      child: Text(confirmText),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    return result ?? false;
   }
 
   @override
@@ -889,41 +982,47 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
   Future<void> _showImageSourceDialog(bool isPrimary) async {
     showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(20),
-            topRight: Radius.circular(20),
+      builder: (context) => SafeArea(
+        child: Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(20),
+              topRight: Radius.circular(20),
+            ),
           ),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt, color: Colors.blue),
-              title: const Text('التقاط صورة'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.camera, isPrimary);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library, color: Colors.green),
-              title: const Text('اختيار من المعرض'),
-              onTap: () {
-                Navigator.pop(context);
-                _pickImage(ImageSource.gallery, isPrimary);
-              },
-            ),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('إلغاء'),
-            ),
-          ],
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: 'إلغاء',
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: Colors.blue),
+                title: const Text('التقاط صورة'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.camera, isPrimary);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Colors.green),
+                title: const Text('اختيار من المعرض'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickImage(ImageSource.gallery, isPrimary);
+                },
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1194,10 +1293,13 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     Uint8List? imageBytes,
     String? imageUrl,
   }) {
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.black,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.black,
+      builder: (context) => SizedBox(
+        height: MediaQuery.of(context).size.height,
         child: Stack(
           children: [
             Center(
@@ -1918,6 +2020,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -1970,29 +2073,11 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                             color: Colors.red,
                           ),
                           onPressed: () async {
-                            final confirmed = await showDialog<bool>(
-                              context: context,
-                              builder: (context) => AlertDialog(
-                                title: const Text('حذف القالب'),
-                                content: const Text(
-                                  'هل أنت متأكد من حذف هذا القالب؟',
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, false),
-                                    child: const Text('إلغاء'),
-                                  ),
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, true),
-                                    child: const Text(
-                                      'حذف',
-                                      style: TextStyle(color: Colors.red),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                            final confirmed = await _showConfirmSheet(
+                              title: 'حذف القالب',
+                              message: 'هل أنت متأكد من حذف هذا القالب؟',
+                              confirmText: 'حذف',
+                              confirmColor: Colors.red,
                             );
                             if (confirmed == true) {
                               try {
@@ -2063,31 +2148,170 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
   Future<void> _saveAsTemplate() async {
     if (_storeId == null) return;
 
+    FocusScope.of(context).unfocus();
+    final parentContext = context;
     final nameController = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('حفظ كقالب'),
-        content: TextField(
-          controller: nameController,
-          decoration: const InputDecoration(
-            labelText: 'اسم القالب',
-            hintText: 'مثال: ملابس قطنية، أحذية رياضية',
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, nameController.text),
-            child: const Text('حفظ'),
-          ),
-        ],
-      ),
+    String? floatingError;
+    String? fieldError;
+    Timer? errorTimer;
+    bool sheetClosed = false;
+    final sheetFuture = showModalBottomSheet<String>(
+      context: parentContext,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            void closeSheet([String? value]) {
+              if (sheetClosed) return;
+              sheetClosed = true;
+              FocusManager.instance.primaryFocus?.unfocus();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (Navigator.of(parentContext).canPop()) {
+                  Navigator.of(parentContext).pop(value);
+                }
+              });
+            }
+
+            void showFloatingError(String message) {
+              if (sheetClosed || !sheetContext.mounted) return;
+              errorTimer?.cancel();
+              setSheetState(() => floatingError = message);
+              errorTimer = Timer(const Duration(seconds: 2), () {
+                if (sheetClosed || !sheetContext.mounted) return;
+                if (Navigator.of(parentContext).canPop()) {
+                  setSheetState(() => floatingError = null);
+                }
+              });
+            }
+
+            void submitSheet(String value) {
+              if (sheetClosed) return;
+              final trimmed = value.trim();
+              if (trimmed.isEmpty) {
+                showFloatingError('اسم القالب مطلوب');
+                setSheetState(() => fieldError = 'اسم القالب مطلوب');
+                return;
+              }
+              setSheetState(() => fieldError = null);
+              closeSheet(trimmed);
+            }
+
+            final bottomInset = MediaQuery.of(sheetContext).viewInsets.bottom;
+            final topPadding = floatingError == null ? 16.0 : 52.0;
+            return AnimatedPadding(
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOut,
+              padding: EdgeInsets.only(bottom: bottomInset),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  SingleChildScrollView(
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.only(
+                          topLeft: Radius.circular(20),
+                          topRight: Radius.circular(20),
+                        ),
+                      ),
+                      padding: EdgeInsets.fromLTRB(16, topPadding, 16, 16),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'حفظ كقالب',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: nameController,
+                            decoration: InputDecoration(
+                              labelText: 'اسم القالب',
+                              hintText: 'مثال: ملابس قطنية، أحذية رياضية',
+                              errorText: fieldError,
+                            ),
+                            autofocus: true,
+                            textInputAction: TextInputAction.done,
+                            onChanged: (value) {
+                              if (sheetClosed) return;
+                              if (value.trim().isNotEmpty &&
+                                  (floatingError != null ||
+                                      fieldError != null)) {
+                                errorTimer?.cancel();
+                                setSheetState(() {
+                                  floatingError = null;
+                                  fieldError = null;
+                                });
+                              }
+                            },
+                            onSubmitted: submitSheet,
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () => closeSheet(),
+                                  child: const Text('إلغاء'),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () =>
+                                      submitSheet(nameController.text),
+                                  child: const Text('حفظ'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (floatingError != null)
+                    Positioned(
+                      left: 16,
+                      right: 16,
+                      top: 12,
+                      child: Material(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(10),
+                        elevation: 4,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          child: Text(
+                            floatingError!,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
+    final name = await sheetFuture.whenComplete(() {
+      sheetClosed = true;
+      errorTimer?.cancel();
+    });
+    errorTimer?.cancel();
+    nameController.dispose();
 
     if (name == null || name.isEmpty) return;
 
@@ -2201,28 +2425,10 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
   Future<void> _duplicateProduct() async {
     if (widget.product == null || _isSaving) return;
 
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.content_copy, color: Colors.blue),
-            SizedBox(width: 8),
-            Text('نسخ المنتج'),
-          ],
-        ),
-        content: Text('هل تريد إنشاء نسخة من "${widget.product!.name}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('نسخ'),
-          ),
-        ],
-      ),
+    final confirmed = await _showConfirmSheet(
+      title: 'نسخ المنتج',
+      message: 'هل تريد إنشاء نسخة من "${widget.product!.name}"?',
+      confirmText: 'نسخ',
     );
 
     if (confirmed != true || !mounted) return;
@@ -2296,10 +2502,23 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     if (_isSaving) return;
     setState(() => _isSaving = true);
 
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      barrierDismissible: false,
-      builder: (context) => AppShimmer.centeredLines(context),
+      useSafeArea: true,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(20),
+            topRight: Radius.circular(20),
+          ),
+        ),
+        padding: const EdgeInsets.all(16),
+        child: AppShimmer.centeredLines(context),
+      ),
     );
 
     try {
@@ -2418,7 +2637,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
 
         // مزامنة التخزين: حذف الصور التي لم تعد ضمن القائمة النهائية
         final finalUrls = <String>[
-          if (updatedImageUrl != null) updatedImageUrl,
+          ?updatedImageUrl,
           ..._existingImageUrls,
           ...newUploadedUrls,
         ];
@@ -2528,26 +2747,13 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
 
   Future<bool> _onWillPop() async {
     if (_hasUnsavedChanges()) {
-      final shouldExit = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('هل تريد الخروج؟'),
-          content: const Text(
-            'هناك تغييرات غير محفوظة. هل تريد الخروج دون حفظ؟',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('إلغاء'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('خروج', style: TextStyle(color: Colors.red)),
-            ),
-          ],
-        ),
+      final shouldExit = await _showConfirmSheet(
+        title: 'هل تريد الخروج؟',
+        message: 'هناك تغييرات غير محفوظة. هل تريد الخروج دون حفظ؟',
+        confirmText: 'خروج',
+        confirmColor: Colors.red,
       );
-      return shouldExit ?? false;
+      return shouldExit;
     }
     return true;
   }

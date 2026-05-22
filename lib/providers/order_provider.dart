@@ -459,6 +459,7 @@ class OrderProvider with ChangeNotifier {
         storeId: order.storeId,
         orderId: newOrder.id,
         totalAmount: order.totalAmount,
+        clientName: order.clientName,
       );
 
       // إرسال إشعار للأدمن
@@ -471,7 +472,16 @@ class OrderProvider with ChangeNotifier {
       return newOrder.id;
     } catch (e) {
       AppLogger.error('خطأ في إنشاء الطلب', e);
-      _setError(_friendlyMessageFromException(e));
+      final errorText = e.toString();
+      if (errorText.contains('STORE_CLOSED')) {
+        _setError('المتجر مغلق مؤقتاً بسبب الرصيد أو الإعدادات');
+      } else if (errorText.contains('INSUFFICIENT_STORE_WALLET')) {
+        _setError('رصيد محفظة المتجر غير كافٍ لإتمام الطلب حالياً');
+      } else if (errorText.contains('STORE_NOT_FOUND')) {
+        _setError('تعذر العثور على بيانات المتجر');
+      } else {
+        _setError(_friendlyMessageFromException(e));
+      }
       return null;
     }
   }
@@ -781,6 +791,7 @@ class OrderProvider with ChangeNotifier {
           storeId: updatedOrder.storeId,
           orderId: orderId,
           newStatus: 'confirmed',
+          clientName: updatedOrder.clientName,
         );
 
         return true;
@@ -848,6 +859,7 @@ class OrderProvider with ChangeNotifier {
           storeId: updatedOrder.storeId,
           orderId: orderId,
           newStatus: 'cancelled',
+          clientName: updatedOrder.clientName,
         );
 
         return true;

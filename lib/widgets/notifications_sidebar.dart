@@ -4,6 +4,7 @@ import 'package:ell_tall_market/utils/app_colors.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/models/notification_model.dart';
+import 'package:ell_tall_market/services/notification_service.dart';
 
 /// 🔔 شريط جانبي للإشعارات محدث ليعمل مع NotificationProvider
 class NotificationsSidebar extends StatefulWidget {
@@ -230,7 +231,7 @@ class _NotificationsSidebarState extends State<NotificationsSidebar> {
                   shape: BoxShape.circle,
                 ),
               ),
-        onTap: () => _markAsRead(notification.id, provider),
+        onTap: () => _handleNotificationTap(notification, provider),
       ),
     );
   }
@@ -311,9 +312,22 @@ class _NotificationsSidebarState extends State<NotificationsSidebar> {
     }
   }
 
-  /// ✅ تحديد كقراءة
-  void _markAsRead(String notificationId, NotificationProvider provider) {
-    provider.markAsRead(notificationId);
+  void _handleNotificationTap(
+    NotificationModel notification,
+    NotificationProvider provider,
+  ) {
+    if (!notification.isRead) {
+      provider.markAsRead(notification.id);
+    }
+
+    final data = Map<String, dynamic>.from(notification.data ?? {});
+    data.putIfAbsent('target_role', () => notification.targetRole);
+    if (!data.containsKey('type') && notification.type != null) {
+      data['type'] = notification.type!.value;
+    }
+
+    Navigator.of(context).pop();
+    NotificationServiceEnhanced.instance.handleNotificationAction(data);
   }
 
   /// ✅ تحديد الكل كقراءة

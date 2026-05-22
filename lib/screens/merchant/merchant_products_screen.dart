@@ -26,6 +26,7 @@ class MerchantProductsScreen extends StatefulWidget {
 class _MerchantProductsScreenState extends State<MerchantProductsScreen>
     with SingleTickerProviderStateMixin {
   bool _isLoadingStore = true;
+  bool _isLoadingData = false;
   String? _storeId;
   String? _errorMessage;
   bool _isInitialized = false;
@@ -83,6 +84,8 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
   }
 
   Future<void> _loadMerchantProducts({bool silent = false}) async {
+    if (_isLoadingData) return;
+    _isLoadingData = true;
     AppLogger.info(
       '🔄 بدء تحميل منتجات التاجر... (silent: $silent, initialized: $_isInitialized)',
     );
@@ -112,6 +115,10 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
 
       // تحميل بيانات التاجر أولاً إذا لم تكن محملة
       if (authProvider.isLoggedIn && authProvider.currentUser != null) {
+        if (authProvider.currentUserProfile == null) {
+          AppLogger.info('⏳ لم يتم تحميل بيانات المستخدم بعد');
+          return;
+        }
         AppLogger.info(
           '👤 معرف المستخدم: ${authProvider.currentUserProfile!.id}',
         );
@@ -193,6 +200,8 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
           _isLoadingStore = false;
         });
       }
+    } finally {
+      _isLoadingData = false;
     }
   }
 
@@ -686,6 +695,10 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
               CustomButton(
                 text: 'إعادة المحاولة',
                 onPressed: _loadMerchantProducts,
+                isLoading: _isLoadingData,
+                width: 180,
+                height: 42,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
               ),
             ],
           ),

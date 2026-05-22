@@ -116,7 +116,7 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
         return;
       }
 
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['xlsx'],
         withData: true, // Important for Web to get bytes
@@ -204,7 +204,7 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
         // Actually file_picker saveFile works on some platforms.
         // Simpler way for web is usually anchor download.
         // But let's try platform.saveFile first.
-        await FilePicker.platform.saveFile(
+        await FilePicker.saveFile(
           dialogTitle: 'احفظ ملف النموذج',
           fileName: fileName,
           type: FileType.custom,
@@ -214,7 +214,7 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
         return;
       }
 
-      String? outputFile = await FilePicker.platform.saveFile(
+      String? outputFile = await FilePicker.saveFile(
         dialogTitle: 'اختر مكان حفظ الملف',
         fileName: fileName,
         type: FileType.custom,

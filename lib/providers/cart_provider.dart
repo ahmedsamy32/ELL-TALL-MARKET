@@ -164,8 +164,12 @@ class CartProvider with ChangeNotifier {
       }
       return true;
     } catch (e) {
-      _error = e.toString();
-      AppLogger.error('خطأ في إضافة المنتج للسلة', e);
+      final raw = e.toString();
+      final cleaned = raw.replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
+      _error = cleaned.isEmpty ? 'فشل إضافة المنتج إلى السلة' : cleaned;
+      if (!_error!.contains('مغلق')) {
+        AppLogger.error('خطأ في إضافة المنتج للسلة', e);
+      }
       _notifyListeners();
       return false;
     }

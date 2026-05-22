@@ -416,6 +416,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     _addToCartSheetContext = null;
     final sheetFuture = showModalBottomSheet(
       context: context,
+      useSafeArea: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -1970,8 +1971,16 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         if (_addToCartSheetContext != null && _addToCartSheetContext!.mounted) {
           Navigator.of(_addToCartSheetContext!).pop();
         }
+        final errorMessage = (cartProvider.error ?? '').trim();
         messenger.showSnackBar(
-          const SnackBar(content: Text('فشل إضافة المنتج إلى السلة')),
+          SnackBar(
+            content: Text(
+              errorMessage.isEmpty
+                  ? 'فشل إضافة المنتج إلى السلة'
+                  : errorMessage,
+            ),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } catch (e) {
@@ -1979,8 +1988,17 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       if (_addToCartSheetContext != null && _addToCartSheetContext!.mounted) {
         Navigator.of(_addToCartSheetContext!).pop();
       }
+      final errorMessage = e
+          .toString()
+          .replaceFirst(RegExp(r'^Exception:\s*'), '')
+          .trim();
       messenger.showSnackBar(
-        const SnackBar(content: Text('حدث خطأ في تحديث السلة')),
+        SnackBar(
+          content: Text(
+            errorMessage.isEmpty ? 'حدث خطأ في تحديث السلة' : errorMessage,
+          ),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -1990,6 +2008,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (context) {
         return SafeArea(
           child: Container(

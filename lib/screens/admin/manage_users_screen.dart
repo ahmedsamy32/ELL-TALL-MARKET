@@ -1028,6 +1028,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) {
@@ -1678,6 +1679,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => SafeArea(
         child: SingleChildScrollView(
@@ -1967,6 +1969,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => SafeArea(
         child: SingleChildScrollView(
@@ -2346,6 +2349,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => SafeArea(
         child: Container(
@@ -2929,6 +2933,7 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => StatefulBuilder(
         builder: (context, setSheetState) {

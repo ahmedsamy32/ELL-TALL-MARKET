@@ -280,6 +280,7 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       builder: (ctx) {
         return _OrderDetailsSheet(
           order: order,

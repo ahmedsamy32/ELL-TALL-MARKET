@@ -3,11 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
-import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/models/notification_model.dart';
-import 'package:ell_tall_market/models/product_model.dart';
+import 'package:ell_tall_market/services/notification_service.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
-import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
 
 class NotificationsScreen extends StatefulWidget {
@@ -318,146 +316,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   void _handleNotificationTap(NotificationModel notification) {
-    final data = notification.data ?? {};
+    final data = Map<String, dynamic>.from(notification.data ?? {});
+    data.putIfAbsent('target_role', () => notification.targetRole);
+    if (!data.containsKey('type') && notification.type != null) {
+      data['type'] = notification.type!.value;
+    }
 
-    // Debug: اطبع البيانات للتحقق
     debugPrint('📬 Tapped Notification: ${notification.title}');
     debugPrint('📊 Notification Type: ${notification.type}');
     debugPrint('📦 Notification Data: $data');
 
-    switch (notification.type) {
-      case NotificationType.order:
-        _navigateToOrderNotification(data);
-        break;
-      case NotificationType.promotion:
-        _navigateToPromotionNotification(data);
-        break;
-      case NotificationType.system:
-      default:
-        _navigateToSystemNotification(data);
-        break;
-    }
-  }
-
-  /// التنقل لإشعارات الطلبات
-  void _navigateToOrderNotification(Map<String, dynamic> data) {
-    final orderId = data['orderId'] as String?;
-    final orderStatus = data['orderStatus'] as String?;
-    final actionType = data['actionType'] as String?;
-
-    if (orderId == null) return;
-
-    // إذا كان الإشعار عن تتبع الطلب
-    if (actionType == 'order_tracking' || orderStatus != null) {
-      Navigator.pushNamed(
-        context,
-        AppRoutes.orderTracking,
-        arguments: {'orderId': orderId},
-      );
-    }
-    // إذا كان الإشعار عن حالة الطلب
-    else if (actionType == 'order_status') {
-      Navigator.pushNamed(context, AppRoutes.orderHistory);
-    }
-    // الحالة الافتراضية
-    else {
-      Navigator.pushNamed(context, AppRoutes.orderHistory);
-    }
-  }
-
-  /// التنقل لإشعارات العروض والمنتجات
-  void _navigateToPromotionNotification(Map<String, dynamic> data) {
-    final productId = data['productId'] as String?;
-    final storeId = data['storeId'] as String?;
-    final promotionType = data['promotionType'] as String?;
-
-    // إذا كان الإشعار عن منتج محدد
-    if (productId != null) {
-      _navigateToProduct(productId);
-    }
-    // إذا كان الإشعار عن متجر محدد
-    else if (storeId != null) {
-      _navigateToStore(storeId);
-    }
-    // إذا كان الإشعار عن عرض عام
-    else if (promotionType == 'general_promotion') {
-      Navigator.pushNamed(context, AppRoutes.home);
-    }
-    // الحالة الافتراضية
-    else {
-      Navigator.pushNamed(context, AppRoutes.home);
-    }
-  }
-
-  /// التنقل لإشعارات النظام
-  void _navigateToSystemNotification(Map<String, dynamic> data) {
-    final actionType = data['actionType'] as String?;
-    final actionRoute = data['actionRoute'] as String?;
-
-    // إذا كان هناك route محدد
-    if (actionRoute != null) {
-      Navigator.pushNamed(context, actionRoute);
-    }
-    // إذا كان الإشعار عن رسالة نظام عامة
-    else if (actionType == 'general_message') {
-      // ابق في الشاشة الحالية
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(data['message'] as String? ?? 'لديك إشعار جديد'),
-          duration: const Duration(seconds: 3),
-        ),
-      );
-    }
-  }
-
-  /// التنقل لصفحة تفاصيل المنتج
-  void _navigateToProduct(String productId) async {
-    try {
-      final productProvider = Provider.of<ProductProvider>(
-        context,
-        listen: false,
-      );
-
-      // البحث عن المنتج في القائمة المحملة
-      ProductModel? product;
-
-      if (productProvider.products.isNotEmpty) {
-        product = productProvider.products.firstWhere(
-          (p) => p.id == productId,
-          orElse: () => throw Exception('Product not found'),
-        );
-      }
-
-      if (product != null) {
-        Navigator.pushNamed(
-          context,
-          AppRoutes.productDetail,
-          arguments: product,
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('لم يتم العثور على المنتج'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('خطأ في فتح المنتج: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  /// التنقل لصفحة تفاصيل المتجر
-  void _navigateToStore(String storeId) {
-    Navigator.pushNamed(
-      context,
-      AppRoutes.storeDetail,
-      arguments: {'storeId': storeId},
-    );
+    NotificationServiceEnhanced.instance.handleNotificationAction(data);
   }
 }
