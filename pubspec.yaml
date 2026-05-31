@@ -1,5 +1,5 @@
 name: ell_tall_market
-description: "Ell Tall Market - التل ماركت"
+description: "Ell Tall Market - سوق التل"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.1.0+9
+version: 1.1.1+10
 
 environment:
   sdk: ^3.9.2
@@ -43,7 +43,7 @@ dependencies:
   shared_preferences: ^2.2.1
   # Media & Files
   image_picker: ^1.0.4
-  device_info_plus: ^12.3.0
+  device_info_plus: ^12.4.0
   # Database & Backend
   supabase_flutter: ^2.10.2
   web_socket_channel: ^3.0.1
@@ -80,14 +80,14 @@ dependencies:
   flutter_local_notifications: ^21.0.0
   path: ^1.9.0
   image: ^4.3.0
-  image_cropper: ^11.0.0
+  image_cropper: ^12.2.1
   # PDF Generation
   pdf: ^3.11.1
   printing: ^5.13.4
   path_provider: ^2.1.5
   flutter_polyline_points: ^3.1.0
-  share_plus: ^12.0.1
-  package_info_plus: ^9.0.0
+  share_plus: ^12.0.2
+  package_info_plus: ^9.0.1
   flutter_keyboard_visibility: ^6.0.0
   # Product Import
   excel: ^4.0.6

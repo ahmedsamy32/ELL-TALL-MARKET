@@ -3,6 +3,8 @@ import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
+import 'package:ell_tall_market/services/app_update_service.dart';
+import 'package:ell_tall_market/utils/helpers.dart';
 
 import '../../models/profile_model.dart';
 
@@ -41,8 +43,7 @@ class _SplashScreenState extends State<SplashScreen> {
     AppLogger.info('🔍 SplashScreen: بدء التحقق من المصادقة...');
 
     try {
-      final context = this.context;
-      if (!context.mounted) {
+      if (!mounted) {
         AppLogger.warning('❌ SplashScreen: Context غير متصل');
         return;
       }
@@ -56,8 +57,19 @@ class _SplashScreenState extends State<SplashScreen> {
 
       await Future.delayed(const Duration(seconds: 2));
 
-      if (!context.mounted) {
+      if (!mounted) {
         AppLogger.warning('❌ SplashScreen: Widget غير متصل بعد التأخير');
+        return;
+      }
+
+      final canContinue = await _checkForUpdate();
+      if (!canContinue) {
+        AppLogger.info('⛔ SplashScreen: تم إيقاف التوجيه بسبب تحديث إجباري');
+        return;
+      }
+
+      if (!mounted) {
+        AppLogger.warning('❌ SplashScreen: Widget غير متصل بعد التحديث');
         return;
       }
 
@@ -110,6 +122,80 @@ class _SplashScreenState extends State<SplashScreen> {
         AppLogger.info('🔄 SplashScreen: توجيه إلى الأون بوردنج بسبب الخطأ');
         Navigator.pushReplacementNamed(context, AppRoutes.onboarding);
       }
+    }
+  }
+
+  Future<bool> _checkForUpdate() async {
+    final prompt = await AppUpdateService.instance.checkForUpdate();
+    if (!mounted || prompt == null) return true;
+
+    await _showUpdateDialog(prompt);
+    return !prompt.isForce;
+  }
+
+  Future<void> _showUpdateDialog(AppUpdatePrompt prompt) async {
+    final info = prompt.info;
+    final title = info.title ?? 'تحديث جديد متاح';
+    final message =
+        info.message ??
+        'يتوفر تحديث جديد للتطبيق لتحسين الأداء وإضافة ميزات جديدة.';
+    final updateUrl = info.updateUrl.trim();
+
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: !prompt.isForce,
+      builder: (dialogContext) {
+        return PopScope(
+          canPop: !prompt.isForce,
+          child: AlertDialog(
+            title: Text(title),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(message),
+                const SizedBox(height: 12),
+                Text('الإصدار الحالي: ${prompt.currentVersion}'),
+                Text('الإصدار الجديد: ${info.latestVersion}'),
+              ],
+            ),
+            actions: [
+              if (!prompt.isForce)
+                TextButton(
+                  onPressed: () async {
+                    await AppUpdateService.instance.markDismissed(
+                      info.latestVersion,
+                    );
+                    if (!dialogContext.mounted) return;
+                    Navigator.of(dialogContext).pop();
+                  },
+                  child: const Text('لاحقًا'),
+                ),
+              FilledButton.icon(
+                onPressed: updateUrl.isEmpty
+                    ? null
+                    : () => _openUpdateUrl(updateUrl),
+                icon: const Icon(Icons.system_update_alt_rounded),
+                label: const Text('تحديث الآن'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openUpdateUrl(String updateUrl) async {
+    try {
+      await Helpers.launchURL(updateUrl);
+    } catch (e) {
+      AppLogger.error('❌ Failed to open update URL', e);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تعذر فتح رابط التحديث')));
     }
   }
 

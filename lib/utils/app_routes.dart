@@ -48,6 +48,7 @@ import 'package:ell_tall_market/screens/admin/analytics_screen.dart';
 import 'package:ell_tall_market/screens/admin/captain_reports_screen.dart';
 import 'package:ell_tall_market/screens/admin/manage_banners_screen.dart';
 import 'package:ell_tall_market/screens/admin/delivery_zone_pricing_screen.dart';
+import 'package:ell_tall_market/screens/admin/app_updates_screen.dart';
 
 import 'package:ell_tall_market/screens/common/splash_screen.dart';
 import 'package:ell_tall_market/screens/common/onboarding_screen.dart';
@@ -126,6 +127,7 @@ class AppRoutes {
   static const String manageCaptains = '/manage-captains';
   static const String manageBanners = '/manage-banners';
   static const String deliveryZonePricing = '/delivery-zone-pricing';
+  static const String appUpdates = '/app-updates';
 
   // مسارات المعلومات والسياسات
   static const String aboutApp = '/about-app';
@@ -203,6 +205,7 @@ class AppRoutes {
       manageCaptains: (_) => const CaptainReportsScreen(),
       manageBanners: (_) => const ManageBannersScreen(),
       deliveryZonePricing: (_) => const DeliveryZonePricingScreen(),
+      appUpdates: (_) => const AppUpdatesScreen(),
       editProfile: (_) => const EditProfileScreen(),
       settings: (_) => const SettingsScreen(),
       addresses: (_) => const AddressesScreen(),

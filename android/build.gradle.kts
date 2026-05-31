@@ -8,6 +8,7 @@ allprojects {
 // Expose commonly used SDK versions for older plugin templates reading from rootProject.ext
 extra["compileSdkVersion"] = 36
 extra["targetSdkVersion"] = 36
+extra["ndkVersion"] = "27.0.12077973"
 
 val newBuildDir: Directory =
     rootProject.layout.buildDirectory
@@ -35,6 +36,11 @@ subprojects {
                     it.name == "setCompileSdkVersion" && it.parameterTypes.size == 1 && it.parameterTypes[0] == Int::class.java
                 }
                 compileSdkVersionMethod?.invoke(androidExtension, 36)
+
+                val ndkVersionMethod = androidExtension.javaClass.methods.find {
+                    it.name == "setNdkVersion" && it.parameterTypes.size == 1 && it.parameterTypes[0] == String::class.java
+                }
+                ndkVersionMethod?.invoke(androidExtension, "27.0.12077973")
 
                 // Set targetSdk in defaultConfig
                 val defaultConfigMethod = androidExtension.javaClass.methods.find { it.name == "getDefaultConfig" }

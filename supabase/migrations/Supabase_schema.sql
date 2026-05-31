@@ -261,6 +261,42 @@ BEGIN
     );
   END IF;
 
+  -- ✅ NEW: For captains, create captain record
+  IF v_user_role = 'captain' THEN
+    INSERT INTO public.captains (
+      id,
+      status,
+      is_online,
+      is_available,
+      is_active,
+      verification_status,
+      contact_phone
+    )
+    VALUES (
+      v_user_id,
+      'offline',
+      FALSE,
+      TRUE,
+      TRUE,
+      'pending',
+      v_phone
+    );
+    
+    RAISE LOG '[handle_new_user] Created captain record for user_id=%', v_user_id;
+  END IF;
+
+  -- ✅ NEW: For clients, create client record
+  IF v_user_role = 'client' THEN
+    INSERT INTO public.clients (
+      id
+    )
+    VALUES (
+      v_user_id
+    );
+    
+    RAISE LOG '[handle_new_user] Created client record for user_id=%', v_user_id;
+  END IF;
+
   RETURN NEW;
 
 EXCEPTION
@@ -271,12 +307,14 @@ END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION public.handle_new_user() IS 
-'Enhanced trigger function that creates profile and merchant/store records for new users.
+'Enhanced trigger function that creates profile and role-specific records for new users.
 Features:
 - Creates profile for all users
-- For merchants: creates merchant record + store record with basic data
-- Reads store data from raw_user_meta_data
-- Graceful error handling to prevent user creation failure';
+- For merchants: creates merchant record + store record
+- For captains: creates captain record with default values
+- For clients: creates client record
+- Reads metadata from raw_user_meta_data
+- Graceful error handling';
 
 CREATE TRIGGER on_auth_user_created
 AFTER INSERT ON auth.users
@@ -2722,6 +2760,81 @@ CREATE TRIGGER trigger_update_app_settings_updated_at
   EXECUTE FUNCTION update_app_settings_updated_at();
 
 -- ==========================================
+-- 🧩 APP UPDATES TABLE
+-- ==========================================
+-- جدول لتحديد آخر إصدار وروابط التحديث
+
+CREATE TABLE public.app_updates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  platform TEXT NOT NULL DEFAULT 'android',
+  latest_version TEXT NOT NULL,
+  min_supported_version TEXT,
+  update_url TEXT NOT NULL,
+  title TEXT,
+  message TEXT,
+  force_update BOOLEAN DEFAULT FALSE,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_updates_platform_active
+  ON public.app_updates(platform, is_active);
+
+ALTER TABLE public.app_updates ENABLE ROW LEVEL SECURITY;
+
+-- السماح للجميع بقراءة آخر تحديث
+CREATE POLICY "Public can view app updates" ON public.app_updates
+  FOR SELECT USING (true);
+
+-- سياسات الإدارة لإدارة التحديثات
+CREATE POLICY "Admins can insert app updates" ON public.app_updates
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+CREATE POLICY "Admins can update app updates" ON public.app_updates
+  FOR UPDATE USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  ) WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+CREATE POLICY "Admins can delete app updates" ON public.app_updates
+  FOR DELETE USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- تحديث updated_at تلقائياً
+CREATE OR REPLACE FUNCTION update_app_updates_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trigger_update_app_updates_updated_at
+  ON public.app_updates;
+
+CREATE TRIGGER trigger_update_app_updates_updated_at
+  BEFORE UPDATE ON public.app_updates
+  FOR EACH ROW
+  EXECUTE FUNCTION update_app_updates_updated_at();
+
+-- ==========================================
 -- 🧭 NAVIGATION ANALYTICS TABLE
 -- ==========================================
 -- جدول لتتبع تحليلات التنقل في التطبيق
@@ -2784,6 +2897,55 @@ ON CONFLICT (id) DO UPDATE SET
   public = EXCLUDED.public,
   file_size_limit = EXCLUDED.file_size_limit,
   allowed_mime_types = EXCLUDED.allowed_mime_types;
+
+DROP POLICY IF EXISTS "delivery_wallet_receipts_owner_insert" ON storage.objects;
+CREATE POLICY "delivery_wallet_receipts_owner_insert" ON storage.objects
+FOR INSERT TO authenticated
+WITH CHECK (
+  bucket_id = 'delivery_wallet_receipts'
+  AND (storage.foldername(name))[1] = auth.uid()::text
+  AND EXISTS (
+    SELECT 1 FROM public.delivery_companies dc
+    WHERE dc.admin_id = auth.uid()
+      AND storage.objects.name LIKE '%/delivery_wallet_receipts/' || dc.id::text || '/%'
+  )
+);
+
+DROP POLICY IF EXISTS "delivery_wallet_receipts_owner_select" ON storage.objects;
+CREATE POLICY "delivery_wallet_receipts_owner_select" ON storage.objects
+FOR SELECT TO authenticated
+USING (
+  bucket_id = 'delivery_wallet_receipts'
+  AND (
+    public.is_admin()
+    OR (
+      (storage.foldername(name))[1] = auth.uid()::text
+      AND EXISTS (
+        SELECT 1 FROM public.delivery_companies dc
+        WHERE dc.admin_id = auth.uid()
+          AND storage.objects.name LIKE '%/delivery_wallet_receipts/' || dc.id::text || '/%'
+      )
+    )
+  )
+);
+
+DROP POLICY IF EXISTS "delivery_wallet_receipts_owner_delete" ON storage.objects;
+CREATE POLICY "delivery_wallet_receipts_owner_delete" ON storage.objects
+FOR DELETE TO authenticated
+USING (
+  bucket_id = 'delivery_wallet_receipts'
+  AND (
+    public.is_admin()
+    OR (
+      (storage.foldername(name))[1] = auth.uid()::text
+      AND EXISTS (
+        SELECT 1 FROM public.delivery_companies dc
+        WHERE dc.admin_id = auth.uid()
+          AND storage.objects.name LIKE '%/delivery_wallet_receipts/' || dc.id::text || '/%'
+      )
+    )
+  )
+);
 
 -- 2️⃣ حذف جميع السياسات القديمة لضمان نظافة الإعداد
 DO $$
@@ -3502,6 +3664,80 @@ CREATE POLICY "spatial_ref_sys_no_modifications" ON spatial_ref_sys
 COMMENT ON TABLE spatial_ref_sys IS 'PostGIS system table containing spatial reference systems (SRID) - Read-only for security';
 
 -- ============================================================================
+-- 📦 Captain Nearby Orders RPC
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION get_nearby_available_orders(
+  captain_lat DOUBLE PRECISION,
+  captain_lng DOUBLE PRECISION,
+  radius_km DOUBLE PRECISION DEFAULT 10.0
+)
+RETURNS TABLE (
+  id UUID,
+  client_id UUID,
+  store_id UUID,
+  captain_id UUID,
+  order_group_id UUID,
+  total_amount DECIMAL,
+  delivery_fee DECIMAL,
+  tax_amount DECIMAL,
+  delivery_address TEXT,
+  delivery_latitude DECIMAL,
+  delivery_longitude DECIMAL,
+  delivery_notes TEXT,
+  status TEXT,
+  payment_method TEXT,
+  payment_status TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ,
+  distance_km DOUBLE PRECISION
+)
+LANGUAGE plpgsql
+STABLE
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    o.id,
+    o.client_id,
+    o.store_id,
+    o.captain_id,
+    o.order_group_id,
+    o.total_amount,
+    o.delivery_fee,
+    o.tax_amount,
+    o.delivery_address,
+    o.delivery_latitude,
+    o.delivery_longitude,
+    o.delivery_notes,
+    o.status,
+    o.payment_method,
+    o.payment_status,
+    o.notes,
+    o.created_at,
+    o.updated_at,
+    ST_Distance(
+      ST_SetSRID(ST_MakePoint(o.delivery_longitude, o.delivery_latitude), 4326)::geography,
+      ST_SetSRID(ST_MakePoint(captain_lng, captain_lat), 4326)::geography
+    ) / 1000 AS distance_km
+  FROM orders o
+  WHERE o.captain_id IS NULL
+    AND o.status IN ('confirmed', 'ready')
+    AND o.delivery_latitude IS NOT NULL
+    AND o.delivery_longitude IS NOT NULL
+    AND ST_DWithin(
+      ST_SetSRID(ST_MakePoint(o.delivery_longitude, o.delivery_latitude), 4326)::geography,
+      ST_SetSRID(ST_MakePoint(captain_lng, captain_lat), 4326)::geography,
+      radius_km * 1000
+    )
+  ORDER BY distance_km ASC;
+END;
+$$;
+
+COMMENT ON FUNCTION get_nearby_available_orders IS 'Returns available orders near a captain location within specified radius';
+
+-- ============================================================================
 -- 📊 ORDER TRACKING SYSTEM
 -- ============================================================================
 
@@ -3759,14 +3995,887 @@ END;
 $$;
 
 -- ============================================================================
--- ✅ END OF CONSOLIDATED SCHEMA
+-- ✅ END OF BASE SCHEMA
 -- ============================================================================
 -- ============================================================================
--- 🔁 MERGED MIGRATIONS (appended 2026-05-23)
+-- 🔁 MERGED MIGRATIONS (updated 2026-05-25)
 -- These sections were merged from individual migration files to keep a single
 -- canonical schema file. Each section is marked with its original filename.
 -- The content is idempotent (uses IF NOT EXISTS / CREATE OR REPLACE where applicable).
 -- ============================================================================
+
+-- >>> Source: 20260215_captain_system_complete_fix.sql
+-- Captain earnings updates and orders index
+ALTER TABLE public.captain_earnings
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+DROP TRIGGER IF EXISTS update_captain_earnings_updated_at ON public.captain_earnings;
+CREATE TRIGGER update_captain_earnings_updated_at
+  BEFORE UPDATE ON public.captain_earnings
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+CREATE INDEX IF NOT EXISTS idx_orders_captain_id ON public.orders(captain_id);
+
+-- >>> Source: 20260217_admin_update_user_password.sql
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE OR REPLACE FUNCTION public.admin_update_user_password(
+  target_user_id UUID,
+  new_password TEXT
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  caller_role TEXT;
+  result JSON;
+BEGIN
+  SELECT role INTO caller_role
+  FROM public.profiles
+  WHERE id = auth.uid();
+
+  IF caller_role IS NULL OR caller_role != 'admin' THEN
+    RAISE EXCEPTION 'Only admins can update user passwords'
+      USING HINT = 'You must be an admin to perform this operation';
+  END IF;
+
+  IF LENGTH(new_password) < 6 THEN
+    RAISE EXCEPTION 'Password must be at least 6 characters'
+      USING HINT = 'Please provide a stronger password';
+  END IF;
+
+  UPDATE auth.users
+  SET 
+    encrypted_password = crypt(new_password, gen_salt('bf')),
+    updated_at = NOW()
+  WHERE id = target_user_id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'User not found'
+      USING HINT = 'The specified user ID does not exist';
+  END IF;
+
+  result := json_build_object(
+    'success', true,
+    'message', 'Password updated successfully',
+    'user_id', target_user_id,
+    'updated_at', NOW()
+  );
+
+  RETURN result;
+
+EXCEPTION
+  WHEN OTHERS THEN
+    result := json_build_object(
+      'success', false,
+      'error', SQLERRM,
+      'user_id', target_user_id
+    );
+    RETURN result;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.admin_update_user_password(UUID, TEXT) TO authenticated;
+
+COMMENT ON FUNCTION public.admin_update_user_password(UUID, TEXT) IS 
+'Allows admin users to securely update passwords for other users. 
+Validates admin role and password strength before updating.
+Returns JSON with success status and details.';
+
+-- >>> Source: 20260401_add_captain_problem_reports.sql
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+CREATE TABLE IF NOT EXISTS public.captain_problem_reports (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  captain_id UUID NOT NULL REFERENCES public.captains(id) ON DELETE CASCADE,
+  order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+  problem_type TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open', 'in_review', 'resolved', 'dismissed')),
+  priority TEXT NOT NULL DEFAULT 'medium'
+    CHECK (priority IN ('low', 'medium', 'high', 'critical')),
+  resolved_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  resolved_at TIMESTAMPTZ,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_captain_problem_reports_captain
+  ON public.captain_problem_reports(captain_id);
+
+CREATE INDEX IF NOT EXISTS idx_captain_problem_reports_order
+  ON public.captain_problem_reports(order_id);
+
+CREATE INDEX IF NOT EXISTS idx_captain_problem_reports_status
+  ON public.captain_problem_reports(status);
+
+CREATE INDEX IF NOT EXISTS idx_captain_problem_reports_created_at
+  ON public.captain_problem_reports(created_at DESC);
+
+ALTER TABLE public.captain_problem_reports ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Captain can insert own problem reports"
+  ON public.captain_problem_reports;
+CREATE POLICY "Captain can insert own problem reports"
+  ON public.captain_problem_reports
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (captain_id = auth.uid());
+
+DROP POLICY IF EXISTS "Captain can view own problem reports"
+  ON public.captain_problem_reports;
+CREATE POLICY "Captain can view own problem reports"
+  ON public.captain_problem_reports
+  FOR SELECT
+  TO authenticated
+  USING (captain_id = auth.uid());
+
+DROP POLICY IF EXISTS "Admin can manage all captain problem reports"
+  ON public.captain_problem_reports;
+CREATE POLICY "Admin can manage all captain problem reports"
+  ON public.captain_problem_reports
+  FOR ALL
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_trigger
+    WHERE tgname = 'trg_captain_problem_reports_updated_at'
+  ) THEN
+    CREATE TRIGGER trg_captain_problem_reports_updated_at
+      BEFORE UPDATE ON public.captain_problem_reports
+      FOR EACH ROW
+      EXECUTE FUNCTION public.update_updated_at();
+  END IF;
+END $$;
+
+-- >>> Source: 20260419_delivery_zone_pricing.sql
+CREATE TABLE IF NOT EXISTS public.delivery_zone_pricing (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  governorate TEXT NOT NULL,
+  city TEXT,
+  area TEXT,
+  fee NUMERIC(10,2) NOT NULL CHECK (fee >= 0),
+  estimated_minutes INTEGER CHECK (estimated_minutes IS NULL OR estimated_minutes > 0),
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT delivery_zone_pricing_unique_scope UNIQUE NULLS NOT DISTINCT (governorate, city, area)
+);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_zone_pricing_scope
+  ON public.delivery_zone_pricing (governorate, city, area);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_zone_pricing_active
+  ON public.delivery_zone_pricing (is_active);
+
+DROP TRIGGER IF EXISTS trg_delivery_zone_pricing_updated_at ON public.delivery_zone_pricing;
+CREATE TRIGGER trg_delivery_zone_pricing_updated_at
+BEFORE UPDATE ON public.delivery_zone_pricing
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+ALTER TABLE public.delivery_zone_pricing ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone can read active delivery zones" ON public.delivery_zone_pricing;
+CREATE POLICY "Anyone can read active delivery zones"
+  ON public.delivery_zone_pricing FOR SELECT
+  TO authenticated
+  USING (is_active = TRUE OR public.is_admin());
+
+DROP POLICY IF EXISTS "Owner admin can manage delivery zones" ON public.delivery_zone_pricing;
+CREATE POLICY "Owner admin can manage delivery zones"
+  ON public.delivery_zone_pricing FOR ALL
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+-- >>> Source: delivery_zone_pricing_rows.sql
+INSERT INTO public.delivery_zone_pricing
+  (id, governorate, city, area, fee, estimated_minutes, is_active, created_by, created_at, updated_at)
+VALUES
+  ('1bb0fa15-1bb9-44f0-a408-983493019c43', 'الاسماعيلية', 'التل الكبير', 'الحمادة', 15.00, NULL, TRUE, NULL, '2026-04-20 08:19:59.845119+00', '2026-04-20 10:19:57.695218+00'),
+  ('59123057-d016-41a4-80aa-bdef795cf6e7', 'الاسماعيلية', 'القصاصين', 'المحسمة', 30.00, NULL, TRUE, NULL, '2026-04-26 20:02:25.96859+00', '2026-04-26 23:02:24.998693+00'),
+  ('5b76ee4e-ae79-4e87-aa29-64b0487c9c44', 'الاسماعيلية', 'التل الكبير', 'تل البلد', 20.00, NULL, TRUE, NULL, '2026-04-20 18:43:18.663596+00', '2026-04-26 20:01:11.636394+00'),
+  ('e1d8001d-ad84-4900-8918-0c2f59a5a6ba', 'القاهرة', 'الالج', 'ستي', 20.00, NULL, TRUE, NULL, '2026-04-26 20:00:36.874301+00', '2026-04-26 23:00:36.049679+00')
+ON CONFLICT (governorate, city, area) DO UPDATE
+SET
+  fee = EXCLUDED.fee,
+  estimated_minutes = EXCLUDED.estimated_minutes,
+  is_active = EXCLUDED.is_active,
+  updated_at = EXCLUDED.updated_at;
+
+-- >>> Source: 20260429_delivery_companies_city_address.sql
+CREATE TABLE IF NOT EXISTS public.delivery_companies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  admin_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  company_name TEXT NOT NULL,
+  governorate TEXT,
+  city TEXT NOT NULL,
+  address TEXT,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT delivery_companies_unique_city UNIQUE (city, company_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_companies_city
+  ON public.delivery_companies(city);
+CREATE INDEX IF NOT EXISTS idx_delivery_companies_admin
+  ON public.delivery_companies(admin_id);
+
+ALTER TABLE public.delivery_companies ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Delivery companies public read" ON public.delivery_companies;
+CREATE POLICY "Delivery companies public read"
+  ON public.delivery_companies FOR SELECT
+  TO authenticated
+  USING (true);
+
+DROP POLICY IF EXISTS "Delivery companies admin manage" ON public.delivery_companies;
+CREATE POLICY "Delivery companies admin manage"
+  ON public.delivery_companies FOR ALL
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Delivery company admin manage own company" ON public.delivery_companies;
+CREATE POLICY "Delivery company admin manage own company"
+  ON public.delivery_companies FOR ALL
+  TO authenticated
+  USING (
+    admin_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.role = 'delivery_company_admin'
+    )
+  )
+  WITH CHECK (
+    admin_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.role = 'delivery_company_admin'
+    )
+  );
+
+DROP TRIGGER IF EXISTS trg_delivery_companies_updated_at ON public.delivery_companies;
+CREATE TRIGGER trg_delivery_companies_updated_at
+BEFORE UPDATE ON public.delivery_companies
+FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+CREATE TABLE IF NOT EXISTS public.delivery_company_addresses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id UUID NOT NULL REFERENCES public.delivery_companies(id) ON DELETE CASCADE,
+  label VARCHAR(100) DEFAULT 'المكتب',
+  address TEXT,
+  governorate TEXT,
+  city TEXT NOT NULL,
+  area TEXT,
+  street TEXT NOT NULL,
+  building_number TEXT,
+  floor_number TEXT,
+  apartment_number TEXT,
+  latitude DOUBLE PRECISION,
+  longitude DOUBLE PRECISION,
+  location GEOGRAPHY(POINT, 4326),
+  landmark TEXT,
+  is_default BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_company_addresses_company
+  ON public.delivery_company_addresses(company_id);
+CREATE INDEX IF NOT EXISTS idx_delivery_company_addresses_default
+  ON public.delivery_company_addresses(company_id, is_default);
+
+ALTER TABLE public.delivery_company_addresses ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Delivery company addresses admin manage" ON public.delivery_company_addresses;
+CREATE POLICY "Delivery company addresses admin manage"
+  ON public.delivery_company_addresses FOR ALL
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Delivery company admins manage own addresses" ON public.delivery_company_addresses;
+CREATE POLICY "Delivery company admins manage own addresses"
+  ON public.delivery_company_addresses FOR ALL
+  TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.delivery_companies dc
+      JOIN public.profiles p ON p.id = auth.uid()
+      WHERE dc.id = delivery_company_addresses.company_id
+        AND dc.admin_id = auth.uid()
+        AND p.role = 'delivery_company_admin'
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.delivery_companies dc
+      JOIN public.profiles p ON p.id = auth.uid()
+      WHERE dc.id = delivery_company_addresses.company_id
+        AND dc.admin_id = auth.uid()
+        AND p.role = 'delivery_company_admin'
+    )
+  );
+
+DROP TRIGGER IF EXISTS trg_delivery_company_addresses_updated_at ON public.delivery_company_addresses;
+CREATE TRIGGER trg_delivery_company_addresses_updated_at
+BEFORE UPDATE ON public.delivery_company_addresses
+FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+
+ALTER TABLE public.delivery_companies
+  ADD COLUMN IF NOT EXISTS address_id UUID REFERENCES public.delivery_company_addresses(id) ON DELETE SET NULL;
+
+-- >>> Source: 20260429_link_captains_to_delivery_company.sql
+ALTER TABLE public.captains
+  ADD COLUMN IF NOT EXISTS delivery_company_id UUID REFERENCES public.delivery_companies(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_captains_delivery_company_id
+  ON public.captains(delivery_company_id);
+
+DO $$
+BEGIN
+  IF to_regclass('public.delivery_admin_captains') IS NOT NULL THEN
+    UPDATE public.captains c
+    SET delivery_company_id = dc.id
+    FROM public.delivery_admin_captains dac
+    JOIN public.delivery_companies dc ON dc.admin_id = dac.admin_id
+    WHERE c.id = dac.captain_id
+      AND c.delivery_company_id IS NULL;
+  END IF;
+END $$;
+
+DROP POLICY IF EXISTS "Authenticated can view active captains" ON public.captains;
+DROP POLICY IF EXISTS "Delivery admins view own captains" ON public.captains;
+CREATE POLICY "Delivery admins view own captains" ON public.captains
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.delivery_companies dc
+      JOIN public.profiles p ON p.id = auth.uid()
+      WHERE dc.id = captains.delivery_company_id
+        AND dc.admin_id = auth.uid()
+        AND p.role = 'delivery_company_admin'
+    )
+  );
+
+-- >>> Source: 20260429_delivery_admin_orders_view.sql
+ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Delivery admins view app-delivery orders" ON public.orders;
+CREATE POLICY "Delivery admins view app-delivery orders" ON public.orders
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.role = 'delivery_company_admin'
+    )
+    AND EXISTS (
+      SELECT 1 FROM public.stores s
+      WHERE s.id = store_id AND s.delivery_mode = 'app'
+    )
+  );
+
+DROP POLICY IF EXISTS "Delivery admins update app-delivery orders" ON public.orders;
+CREATE POLICY "Delivery admins update app-delivery orders" ON public.orders
+  FOR UPDATE TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.role = 'delivery_company_admin'
+    )
+    AND EXISTS (
+      SELECT 1 FROM public.stores s
+      WHERE s.id = store_id AND s.delivery_mode = 'app'
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.role = 'delivery_company_admin'
+    )
+    AND EXISTS (
+      SELECT 1 FROM public.stores s
+      WHERE s.id = store_id AND s.delivery_mode = 'app'
+    )
+  );
+
+-- >>> Source: 20260503_admin_avatar_upload_policy.sql
+DROP POLICY IF EXISTS "Admin can upload avatars for any user" ON storage.objects;
+CREATE POLICY "Admin can upload avatars for any user"
+ON storage.objects
+FOR INSERT
+TO authenticated
+WITH CHECK (
+  bucket_id = 'profiles' 
+  AND (storage.foldername(name))[1] = 'avatars'
+  AND EXISTS (
+    SELECT 1 FROM public.profiles p
+    WHERE p.id = auth.uid()
+    AND p.role = 'admin'
+  )
+);
+
+DROP POLICY IF EXISTS "Admin can update avatars for any user" ON storage.objects;
+CREATE POLICY "Admin can update avatars for any user"
+ON storage.objects
+FOR UPDATE
+TO authenticated
+USING (
+  bucket_id = 'profiles' 
+  AND (storage.foldername(name))[1] = 'avatars'
+  AND EXISTS (
+    SELECT 1 FROM public.profiles p
+    WHERE p.id = auth.uid()
+    AND p.role = 'admin'
+  )
+)
+WITH CHECK (
+  bucket_id = 'profiles' 
+  AND (storage.foldername(name))[1] = 'avatars'
+  AND EXISTS (
+    SELECT 1 FROM public.profiles p
+    WHERE p.id = auth.uid()
+    AND p.role = 'admin'
+  )
+);
+
+DROP POLICY IF EXISTS "Admin can delete avatars for any user" ON storage.objects;
+CREATE POLICY "Admin can delete avatars for any user"
+ON storage.objects
+FOR DELETE
+TO authenticated
+USING (
+  bucket_id = 'profiles' 
+  AND (storage.foldername(name))[1] = 'avatars'
+  AND EXISTS (
+    SELECT 1 FROM public.profiles p
+    WHERE p.id = auth.uid()
+    AND p.role = 'admin'
+  )
+);
+
+-- >>> Source: 20260505_delivery_company_single_scope.sql
+CREATE OR REPLACE FUNCTION public.admin_create_user(
+  user_email TEXT,
+  user_password TEXT,
+  user_full_name TEXT,
+  user_phone TEXT,
+  user_role TEXT DEFAULT 'client'
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  caller_uid UUID := auth.uid();
+  caller_role TEXT;
+  new_user_id UUID;
+  normalized_role TEXT;
+  caller_company_id UUID;
+BEGIN
+  IF caller_uid IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'Failed to check user auth status');
+  END IF;
+
+  SELECT role INTO caller_role
+  FROM public.profiles
+  WHERE id = caller_uid;
+
+  IF caller_role IS NULL OR caller_role NOT IN ('admin', 'delivery_company_admin') THEN
+    RETURN json_build_object('success', false, 'error', 'Only owner admin or delivery admin can create users');
+  END IF;
+
+  normalized_role := lower(trim(coalesce(user_role, 'client')));
+
+  IF normalized_role NOT IN ('client', 'merchant', 'captain', 'admin', 'delivery_company_admin') THEN
+    RETURN json_build_object('success', false, 'error', 'Invalid role');
+  END IF;
+
+  IF caller_role = 'delivery_company_admin' AND normalized_role <> 'captain' THEN
+    RETURN json_build_object('success', false, 'error', 'Delivery admin can create captains only');
+  END IF;
+
+  IF LENGTH(TRIM(user_email)) = 0 THEN
+    RETURN json_build_object('success', false, 'error', 'Email is required');
+  END IF;
+
+  IF LENGTH(user_password) < 6 THEN
+    RETURN json_build_object('success', false, 'error', 'Password must be at least 6 characters');
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM auth.users WHERE email = LOWER(TRIM(user_email))) THEN
+    RETURN json_build_object('success', false, 'error', 'Email already registered');
+  END IF;
+
+  IF caller_role = 'delivery_company_admin' AND normalized_role = 'captain' THEN
+    SELECT dc.id
+    INTO caller_company_id
+    FROM public.delivery_companies dc
+    WHERE dc.admin_id = caller_uid
+    ORDER BY dc.created_at DESC
+    LIMIT 1;
+
+    IF caller_company_id IS NULL THEN
+      RETURN json_build_object('success', false, 'error', 'No delivery company linked to this admin. Owner must create company first');
+    END IF;
+  END IF;
+
+  new_user_id := gen_random_uuid();
+
+  INSERT INTO auth.users (
+    id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
+    raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+    confirmation_token, recovery_token, email_change_token_new, email_change
+  ) VALUES (
+    new_user_id,
+    '00000000-0000-0000-0000-000000000000',
+    'authenticated',
+    'authenticated',
+    LOWER(TRIM(user_email)),
+    crypt(user_password, gen_salt('bf')),
+    NOW(),
+    jsonb_build_object('provider', 'email', 'providers', ARRAY['email']),
+    jsonb_build_object('full_name', user_full_name, 'phone', user_phone, 'role', normalized_role),
+    NOW(), NOW(), '', '', '', ''
+  );
+
+  INSERT INTO auth.identities (id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at)
+  VALUES (
+    gen_random_uuid(),
+    new_user_id,
+    LOWER(TRIM(user_email)),
+    jsonb_build_object('sub', new_user_id::text, 'email', LOWER(TRIM(user_email))),
+    'email', NOW(), NOW(), NOW()
+  );
+
+  INSERT INTO public.profiles (id, full_name, email, phone, role, is_active, password, created_at, updated_at)
+  VALUES (new_user_id, user_full_name, LOWER(TRIM(user_email)), user_phone, normalized_role, true, user_password, NOW(), NOW())
+  ON CONFLICT (id) DO UPDATE SET
+    full_name = EXCLUDED.full_name,
+    email = EXCLUDED.email,
+    phone = EXCLUDED.phone,
+    role = EXCLUDED.role,
+    password = EXCLUDED.password,
+    updated_at = NOW();
+
+  IF normalized_role = 'captain' THEN
+    INSERT INTO public.captains (
+      id,
+      status,
+      is_online,
+      is_available,
+      is_active,
+      verification_status,
+      contact_phone,
+      delivery_company_id,
+      created_at,
+      updated_at
+    )
+    VALUES (
+      new_user_id,
+      'offline',
+      FALSE,
+      TRUE,
+      TRUE,
+      'pending',
+      user_phone,
+      caller_company_id,
+      NOW(),
+      NOW()
+    )
+    ON CONFLICT (id) DO UPDATE SET
+      status = EXCLUDED.status,
+      is_online = EXCLUDED.is_online,
+      is_available = EXCLUDED.is_available,
+      is_active = EXCLUDED.is_active,
+      verification_status = EXCLUDED.verification_status,
+      contact_phone = EXCLUDED.contact_phone,
+      delivery_company_id = COALESCE(EXCLUDED.delivery_company_id, public.captains.delivery_company_id),
+      updated_at = NOW();
+  END IF;
+
+  RETURN json_build_object('success', true, 'user_id', new_user_id, 'message', 'User created successfully');
+EXCEPTION WHEN OTHERS THEN
+  RETURN json_build_object('success', false, 'error', SQLERRM);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.admin_update_user(
+  p_user_id TEXT,
+  new_full_name TEXT DEFAULT NULL,
+  new_email TEXT DEFAULT NULL,
+  new_phone TEXT DEFAULT NULL,
+  new_role TEXT DEFAULT NULL,
+  new_password TEXT DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  caller_uid UUID := auth.uid();
+  caller_role TEXT;
+  current_email TEXT;
+  uid TEXT := p_user_id;
+  target_role TEXT;
+BEGIN
+  IF caller_uid IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'Failed to check user auth status');
+  END IF;
+
+  SELECT role INTO caller_role FROM public.profiles WHERE id = caller_uid;
+  IF caller_role IS NULL OR caller_role NOT IN ('admin', 'delivery_company_admin') THEN
+    RETURN json_build_object('success', false, 'error', 'Only owner admin or delivery admin can update users');
+  END IF;
+
+  SELECT role INTO target_role FROM public.profiles WHERE id::text = uid;
+  IF target_role IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'User not found');
+  END IF;
+
+  IF caller_role = 'delivery_company_admin' THEN
+    IF target_role <> 'captain' THEN
+      RETURN json_build_object('success', false, 'error', 'Delivery admin can update captains only');
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM public.captains c
+      JOIN public.delivery_companies dc ON dc.id = c.delivery_company_id
+      WHERE c.id::text = uid
+        AND dc.admin_id = caller_uid
+    ) THEN
+      RETURN json_build_object('success', false, 'error', 'Captain is خارج نطاق مسؤول الدليفري');
+    END IF;
+
+    IF new_role IS NOT NULL AND lower(trim(new_role)) <> 'captain' THEN
+      RETURN json_build_object('success', false, 'error', 'Delivery admin cannot change role from captain');
+    END IF;
+  END IF;
+
+  SELECT email INTO current_email FROM auth.users WHERE id::text = uid;
+  IF current_email IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'User not found');
+  END IF;
+
+  IF new_email IS NOT NULL AND LOWER(TRIM(new_email)) != current_email THEN
+    IF EXISTS (SELECT 1 FROM auth.users WHERE email = LOWER(TRIM(new_email)) AND id::text != uid) THEN
+      RETURN json_build_object('success', false, 'error', 'Email already in use');
+    END IF;
+    UPDATE auth.users
+    SET
+      email = LOWER(TRIM(new_email)),
+      raw_user_meta_data = raw_user_meta_data || jsonb_build_object(
+        'full_name', COALESCE(new_full_name, raw_user_meta_data->>'full_name'),
+        'phone', COALESCE(new_phone, raw_user_meta_data->>'phone'),
+        'role', COALESCE(new_role, raw_user_meta_data->>'role')
+      ),
+      updated_at = NOW()
+    WHERE id::text = uid;
+
+    UPDATE auth.identities
+    SET
+      identity_data = identity_data || jsonb_build_object('email', LOWER(TRIM(new_email))),
+      provider_id = LOWER(TRIM(new_email)),
+      updated_at = NOW()
+    WHERE user_id::text = uid AND provider = 'email';
+  ELSE
+    UPDATE auth.users
+    SET
+      raw_user_meta_data = raw_user_meta_data || jsonb_build_object(
+        'full_name', COALESCE(new_full_name, raw_user_meta_data->>'full_name'),
+        'phone', COALESCE(new_phone, raw_user_meta_data->>'phone'),
+        'role', COALESCE(new_role, raw_user_meta_data->>'role')
+      ),
+      updated_at = NOW()
+    WHERE id::text = uid;
+  END IF;
+
+  IF new_password IS NOT NULL AND LENGTH(new_password) >= 6 THEN
+    UPDATE auth.users
+    SET encrypted_password = crypt(new_password, gen_salt('bf')), updated_at = NOW()
+    WHERE id::text = uid;
+  END IF;
+
+  UPDATE public.profiles
+  SET
+    full_name = COALESCE(new_full_name, full_name),
+    email = COALESCE(LOWER(TRIM(new_email)), email),
+    phone = COALESCE(new_phone, phone),
+    role = COALESCE(new_role, role),
+    password = COALESCE(new_password, password),
+    updated_at = NOW()
+  WHERE id::text = uid;
+
+  RETURN json_build_object('success', true, 'user_id', uid, 'message', 'User updated successfully');
+EXCEPTION WHEN OTHERS THEN
+  RETURN json_build_object('success', false, 'error', SQLERRM);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.admin_toggle_user_status(p_user_id TEXT, p_active BOOLEAN)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  caller_uid UUID := auth.uid();
+  caller_role TEXT;
+  uid TEXT := p_user_id;
+  target_role TEXT;
+BEGIN
+  IF caller_uid IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'Failed to check user auth status');
+  END IF;
+
+  SELECT role INTO caller_role FROM public.profiles WHERE id = caller_uid;
+  IF caller_role IS NULL OR caller_role NOT IN ('admin', 'delivery_company_admin') THEN
+    RETURN json_build_object('success', false, 'error', 'Only owner admin or delivery admin can toggle user status');
+  END IF;
+
+  SELECT role INTO target_role FROM public.profiles WHERE id::text = uid;
+  IF target_role IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'User not found');
+  END IF;
+
+  IF caller_role = 'delivery_company_admin' AND target_role <> 'captain' THEN
+    RETURN json_build_object('success', false, 'error', 'Delivery admin can toggle captains only');
+  END IF;
+
+  IF caller_role = 'delivery_company_admin' AND NOT EXISTS (
+    SELECT 1
+    FROM public.captains c
+    JOIN public.delivery_companies dc ON dc.id = c.delivery_company_id
+    WHERE c.id::text = uid
+      AND dc.admin_id = caller_uid
+  ) THEN
+    RETURN json_build_object('success', false, 'error', 'Captain is خارج نطاق مسؤول الدليفري');
+  END IF;
+
+  IF uid = caller_uid::text AND p_active = false THEN
+    RETURN json_build_object('success', false, 'error', 'Cannot disable your own account');
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM auth.users WHERE id::text = uid) THEN
+    RETURN json_build_object('success', false, 'error', 'User not found');
+  END IF;
+
+  IF p_active THEN
+    UPDATE auth.users SET banned_until = NULL, updated_at = NOW() WHERE id::text = uid;
+  ELSE
+    UPDATE auth.users SET banned_until = '2999-12-31 23:59:59+00'::timestamptz, updated_at = NOW() WHERE id::text = uid;
+    DELETE FROM auth.sessions WHERE user_id::text = uid;
+    DELETE FROM auth.refresh_tokens WHERE user_id::text = uid;
+  END IF;
+
+  UPDATE public.profiles SET is_active = p_active, updated_at = NOW() WHERE id::text = uid;
+
+  RETURN json_build_object(
+    'success', true,
+    'user_id', uid,
+    'is_active', p_active,
+    'message', CASE WHEN p_active THEN 'User activated' ELSE 'User deactivated' END
+  );
+EXCEPTION WHEN OTHERS THEN
+  RETURN json_build_object('success', false, 'error', SQLERRM);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.admin_delete_user(p_user_id TEXT)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  caller_uid UUID := auth.uid();
+  caller_role TEXT;
+  target_email TEXT;
+  uid TEXT := p_user_id;
+  target_role TEXT;
+BEGIN
+  IF caller_uid IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'Failed to check user auth status');
+  END IF;
+
+  SELECT role INTO caller_role FROM public.profiles WHERE id = caller_uid;
+  IF caller_role IS NULL OR caller_role NOT IN ('admin', 'delivery_company_admin') THEN
+    RETURN json_build_object('success', false, 'error', 'Only owner admin or delivery admin can delete users');
+  END IF;
+
+  SELECT role INTO target_role FROM public.profiles WHERE id::text = uid;
+  IF target_role IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'User not found');
+  END IF;
+
+  IF caller_role = 'delivery_company_admin' AND target_role <> 'captain' THEN
+    RETURN json_build_object('success', false, 'error', 'Delivery admin can delete captains only');
+  END IF;
+
+  IF caller_role = 'delivery_company_admin' AND NOT EXISTS (
+    SELECT 1
+    FROM public.captains c
+    JOIN public.delivery_companies dc ON dc.id = c.delivery_company_id
+    WHERE c.id::text = uid
+      AND dc.admin_id = caller_uid
+  ) THEN
+    RETURN json_build_object('success', false, 'error', 'Captain is خارج نطاق مسؤول الدليفري');
+  END IF;
+
+  IF uid = caller_uid::text THEN
+    RETURN json_build_object('success', false, 'error', 'Cannot delete your own account');
+  END IF;
+
+  SELECT email INTO target_email FROM auth.users WHERE id::text = uid;
+  IF target_email IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'User not found');
+  END IF;
+
+  DELETE FROM public.profiles WHERE id::text = uid;
+  DELETE FROM auth.identities WHERE user_id::text = uid;
+  DELETE FROM auth.sessions WHERE user_id::text = uid;
+  DELETE FROM auth.refresh_tokens WHERE user_id::text = uid;
+  DELETE FROM auth.users WHERE id::text = uid;
+
+  RETURN json_build_object('success', true, 'message', 'User deleted successfully', 'deleted_email', target_email);
+EXCEPTION WHEN OTHERS THEN
+  RETURN json_build_object('success', false, 'error', SQLERRM);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.admin_create_user(TEXT, TEXT, TEXT, TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_delete_user(TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_update_user(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_toggle_user_status(TEXT, BOOLEAN) TO authenticated;
+
+DO $$
+BEGIN
+  IF to_regclass('public.delivery_admin_captains') IS NOT NULL THEN
+    EXECUTE 'DROP TRIGGER IF EXISTS trg_delivery_admin_captains_company ON public.delivery_admin_captains';
+  END IF;
+END $$;
+
+DROP FUNCTION IF EXISTS public.sync_captain_company_from_admin();
+DROP TABLE IF EXISTS public.delivery_admin_captains;
 
 -- >>> Source: 20260509_add_support_contact_settings.sql
 -- Add support contact fields to app_settings
@@ -3821,47 +4930,7 @@ CREATE INDEX IF NOT EXISTS idx_store_wallet_topups_store_id ON public.store_wall
 CREATE INDEX IF NOT EXISTS idx_store_wallet_topups_status ON public.store_wallet_topups(status);
 CREATE INDEX IF NOT EXISTS idx_store_wallet_topups_created_at ON public.store_wallet_topups(created_at);
 
-ALTER TABLE public.store_wallets ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.store_wallet_transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.store_wallet_topups ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Merchants view own store wallets" ON public.store_wallets;
-CREATE POLICY "Merchants view own store wallets" ON public.store_wallets
-FOR SELECT USING (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallets.store_id)
-);
-
-DROP POLICY IF EXISTS "Admins manage store wallets" ON public.store_wallets;
-CREATE POLICY "Admins manage store wallets" ON public.store_wallets
-FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
-
-DROP POLICY IF EXISTS "Merchants view own store wallet transactions" ON public.store_wallet_transactions;
-CREATE POLICY "Merchants view own store wallet transactions" ON public.store_wallet_transactions
-FOR SELECT USING (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallet_transactions.store_id)
-);
-
-DROP POLICY IF EXISTS "Admins manage store wallet transactions" ON public.store_wallet_transactions;
-CREATE POLICY "Admins manage store wallet transactions" ON public.store_wallet_transactions
-FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
-
-DROP POLICY IF EXISTS "Merchants can create topups" ON public.store_wallet_topups;
-CREATE POLICY "Merchants can create topups" ON public.store_wallet_topups
-FOR INSERT WITH CHECK (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallet_topups.store_id)
-);
-
-DROP POLICY IF EXISTS "Merchants view own topups" ON public.store_wallet_topups;
-CREATE POLICY "Merchants view own topups" ON public.store_wallet_topups
-FOR SELECT USING (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallet_topups.store_id)
-);
-
-DROP POLICY IF EXISTS "Admins manage topups" ON public.store_wallet_topups;
-CREATE POLICY "Admins manage topups" ON public.store_wallet_topups
-FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
-
--- Selected functions/triggers from 20260510 (some will be overridden later by newer files)
+-- Selected functions from 20260510 (some will be overridden later by newer files)
 CREATE OR REPLACE FUNCTION public.get_or_create_store_wallet(p_store_id UUID)
 RETURNS public.store_wallets
 LANGUAGE plpgsql
@@ -4019,27 +5088,6 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.get_or_create_store_wallet(UUID) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.can_store_wallet_cover(UUID, NUMERIC, NUMERIC, NUMERIC) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.approve_store_wallet_topup(UUID, TEXT) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.reject_store_wallet_topup(UUID, TEXT) TO authenticated;
-
--- Trigger and storage bucket (from 20260510)
-DROP TRIGGER IF EXISTS trg_store_wallet_commission ON public.orders;
-CREATE TRIGGER trg_store_wallet_commission
-AFTER INSERT ON public.orders
-FOR EACH ROW EXECUTE FUNCTION public.apply_store_wallet_commission();
-
-DROP TRIGGER IF EXISTS trg_store_open_before_order ON public.orders;
-CREATE TRIGGER trg_store_open_before_order
-BEFORE INSERT ON public.orders
-FOR EACH ROW EXECUTE FUNCTION public.ensure_store_open_for_orders();
-
-DROP TRIGGER IF EXISTS trg_store_wallet_open_guard ON public.stores;
-CREATE TRIGGER trg_store_wallet_open_guard
-BEFORE UPDATE OF is_open ON public.stores
-FOR EACH ROW EXECUTE FUNCTION public.prevent_store_open_without_balance();
-
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
   'wallet_receipts',
@@ -4052,54 +5100,6 @@ ON CONFLICT (id) DO UPDATE SET
   public = EXCLUDED.public,
   file_size_limit = EXCLUDED.file_size_limit,
   allowed_mime_types = EXCLUDED.allowed_mime_types;
-
-CREATE POLICY "wallet_receipts_owner_insert" ON storage.objects
-FOR INSERT TO authenticated
-WITH CHECK (
-  bucket_id = 'wallet_receipts'
-  AND (storage.foldername(name))[1] = auth.uid()::text
-  AND EXISTS (
-    SELECT 1 FROM public.stores s
-    WHERE s.merchant_id = auth.uid()
-      AND storage.objects.name LIKE '%/wallet_receipts/' || s.id::text || '/%'
-  )
-);
-
-DROP POLICY IF EXISTS "wallet_receipts_owner_select" ON storage.objects;
-CREATE POLICY "wallet_receipts_owner_select" ON storage.objects
-FOR SELECT TO authenticated
-USING (
-  bucket_id = 'wallet_receipts'
-  AND (
-    public.is_admin()
-    OR (
-      (storage.foldername(name))[1] = auth.uid()::text
-      AND EXISTS (
-        SELECT 1 FROM public.stores s
-        WHERE s.merchant_id = auth.uid()
-          AND storage.objects.name LIKE '%/wallet_receipts/' || s.id::text || '/%'
-      )
-    )
-  )
-);
-
-DROP POLICY IF EXISTS "wallet_receipts_owner_delete" ON storage.objects;
-CREATE POLICY "wallet_receipts_owner_delete" ON storage.objects
-FOR DELETE TO authenticated
-USING (
-  bucket_id = 'wallet_receipts'
-  AND (
-    public.is_admin()
-    OR (
-      (storage.foldername(name))[1] = auth.uid()::text
-      AND EXISTS (
-        SELECT 1 FROM public.stores s
-        WHERE s.merchant_id = auth.uid()
-          AND storage.objects.name LIKE '%/wallet_receipts/' || s.id::text || '/%'
-      )
-    )
-  )
-);
 
 -- >>> Source: 20260513_delivery_company_wallet_topups.sql
 -- Delivery company wallets, transactions and topups
@@ -4176,7 +5176,77 @@ CREATE POLICY "Delivery company admins create wallet topups"
     )
   );
 
--- (rest of delivery_company functions/policies are idempotent and included)
+DROP POLICY IF EXISTS "Delivery company admins view own wallet topups"
+  ON public.delivery_company_wallet_topups;
+CREATE POLICY "Delivery company admins view own wallet topups"
+  ON public.delivery_company_wallet_topups
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.delivery_companies dc
+      JOIN public.profiles p ON p.id = auth.uid()
+      WHERE dc.id = delivery_company_wallet_topups.company_id
+        AND dc.admin_id = auth.uid()
+        AND p.role = 'delivery_company_admin'
+    )
+  );
+
+DROP POLICY IF EXISTS "Admins manage delivery company wallet topups"
+  ON public.delivery_company_wallet_topups;
+CREATE POLICY "Admins manage delivery company wallet topups"
+  ON public.delivery_company_wallet_topups
+  FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Delivery company admins view own wallets"
+  ON public.delivery_company_wallets;
+CREATE POLICY "Delivery company admins view own wallets"
+  ON public.delivery_company_wallets
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.delivery_companies dc
+      JOIN public.profiles p ON p.id = auth.uid()
+      WHERE dc.id = delivery_company_wallets.company_id
+        AND dc.admin_id = auth.uid()
+        AND p.role = 'delivery_company_admin'
+    )
+  );
+
+DROP POLICY IF EXISTS "Admins manage delivery company wallets"
+  ON public.delivery_company_wallets;
+CREATE POLICY "Admins manage delivery company wallets"
+  ON public.delivery_company_wallets
+  FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+DROP POLICY IF EXISTS "Delivery company admins view own wallet transactions"
+  ON public.delivery_company_wallet_transactions;
+CREATE POLICY "Delivery company admins view own wallet transactions"
+  ON public.delivery_company_wallet_transactions
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.delivery_companies dc
+      JOIN public.profiles p ON p.id = auth.uid()
+      WHERE dc.id = delivery_company_wallet_transactions.company_id
+        AND dc.admin_id = auth.uid()
+        AND p.role = 'delivery_company_admin'
+    )
+  );
+
+DROP POLICY IF EXISTS "Admins manage delivery company wallet transactions"
+  ON public.delivery_company_wallet_transactions;
+CREATE POLICY "Admins manage delivery company wallet transactions"
+  ON public.delivery_company_wallet_transactions
+  FOR ALL TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
 CREATE OR REPLACE FUNCTION public.get_or_create_delivery_company_wallet(
   p_company_id UUID
 )
@@ -4285,6 +5355,46 @@ BEGIN
 
   UPDATE public.delivery_company_wallet_topups
   SET status = 'approved',
+      reviewed_by = auth.uid(),
+      reviewed_at = NOW(),
+      notes = COALESCE(p_notes, notes)
+  WHERE id = p_topup_id;
+
+  RETURN json_build_object('success', true);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.reject_delivery_company_wallet_topup(
+  p_topup_id UUID,
+  p_notes TEXT DEFAULT NULL
+)
+RETURNS JSON
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_topup RECORD;
+BEGIN
+  IF NOT public.is_admin() THEN
+    RETURN json_build_object('success', false, 'error', 'not_allowed');
+  END IF;
+
+  SELECT * INTO v_topup
+  FROM public.delivery_company_wallet_topups
+  WHERE id = p_topup_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN json_build_object('success', false, 'error', 'not_found');
+  END IF;
+
+  IF v_topup.status <> 'pending' THEN
+    RETURN json_build_object('success', false, 'error', 'already_processed');
+  END IF;
+
+  UPDATE public.delivery_company_wallet_topups
+  SET status = 'rejected',
       reviewed_by = auth.uid(),
       reviewed_at = NOW(),
       notes = COALESCE(p_notes, notes)
@@ -4665,440 +5775,60 @@ BEGIN
 END;
 $$;
 
--- >>> Source: 20260515_admin_wallet_adjustments.sql
--- Admin wallet adjustments and constraints
-ALTER TABLE public.store_wallet_transactions
-  DROP CONSTRAINT IF EXISTS store_wallet_transactions_type_check;
-
-ALTER TABLE public.store_wallet_transactions
-  ADD CONSTRAINT store_wallet_transactions_type_check
-  CHECK (type IN ('deposit', 'commission', 'adjustment'));
-
-CREATE OR REPLACE FUNCTION public.admin_adjust_store_wallet_balance(
-  p_store_id UUID,
-  p_amount NUMERIC,
-  p_is_credit BOOLEAN,
-  p_notes TEXT DEFAULT NULL
-)
-RETURNS JSON
+CREATE OR REPLACE FUNCTION public.ensure_store_open_for_orders()
+RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
-DECLARE
-  v_wallet public.store_wallets%rowtype;
-  v_new_balance NUMERIC;
-  v_delta NUMERIC;
-  v_notes TEXT;
 BEGIN
-  IF NOT public.is_admin() THEN
-    RETURN json_build_object('success', false, 'error', 'not_allowed');
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.stores s
+    WHERE s.id = NEW.store_id
+      AND s.is_open = TRUE
+      AND s.is_active = TRUE
+  ) THEN
+    RAISE EXCEPTION 'STORE_CLOSED';
   END IF;
 
-  IF p_amount IS NULL OR p_amount <= 0 THEN
-    RETURN json_build_object('success', false, 'error', 'invalid_amount');
+  IF NOT public.can_store_wallet_cover(
+    NEW.store_id,
+    NEW.total_amount,
+    NEW.delivery_fee,
+    NEW.tax_amount
+  ) THEN
+    RAISE EXCEPTION 'INSUFFICIENT_WALLET_BALANCE';
   END IF;
 
-  SELECT * INTO v_wallet
-  FROM public.store_wallets
-  WHERE store_id = p_store_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    INSERT INTO public.store_wallets (store_id, balance)
-    VALUES (p_store_id, 0)
-    RETURNING * INTO v_wallet;
-  END IF;
-
-  v_delta := CASE WHEN p_is_credit THEN p_amount ELSE -p_amount END;
-  v_new_balance := v_wallet.balance + v_delta;
-
-  UPDATE public.store_wallets
-  SET balance = v_new_balance,
-      updated_at = NOW()
-  WHERE id = v_wallet.id;
-
-  v_notes := COALESCE(
-    p_notes,
-    CASE WHEN p_is_credit THEN 'Admin credit adjustment'
-         ELSE 'Admin debit adjustment' END
-  );
-
-  INSERT INTO public.store_wallet_transactions (
-    wallet_id,
-    store_id,
-    order_id,
-    type,
-    amount,
-    balance_before,
-    balance_after,
-    notes
-  ) VALUES (
-    v_wallet.id,
-    p_store_id,
-    NULL,
-    'adjustment',
-    p_amount,
-    v_wallet.balance,
-    v_new_balance,
-    v_notes
-  );
-
-  IF v_wallet.balance < 0 AND v_new_balance >= 0 THEN
-    UPDATE public.stores
-    SET is_open = TRUE,
-        updated_at = NOW()
-    WHERE id = p_store_id
-      AND is_active = TRUE;
-  END IF;
-
-  IF v_new_balance < -10 THEN
-    UPDATE public.stores
-    SET is_open = FALSE,
-        updated_at = NOW()
-    WHERE id = p_store_id
-      AND is_open = TRUE;
-  END IF;
-
-  RETURN json_build_object('success', true, 'balance', v_new_balance);
+  RETURN NEW;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.admin_adjust_delivery_company_wallet_balance(
-  p_company_id UUID,
-  p_amount NUMERIC,
-  p_is_credit BOOLEAN,
-  p_notes TEXT DEFAULT NULL
-)
-RETURNS JSON
+CREATE OR REPLACE FUNCTION public.prevent_store_open_without_balance()
+RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_wallet public.delivery_company_wallets%rowtype;
-  v_new_balance NUMERIC;
-  v_delta NUMERIC;
-  v_notes TEXT;
+  v_balance NUMERIC;
 BEGIN
-  IF NOT public.is_admin() THEN
-    RETURN json_build_object('success', false, 'error', 'not_allowed');
+  IF NEW.is_open = TRUE AND OLD.is_open = FALSE THEN
+    SELECT balance INTO v_balance
+    FROM public.store_wallets
+    WHERE store_id = NEW.id;
+
+    IF v_balance IS NULL THEN
+      v_balance := 0;
+    END IF;
+
+    IF v_balance < -10 THEN
+      RAISE EXCEPTION 'Wallet balance too low to open store';
+    END IF;
   END IF;
 
-  IF p_amount IS NULL OR p_amount <= 0 THEN
-    RETURN json_build_object('success', false, 'error', 'invalid_amount');
-  END IF;
-
-  SELECT * INTO v_wallet
-  FROM public.delivery_company_wallets
-  WHERE company_id = p_company_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    INSERT INTO public.delivery_company_wallets (company_id, balance)
-    VALUES (p_company_id, 0)
-    RETURNING * INTO v_wallet;
-  END IF;
-
-  v_delta := CASE WHEN p_is_credit THEN p_amount ELSE -p_amount END;
-  v_new_balance := v_wallet.balance + v_delta;
-
-  UPDATE public.delivery_company_wallets
-  SET balance = v_new_balance,
-      updated_at = NOW()
-  WHERE id = v_wallet.id;
-
-  v_notes := COALESCE(
-    p_notes,
-    CASE WHEN p_is_credit THEN 'Admin credit adjustment'
-         ELSE 'Admin debit adjustment' END
-  );
-
-  INSERT INTO public.delivery_company_wallet_transactions (
-    wallet_id,
-    company_id,
-    order_id,
-    type,
-    amount,
-    balance_before,
-    balance_after,
-    notes
-  ) VALUES (
-    v_wallet.id,
-    p_company_id,
-    NULL,
-    'adjustment',
-    p_amount,
-    v_wallet.balance,
-    v_new_balance,
-    v_notes
-  );
-
-  RETURN json_build_object('success', true, 'balance', v_new_balance);
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION public.admin_adjust_store_wallet_balance(UUID, NUMERIC, BOOLEAN, TEXT) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.admin_adjust_delivery_company_wallet_balance(UUID, NUMERIC, BOOLEAN, TEXT) TO authenticated;
-
--- ============================================================================
--- ✅ END OF CONSOLIDATED SCHEMA
--- ============================================================================
--- ============================================================================
--- 🔁 MERGED MIGRATIONS (appended 2026-05-23)
--- These sections were merged from individual migration files to keep a single
--- canonical schema file. Each section is marked with its original filename.
--- The content is idempotent (uses IF NOT EXISTS / CREATE OR REPLACE where applicable).
--- ============================================================================
-
--- >>> Source: 20260509_add_support_contact_settings.sql
--- Add support contact fields to app_settings
-ALTER TABLE public.app_settings
-  ADD COLUMN IF NOT EXISTS support_email TEXT DEFAULT 'support@elltall.com',
-  ADD COLUMN IF NOT EXISTS support_phone TEXT DEFAULT '+20 123 456 7890',
-  ADD COLUMN IF NOT EXISTS support_website TEXT DEFAULT 'https://www.elltall.com';
-
--- >>> Source: 20260510_store_wallets_and_topups.sql
--- Store wallets, transactions, topups, indexes, policies, functions, triggers
-CREATE TABLE IF NOT EXISTS public.store_wallets (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  store_id UUID NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
-  balance DECIMAL(12,2) NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (store_id)
-);
-
-CREATE TABLE IF NOT EXISTS public.store_wallet_transactions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  wallet_id UUID NOT NULL REFERENCES public.store_wallets(id) ON DELETE CASCADE,
-  store_id UUID NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
-  order_id UUID REFERENCES public.orders(id) ON DELETE SET NULL,
-  type TEXT NOT NULL CHECK (type IN ('deposit', 'commission')),
-  amount DECIMAL(12,2) NOT NULL CHECK (amount >= 0),
-  balance_before DECIMAL(12,2) NOT NULL,
-  balance_after DECIMAL(12,2) NOT NULL,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.store_wallet_topups (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  store_id UUID NOT NULL REFERENCES public.stores(id) ON DELETE CASCADE,
-  amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
-  receipt_path TEXT,
-  instapay_reference TEXT,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
-  requested_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  reviewed_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  reviewed_at TIMESTAMPTZ,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_store_wallets_store_id ON public.store_wallets(store_id);
-CREATE INDEX IF NOT EXISTS idx_store_wallet_transactions_store_id ON public.store_wallet_transactions(store_id);
-CREATE INDEX IF NOT EXISTS idx_store_wallet_transactions_order_id ON public.store_wallet_transactions(order_id);
-CREATE INDEX IF NOT EXISTS idx_store_wallet_transactions_created_at ON public.store_wallet_transactions(created_at);
-CREATE INDEX IF NOT EXISTS idx_store_wallet_topups_store_id ON public.store_wallet_topups(store_id);
-CREATE INDEX IF NOT EXISTS idx_store_wallet_topups_status ON public.store_wallet_topups(status);
-CREATE INDEX IF NOT EXISTS idx_store_wallet_topups_created_at ON public.store_wallet_topups(created_at);
-
-ALTER TABLE public.store_wallets ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.store_wallet_transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.store_wallet_topups ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Merchants view own store wallets" ON public.store_wallets;
-CREATE POLICY "Merchants view own store wallets" ON public.store_wallets
-FOR SELECT USING (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallets.store_id)
-);
-
-DROP POLICY IF EXISTS "Admins manage store wallets" ON public.store_wallets;
-CREATE POLICY "Admins manage store wallets" ON public.store_wallets
-FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
-
-DROP POLICY IF EXISTS "Merchants view own store wallet transactions" ON public.store_wallet_transactions;
-CREATE POLICY "Merchants view own store wallet transactions" ON public.store_wallet_transactions
-FOR SELECT USING (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallet_transactions.store_id)
-);
-
-DROP POLICY IF EXISTS "Admins manage store wallet transactions" ON public.store_wallet_transactions;
-CREATE POLICY "Admins manage store wallet transactions" ON public.store_wallet_transactions
-FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
-
-DROP POLICY IF EXISTS "Merchants can create topups" ON public.store_wallet_topups;
-CREATE POLICY "Merchants can create topups" ON public.store_wallet_topups
-FOR INSERT WITH CHECK (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallet_topups.store_id)
-);
-
-DROP POLICY IF EXISTS "Merchants view own topups" ON public.store_wallet_topups;
-CREATE POLICY "Merchants view own topups" ON public.store_wallet_topups
-FOR SELECT USING (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallet_topups.store_id)
-);
-
-DROP POLICY IF EXISTS "Admins manage topups" ON public.store_wallet_topups;
-CREATE POLICY "Admins manage topups" ON public.store_wallet_topups
-FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
-
--- Selected functions/triggers from 20260510 (some will be overridden later by newer files)
-CREATE OR REPLACE FUNCTION public.get_or_create_store_wallet(p_store_id UUID)
-RETURNS public.store_wallets
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_wallet public.store_wallets%rowtype;
-BEGIN
-  IF NOT (public.is_admin() OR auth.uid() IN (
-    SELECT merchant_id FROM public.stores WHERE id = p_store_id
-  )) THEN
-    RAISE EXCEPTION 'NOT_AUTHORIZED';
-  END IF;
-
-  SELECT * INTO v_wallet
-  FROM public.store_wallets
-  WHERE store_id = p_store_id;
-
-  IF NOT FOUND THEN
-    INSERT INTO public.store_wallets (store_id, balance)
-    VALUES (p_store_id, 0)
-    RETURNING * INTO v_wallet;
-  END IF;
-
-  RETURN v_wallet;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.approve_store_wallet_topup(
-  p_topup_id UUID,
-  p_notes TEXT DEFAULT NULL
-)
-RETURNS JSON
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_topup RECORD;
-  v_wallet public.store_wallets%rowtype;
-  v_new_balance NUMERIC;
-BEGIN
-  IF NOT public.is_admin() THEN
-    RETURN json_build_object('success', false, 'error', 'not_allowed');
-  END IF;
-
-  SELECT * INTO v_topup
-  FROM public.store_wallet_topups
-  WHERE id = p_topup_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RETURN json_build_object('success', false, 'error', 'not_found');
-  END IF;
-
-  IF v_topup.status <> 'pending' THEN
-    RETURN json_build_object('success', false, 'error', 'already_processed');
-  END IF;
-
-  SELECT * INTO v_wallet
-  FROM public.store_wallets
-  WHERE store_id = v_topup.store_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    INSERT INTO public.store_wallets (store_id, balance)
-    VALUES (v_topup.store_id, 0)
-    RETURNING * INTO v_wallet;
-  END IF;
-
-  v_new_balance := v_wallet.balance + v_topup.amount;
-
-  UPDATE public.store_wallets
-  SET balance = v_new_balance,
-      updated_at = NOW()
-  WHERE id = v_wallet.id;
-
-  INSERT INTO public.store_wallet_transactions (
-    wallet_id,
-    store_id,
-    order_id,
-    type,
-    amount,
-    balance_before,
-    balance_after,
-    notes
-  ) VALUES (
-    v_wallet.id,
-    v_topup.store_id,
-    NULL,
-    'deposit',
-    v_topup.amount,
-    v_wallet.balance,
-    v_new_balance,
-    'Approved topup request'
-  );
-
-  UPDATE public.store_wallet_topups
-  SET status = 'approved',
-      reviewed_by = auth.uid(),
-      reviewed_at = NOW(),
-      notes = COALESCE(p_notes, notes)
-  WHERE id = p_topup_id;
-
-  IF v_wallet.balance < 0 AND v_new_balance >= 0 THEN
-    UPDATE public.stores
-    SET is_open = TRUE,
-        updated_at = NOW()
-    WHERE id = v_topup.store_id
-      AND is_active = TRUE;
-  END IF;
-
-  RETURN json_build_object('success', true, 'balance', v_new_balance);
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.reject_store_wallet_topup(
-  p_topup_id UUID,
-  p_notes TEXT DEFAULT NULL
-)
-RETURNS JSON
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_topup RECORD;
-BEGIN
-  IF NOT public.is_admin() THEN
-    RETURN json_build_object('success', false, 'error', 'not_allowed');
-  END IF;
-
-  SELECT * INTO v_topup
-  FROM public.store_wallet_topups
-  WHERE id = p_topup_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RETURN json_build_object('success', false, 'error', 'not_found');
-  END IF;
-
-  IF v_topup.status <> 'pending' THEN
-    RETURN json_build_object('success', false, 'error', 'already_processed');
-  END IF;
-
-  UPDATE public.store_wallet_topups
-  SET status = 'rejected',
-      reviewed_by = auth.uid(),
-      reviewed_at = NOW(),
-      notes = COALESCE(p_notes, notes)
-  WHERE id = p_topup_id;
-
-  RETURN json_build_object('success', true);
+  RETURN NEW;
 END;
 $$;
 
@@ -5107,7 +5837,7 @@ GRANT EXECUTE ON FUNCTION public.can_store_wallet_cover(UUID, NUMERIC, NUMERIC, 
 GRANT EXECUTE ON FUNCTION public.approve_store_wallet_topup(UUID, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.reject_store_wallet_topup(UUID, TEXT) TO authenticated;
 
--- Trigger and storage bucket (from 20260510)
+-- Triggers (from 20260510) after latest function definitions
 DROP TRIGGER IF EXISTS trg_store_wallet_commission ON public.orders;
 CREATE TRIGGER trg_store_wallet_commission
 AFTER INSERT ON public.orders
@@ -5122,631 +5852,6 @@ DROP TRIGGER IF EXISTS trg_store_wallet_open_guard ON public.stores;
 CREATE TRIGGER trg_store_wallet_open_guard
 BEFORE UPDATE OF is_open ON public.stores
 FOR EACH ROW EXECUTE FUNCTION public.prevent_store_open_without_balance();
-
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-  'wallet_receipts',
-  'wallet_receipts',
-  false,
-  5242880,
-  ARRAY['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
-)
-ON CONFLICT (id) DO UPDATE SET
-  public = EXCLUDED.public,
-  file_size_limit = EXCLUDED.file_size_limit,
-  allowed_mime_types = EXCLUDED.allowed_mime_types;
-
-CREATE POLICY "wallet_receipts_owner_insert" ON storage.objects
-FOR INSERT TO authenticated
-WITH CHECK (
-  bucket_id = 'wallet_receipts'
-  AND (storage.foldername(name))[1] = auth.uid()::text
-  AND EXISTS (
-    SELECT 1 FROM public.stores s
-    WHERE s.merchant_id = auth.uid()
-      AND storage.objects.name LIKE '%/wallet_receipts/' || s.id::text || '/%'
-  )
-);
-
-DROP POLICY IF EXISTS "wallet_receipts_owner_select" ON storage.objects;
-CREATE POLICY "wallet_receipts_owner_select" ON storage.objects
-FOR SELECT TO authenticated
-USING (
-  bucket_id = 'wallet_receipts'
-  AND (
-    public.is_admin()
-    OR (
-      (storage.foldername(name))[1] = auth.uid()::text
-      AND EXISTS (
-        SELECT 1 FROM public.stores s
-        WHERE s.merchant_id = auth.uid()
-          AND storage.objects.name LIKE '%/wallet_receipts/' || s.id::text || '/%'
-      )
-    )
-  )
-);
-
-DROP POLICY IF EXISTS "wallet_receipts_owner_delete" ON storage.objects;
-CREATE POLICY "wallet_receipts_owner_delete" ON storage.objects
-FOR DELETE TO authenticated
-USING (
-  bucket_id = 'wallet_receipts'
-  AND (
-    public.is_admin()
-    OR (
-      (storage.foldername(name))[1] = auth.uid()::text
-      AND EXISTS (
-        SELECT 1 FROM public.stores s
-        WHERE s.merchant_id = auth.uid()
-          AND storage.objects.name LIKE '%/wallet_receipts/' || s.id::text || '/%'
-      )
-    )
-  )
-);
-
--- >>> Source: 20260513_delivery_company_wallet_topups.sql
--- Delivery company wallets, transactions and topups
-CREATE TABLE IF NOT EXISTS public.delivery_company_wallet_topups (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id UUID NOT NULL REFERENCES public.delivery_companies(id) ON DELETE CASCADE,
-  amount DECIMAL(12,2) NOT NULL CHECK (amount > 0),
-  receipt_path TEXT,
-  instapay_reference TEXT,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
-  requested_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  reviewed_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
-  reviewed_at TIMESTAMPTZ,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS public.delivery_company_wallets (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  company_id UUID NOT NULL REFERENCES public.delivery_companies(id) ON DELETE CASCADE,
-  balance DECIMAL(12,2) NOT NULL DEFAULT 0,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (company_id)
-);
-
-CREATE TABLE IF NOT EXISTS public.delivery_company_wallet_transactions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  wallet_id UUID NOT NULL REFERENCES public.delivery_company_wallets(id) ON DELETE CASCADE,
-  company_id UUID NOT NULL REFERENCES public.delivery_companies(id) ON DELETE CASCADE,
-  order_id UUID REFERENCES public.orders(id) ON DELETE SET NULL,
-  type TEXT NOT NULL CHECK (type IN ('deposit', 'commission', 'adjustment')),
-  amount DECIMAL(12,2) NOT NULL CHECK (amount >= 0),
-  balance_before DECIMAL(12,2) NOT NULL,
-  balance_after DECIMAL(12,2) NOT NULL,
-  notes TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_delivery_company_wallet_topups_company_id
-  ON public.delivery_company_wallet_topups(company_id);
-CREATE INDEX IF NOT EXISTS idx_delivery_company_wallet_topups_status
-  ON public.delivery_company_wallet_topups(status);
-CREATE INDEX IF NOT EXISTS idx_delivery_company_wallet_topups_created_at
-  ON public.delivery_company_wallet_topups(created_at);
-
-CREATE INDEX IF NOT EXISTS idx_delivery_company_wallets_company_id
-  ON public.delivery_company_wallets(company_id);
-CREATE INDEX IF NOT EXISTS idx_delivery_company_wallet_transactions_company_id
-  ON public.delivery_company_wallet_transactions(company_id);
-CREATE INDEX IF NOT EXISTS idx_delivery_company_wallet_transactions_order_id
-  ON public.delivery_company_wallet_transactions(order_id);
-CREATE INDEX IF NOT EXISTS idx_delivery_company_wallet_transactions_created_at
-  ON public.delivery_company_wallet_transactions(created_at);
-
-ALTER TABLE public.delivery_company_wallet_topups ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.delivery_company_wallets ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.delivery_company_wallet_transactions ENABLE ROW LEVEL SECURITY;
-
--- Policies and functions for delivery company wallets
-DROP POLICY IF EXISTS "Delivery company admins create wallet topups"
-  ON public.delivery_company_wallet_topups;
-CREATE POLICY "Delivery company admins create wallet topups"
-  ON public.delivery_company_wallet_topups
-  FOR INSERT TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1
-      FROM public.delivery_companies dc
-      JOIN public.profiles p ON p.id = auth.uid()
-      WHERE dc.id = delivery_company_wallet_topups.company_id
-        AND dc.admin_id = auth.uid()
-        AND p.role = 'delivery_company_admin'
-    )
-  );
-
--- (rest of delivery_company functions/policies are idempotent and included)
-CREATE OR REPLACE FUNCTION public.get_or_create_delivery_company_wallet(
-  p_company_id UUID
-)
-RETURNS public.delivery_company_wallets
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_wallet public.delivery_company_wallets%rowtype;
-BEGIN
-  IF NOT (
-    public.is_admin()
-    OR EXISTS (
-      SELECT 1
-      FROM public.delivery_companies dc
-      WHERE dc.id = p_company_id
-        AND dc.admin_id = auth.uid()
-    )
-  ) THEN
-    RAISE EXCEPTION 'NOT_AUTHORIZED';
-  END IF;
-
-  SELECT * INTO v_wallet
-  FROM public.delivery_company_wallets
-  WHERE company_id = p_company_id;
-
-  IF NOT FOUND THEN
-    INSERT INTO public.delivery_company_wallets (company_id, balance)
-    VALUES (p_company_id, 0)
-    RETURNING * INTO v_wallet;
-  END IF;
-
-  RETURN v_wallet;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.approve_delivery_company_wallet_topup(
-  p_topup_id UUID,
-  p_notes TEXT DEFAULT NULL
-)
-RETURNS JSON
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_topup RECORD;
-  v_wallet public.delivery_company_wallets%rowtype;
-  v_new_balance NUMERIC;
-BEGIN
-  IF NOT public.is_admin() THEN
-    RETURN json_build_object('success', false, 'error', 'not_allowed');
-  END IF;
-
-  SELECT * INTO v_topup
-  FROM public.delivery_company_wallet_topups
-  WHERE id = p_topup_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RETURN json_build_object('success', false, 'error', 'not_found');
-  END IF;
-
-  IF v_topup.status <> 'pending' THEN
-    RETURN json_build_object('success', false, 'error', 'already_processed');
-  END IF;
-
-  SELECT * INTO v_wallet
-  FROM public.delivery_company_wallets
-  WHERE company_id = v_topup.company_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    INSERT INTO public.delivery_company_wallets (company_id, balance)
-    VALUES (v_topup.company_id, 0)
-    RETURNING * INTO v_wallet;
-  END IF;
-
-  v_new_balance := v_wallet.balance + v_topup.amount;
-
-  UPDATE public.delivery_company_wallets
-  SET balance = v_new_balance,
-      updated_at = NOW()
-  WHERE id = v_wallet.id;
-
-  INSERT INTO public.delivery_company_wallet_transactions (
-    wallet_id,
-    company_id,
-    order_id,
-    type,
-    amount,
-    balance_before,
-    balance_after,
-    notes
-  ) VALUES (
-    v_wallet.id,
-    v_topup.company_id,
-    NULL,
-    'deposit',
-    v_topup.amount,
-    v_wallet.balance,
-    v_new_balance,
-    'Approved delivery office topup'
-  );
-
-  UPDATE public.delivery_company_wallet_topups
-  SET status = 'approved',
-      reviewed_by = auth.uid(),
-      reviewed_at = NOW(),
-      notes = COALESCE(p_notes, notes)
-  WHERE id = p_topup_id;
-
-  RETURN json_build_object('success', true);
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION public.get_or_create_delivery_company_wallet(UUID) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.approve_delivery_company_wallet_topup(UUID, TEXT) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.reject_delivery_company_wallet_topup(UUID, TEXT) TO authenticated;
-
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-  'delivery_wallet_receipts',
-  'delivery_wallet_receipts',
-  false,
-  5242880,
-  ARRAY['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
-)
-ON CONFLICT (id) DO UPDATE SET
-  public = EXCLUDED.public,
-  file_size_limit = EXCLUDED.file_size_limit,
-  allowed_mime_types = EXCLUDED.allowed_mime_types;
-
--- >>> Source: 20260513_store_wallet_policy_refresh.sql
--- Re-apply/refresh policies and storage policy rules for store wallets
-ALTER TABLE public.store_wallets ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.store_wallet_transactions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.store_wallet_topups ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Merchants view own store wallets" ON public.store_wallets;
-CREATE POLICY "Merchants view own store wallets" ON public.store_wallets
-FOR SELECT USING (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallets.store_id)
-);
-
-DROP POLICY IF EXISTS "Admins manage store wallets" ON public.store_wallets;
-CREATE POLICY "Admins manage store wallets" ON public.store_wallets
-FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
-
-DROP POLICY IF EXISTS "Merchants view own store wallet transactions" ON public.store_wallet_transactions;
-CREATE POLICY "Merchants view own store wallet transactions" ON public.store_wallet_transactions
-FOR SELECT USING (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallet_transactions.store_id)
-);
-
-DROP POLICY IF EXISTS "Admins manage store wallet transactions" ON public.store_wallet_transactions;
-CREATE POLICY "Admins manage store wallet transactions" ON public.store_wallet_transactions
-FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
-
-DROP POLICY IF EXISTS "Merchants can create topups" ON public.store_wallet_topups;
-CREATE POLICY "Merchants can create topups" ON public.store_wallet_topups
-FOR INSERT WITH CHECK (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallet_topups.store_id)
-);
-
-DROP POLICY IF EXISTS "Merchants view own topups" ON public.store_wallet_topups;
-CREATE POLICY "Merchants view own topups" ON public.store_wallet_topups
-FOR SELECT USING (
-  auth.uid() IN (SELECT merchant_id FROM public.stores WHERE stores.id = store_wallet_topups.store_id)
-);
-
-DROP POLICY IF EXISTS "Admins manage topups" ON public.store_wallet_topups;
-CREATE POLICY "Admins manage topups" ON public.store_wallet_topups
-FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
-
-DROP POLICY IF EXISTS "wallet_receipts_owner_insert" ON storage.objects;
-CREATE POLICY "wallet_receipts_owner_insert" ON storage.objects
-FOR INSERT TO authenticated
-WITH CHECK (
-  bucket_id = 'wallet_receipts'
-  AND (storage.foldername(name))[1] = auth.uid()::text
-  AND EXISTS (
-    SELECT 1 FROM public.stores s
-    WHERE s.merchant_id = auth.uid()
-      AND storage.objects.name LIKE '%/wallet_receipts/' || s.id::text || '/%'
-  )
-);
-
-DROP POLICY IF EXISTS "wallet_receipts_owner_select" ON storage.objects;
-CREATE POLICY "wallet_receipts_owner_select" ON storage.objects
-FOR SELECT TO authenticated
-USING (
-  bucket_id = 'wallet_receipts'
-  AND (
-    public.is_admin()
-    OR (
-      (storage.foldername(name))[1] = auth.uid()::text
-      AND EXISTS (
-        SELECT 1 FROM public.stores s
-        WHERE s.merchant_id = auth.uid()
-          AND storage.objects.name LIKE '%/wallet_receipts/' || s.id::text || '/%'
-      )
-    )
-  )
-);
-
-DROP POLICY IF EXISTS "wallet_receipts_owner_delete" ON storage.objects;
-CREATE POLICY "wallet_receipts_owner_delete" ON storage.objects
-FOR DELETE TO authenticated
-USING (
-  bucket_id = 'wallet_receipts'
-  AND (
-    public.is_admin()
-    OR (
-      (storage.foldername(name))[1] = auth.uid()::text
-      AND EXISTS (
-        SELECT 1 FROM public.stores s
-        WHERE s.merchant_id = auth.uid()
-          AND storage.objects.name LIKE '%/wallet_receipts/' || s.id::text || '/%'
-      )
-    )
-  )
-);
-
--- >>> Source: 20260513_store_wallet_auto_close_notifications.sql
--- Auto-close notifications and improved can_store_wallet_cover / apply_store_wallet_commission
-CREATE OR REPLACE FUNCTION public.notify_store_wallet_auto_closed(
-  p_store_id UUID,
-  p_balance NUMERIC,
-  p_source TEXT DEFAULT NULL
-)
-RETURNS VOID
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_store_name TEXT;
-BEGIN
-  SELECT name INTO v_store_name
-  FROM public.stores
-  WHERE id = p_store_id;
-
-  IF v_store_name IS NULL THEN
-    v_store_name := 'المتجر';
-  END IF;
-
-  INSERT INTO public.notifications (
-    store_id,
-    title,
-    body,
-    type,
-    target_role,
-    data,
-    created_at
-  ) VALUES (
-    p_store_id,
-    '⛔ تم إغلاق المتجر مؤقتاً',
-    'تم إغلاق المتجر تلقائياً بسبب رصيد المحفظة السالب. يرجى شحن المحفظة لإعادة فتحه. - المصدر: النظام',
-    'system',
-    'merchant',
-    jsonb_build_object(
-      'type', 'store_wallet_auto_closed',
-      'target_role', 'merchant',
-      'store_id', p_store_id,
-      'balance', p_balance,
-      'source', p_source,
-      'source_label', 'النظام',
-      'action_url', '/merchant/wallet'
-    ),
-    NOW()
-  );
-
-  INSERT INTO public.notifications (
-    user_id,
-    title,
-    body,
-    type,
-    target_role,
-    data,
-    created_at
-  )
-  SELECT
-    p.id,
-    '⛔ متجر تم إغلاقه تلقائياً',
-    'تم إغلاق متجر ' || v_store_name || ' تلقائياً بسبب رصيد محفظة سالب. - المصدر: النظام',
-    'system',
-    'admin',
-    jsonb_build_object(
-      'type', 'store_wallet_auto_closed',
-      'target_role', 'admin',
-      'store_id', p_store_id,
-      'store_name', v_store_name,
-      'balance', p_balance,
-      'source', p_source,
-      'source_label', 'النظام',
-      'action_url', '/admin/users'
-    ),
-    NOW()
-  FROM public.profiles p
-  WHERE p.role = 'admin';
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.can_store_wallet_cover(
-  p_store_id UUID,
-  p_total_amount NUMERIC,
-  p_delivery_fee NUMERIC DEFAULT 0,
-  p_tax_amount NUMERIC DEFAULT 0
-)
-RETURNS BOOLEAN
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_delivery_mode TEXT;
-  v_commission_base NUMERIC;
-  v_commission_amount NUMERIC;
-  v_balance NUMERIC;
-  v_is_open BOOLEAN;
-  v_is_active BOOLEAN;
-  v_rows INTEGER;
-BEGIN
-  SELECT delivery_mode, is_open, is_active
-  INTO v_delivery_mode, v_is_open, v_is_active
-  FROM public.stores
-  WHERE id = p_store_id;
-
-  IF v_delivery_mode IS NULL THEN
-    RETURN FALSE;
-  END IF;
-
-  IF v_is_open IS NOT TRUE OR v_is_active IS NOT TRUE THEN
-    RETURN FALSE;
-  END IF;
-
-  IF v_delivery_mode = 'store' THEN
-    v_commission_base := COALESCE(p_total_amount, 0);
-  ELSE
-    v_commission_base := COALESCE(p_total_amount, 0)
-      - COALESCE(p_delivery_fee, 0)
-      - COALESCE(p_tax_amount, 0);
-  END IF;
-
-  IF v_commission_base < 0 THEN
-    v_commission_base := 0;
-  END IF;
-
-  v_commission_amount := ROUND(v_commission_base * 0.05, 2);
-
-  IF v_commission_amount = 0 THEN
-    RETURN TRUE;
-  END IF;
-
-  SELECT balance INTO v_balance
-  FROM public.store_wallets
-  WHERE store_id = p_store_id;
-
-  IF v_balance IS NULL THEN
-    INSERT INTO public.store_wallets (store_id, balance)
-    VALUES (p_store_id, 0)
-    RETURNING balance INTO v_balance;
-  END IF;
-
-  IF v_balance < -10 THEN
-    UPDATE public.stores
-    SET is_open = FALSE,
-        updated_at = NOW()
-    WHERE id = p_store_id
-      AND is_open = TRUE;
-
-    GET DIAGNOSTICS v_rows = ROW_COUNT;
-    IF v_rows > 0 THEN
-      PERFORM public.notify_store_wallet_auto_closed(
-        p_store_id,
-        v_balance,
-        'precheck'
-      );
-    END IF;
-
-    RETURN FALSE;
-  END IF;
-
-  RETURN TRUE;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.apply_store_wallet_commission()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_delivery_mode TEXT;
-  v_commission_base NUMERIC;
-  v_commission_amount NUMERIC;
-  v_wallet public.store_wallets%rowtype;
-  v_new_balance NUMERIC;
-  v_rows INTEGER;
-BEGIN
-  SELECT delivery_mode INTO v_delivery_mode
-  FROM public.stores
-  WHERE id = NEW.store_id;
-
-  IF v_delivery_mode IS NULL THEN
-    RAISE EXCEPTION 'STORE_NOT_FOUND';
-  END IF;
-
-  IF v_delivery_mode = 'store' THEN
-    v_commission_base := COALESCE(NEW.total_amount, 0);
-  ELSE
-    v_commission_base := COALESCE(NEW.total_amount, 0)
-      - COALESCE(NEW.delivery_fee, 0)
-      - COALESCE(NEW.tax_amount, 0);
-  END IF;
-
-  IF v_commission_base < 0 THEN
-    v_commission_base := 0;
-  END IF;
-
-  v_commission_amount := ROUND(v_commission_base * 0.05, 2);
-
-  IF v_commission_amount = 0 THEN
-    RETURN NEW;
-  END IF;
-
-  SELECT * INTO v_wallet
-  FROM public.store_wallets
-  WHERE store_id = NEW.store_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    INSERT INTO public.store_wallets (store_id, balance)
-    VALUES (NEW.store_id, 0)
-    RETURNING * INTO v_wallet;
-  END IF;
-
-  v_new_balance := v_wallet.balance - v_commission_amount;
-
-  UPDATE public.store_wallets
-  SET balance = v_new_balance,
-      updated_at = NOW()
-  WHERE id = v_wallet.id;
-
-  INSERT INTO public.store_wallet_transactions (
-    wallet_id,
-    store_id,
-    order_id,
-    type,
-    amount,
-    balance_before,
-    balance_after,
-    notes
-  ) VALUES (
-    v_wallet.id,
-    NEW.store_id,
-    NEW.id,
-    'commission',
-    v_commission_amount,
-    v_wallet.balance,
-    v_new_balance,
-    'Auto commission on order creation'
-  );
-
-  IF v_new_balance < -10 THEN
-    UPDATE public.stores
-    SET is_open = FALSE,
-        updated_at = NOW()
-    WHERE id = NEW.store_id
-      AND is_open = TRUE;
-
-    GET DIAGNOSTICS v_rows = ROW_COUNT;
-    IF v_rows > 0 THEN
-      PERFORM public.notify_store_wallet_auto_closed(
-        NEW.store_id,
-        v_new_balance,
-        'commission'
-      );
-    END IF;
-  END IF;
-
-  RETURN NEW;
-END;
-$$;
 
 -- >>> Source: 20260515_admin_wallet_adjustments.sql
 -- Admin wallet adjustments and constraints

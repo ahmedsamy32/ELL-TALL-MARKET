@@ -25,6 +25,7 @@ import 'manage_delivery_company_screen.dart';
 import 'analytics_screen.dart';
 import 'dynamic_ui_builder_screen.dart';
 import 'manage_banners_screen.dart';
+import 'app_updates_screen.dart';
 
 /// Admin Dashboard with responsive design for mobile, tablet, and web
 class AdminDashboardScreen extends StatefulWidget {
@@ -49,6 +50,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     const CaptainReportsScreen(),
     const ManageDeliveryCompanyScreen(),
     const AnalyticsScreen(),
+    const AppUpdatesScreen(),
     const AppSettingsScreen(),
     const DynamicUIBuilderScreen(),
     const ManageBannersScreen(),
@@ -65,6 +67,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     (Icons.assessment_rounded, 'تقارير الكباتن'),
     (Icons.local_shipping_rounded, 'إدارة المكاتب'),
     (Icons.analytics_rounded, 'الإحصائيات'),
+    (Icons.system_update_rounded, 'إدارة التحديثات'),
     (Icons.settings_rounded, 'الإعدادات'),
     (Icons.design_services_rounded, 'منشئ الواجهات'),
     (Icons.image_rounded, 'البانرات'),

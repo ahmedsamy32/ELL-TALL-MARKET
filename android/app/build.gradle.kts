@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("com.google.gms.google-services") // يجب أن يأتي بعد com.android.application
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -17,6 +16,7 @@ if (keystorePropertiesFile.exists()) {
 android {
     namespace = "com.elltall.market"
     compileSdk = 35
+    ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.elltall.market"
@@ -68,16 +68,18 @@ android {
         isCoreLibraryDesugaringEnabled = true
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     applicationVariants.all {
         val variant = this
         variant.outputs.all {
             val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
             output.outputFileName = "EllTallMarket-v${variant.versionName}.apk"
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
