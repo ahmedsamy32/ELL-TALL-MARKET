@@ -52,7 +52,7 @@ class SupabaseConfig {
         try {
           await Supabase.initialize(
             url: url,
-            anonKey: anonKey,
+            publishableKey: anonKey,
             debug: kDebugMode,
 
             // خيارات Auth المتقدمة

@@ -562,7 +562,7 @@ class SupabaseProvider with ChangeNotifier {
         OAuthProvider.google,
         // ✅ الويب يستخدم URL حقيقي، الموبايل يستخدم Deep Link
         redirectTo: kIsWeb
-            ? '${Uri.base.origin}/auth/callback'
+            ? '${Uri.base.origin}/market/auth/callback'
             : 'elltallmarket://auth/callback',
         // ✅ الويب يفتح popup في نفس النافذة، الموبايل يفتح متصفح خارجي
         authScreenLaunchMode: kIsWeb

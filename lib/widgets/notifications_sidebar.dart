@@ -17,6 +17,61 @@ class NotificationsSidebar extends StatefulWidget {
 }
 
 class _NotificationsSidebarState extends State<NotificationsSidebar> {
+  bool _isSelectionMode = false;
+  final Set<String> _selectedIds = {};
+
+  void _toggleSelection(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+        if (_selectedIds.isEmpty) {
+          _isSelectionMode = false;
+        }
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  void _confirmDeleteSelected(BuildContext context, NotificationProvider provider) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الإشعارات المحددة'),
+        content: Text('هل أنت متأكد من حذف ${_selectedIds.length} إشعار؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final idsToDelete = _selectedIds.toList();
+              setState(() {
+                _isSelectionMode = false;
+                _selectedIds.clear();
+              });
+              await provider.deleteNotifications(idsToDelete);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('تم حذف الإشعارات المحددة'),
+                    backgroundColor: Colors.red,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            child: const Text(
+              'حذف',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
   @override
   Widget build(BuildContext context) {
     return Consumer<NotificationProvider>(
@@ -140,17 +195,84 @@ class _NotificationsSidebarState extends State<NotificationsSidebar> {
                     ? const Center(child: CircularProgressIndicator())
                     : notifications.isEmpty
                     ? _buildEmptyState()
-                    : ListView.builder(
-                        physics: const BouncingScrollPhysics(),
-                        padding: const EdgeInsets.only(top: 8, bottom: 8),
-                        itemCount: notifications.length,
-                        itemBuilder: (context, index) {
-                          final notification = notifications[index];
-                          return _buildNotificationTile(
-                            notification,
-                            notificationProvider,
-                          );
-                        },
+                    : Column(
+                        children: [
+                          if (_isSelectionMode)
+                            Container(
+                              color: Theme.of(context).primaryColor.withValues(alpha: 0.08),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                              child: Row(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.close),
+                                    onPressed: () {
+                                      setState(() {
+                                        _isSelectionMode = false;
+                                        _selectedIds.clear();
+                                      });
+                                    },
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'تم تحديد ${_selectedIds.length}',
+                                    style: const TextStyle(fontWeight: FontWeight.bold),
+                                  ),
+                                  const Spacer(),
+                                  IconButton(
+                                    icon: const Icon(Icons.select_all),
+                                    tooltip: 'تحديد الكل',
+                                    onPressed: () {
+                                      setState(() {
+                                        _selectedIds.addAll(notifications.map((n) => n.id));
+                                      });
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.mark_email_read),
+                                    tooltip: 'تحديد كمقروء',
+                                    onPressed: () async {
+                                      for (final id in _selectedIds) {
+                                        await notificationProvider.markAsRead(id);
+                                      }
+                                      setState(() {
+                                        _isSelectionMode = false;
+                                        _selectedIds.clear();
+                                      });
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('تم تحديد الإشعارات كمقروءة'),
+                                            backgroundColor: Colors.green,
+                                          ),
+                                        );
+                                      }
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                    tooltip: 'حذف المحدد',
+                                    onPressed: () {
+                                      _confirmDeleteSelected(context, notificationProvider);
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          Expanded(
+                            child: ListView.builder(
+                              physics: const BouncingScrollPhysics(),
+                              padding: const EdgeInsets.only(top: 8, bottom: 8),
+                              itemCount: notifications.length,
+                              itemBuilder: (context, index) {
+                                final notification = notifications[index];
+                                return _buildNotificationTile(
+                                  notification,
+                                  notificationProvider,
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ),
               ),
             ],
@@ -167,71 +289,95 @@ class _NotificationsSidebarState extends State<NotificationsSidebar> {
   ) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
+      child: Material(
         color: notification.isRead ? Colors.grey.shade50 : Colors.blue.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: notification.isRead
-              ? Colors.grey.shade200
-              : Colors.blue.shade200,
-          width: 1,
-        ),
-      ),
-      child: ListTile(
-        leading: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: _getNotificationColor(
-              notification.type ?? NotificationType.system,
-            ).withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Icon(
-            _getNotificationIcon(notification.type ?? NotificationType.system),
-            color: _getNotificationColor(
-              notification.type ?? NotificationType.system,
-            ),
-            size: 24,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(
+            color: notification.isRead
+                ? Colors.grey.shade200
+                : Colors.blue.shade200,
+            width: 1,
           ),
         ),
-        title: Text(
-          notification.title,
-          style: TextStyle(
-            fontWeight: notification.isRead
-                ? FontWeight.normal
-                : FontWeight.bold,
-            fontSize: 14,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              notification.body,
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              _formatTime(notification.createdAt),
-              style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
-            ),
-          ],
-        ),
-        trailing: notification.isRead
-            ? null
-            : Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: Colors.blue,
-                  shape: BoxShape.circle,
+        child: ListTile(
+          leading: _isSelectionMode
+              ? Checkbox(
+                  value: _selectedIds.contains(notification.id),
+                  onChanged: (val) {
+                    _toggleSelection(notification.id);
+                  },
+                )
+              : Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: _getNotificationColor(
+                      notification.type ?? NotificationType.system,
+                    ).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(
+                    _getNotificationIcon(notification.type ?? NotificationType.system),
+                    color: _getNotificationColor(
+                      notification.type ?? NotificationType.system,
+                    ),
+                    size: 24,
+                  ),
                 ),
+          title: Text(
+            notification.title,
+            style: TextStyle(
+              fontWeight: notification.isRead
+                  ? FontWeight.normal
+                  : FontWeight.bold,
+              fontSize: 14,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                notification.body,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-        onTap: () => _handleNotificationTap(notification, provider),
+              const SizedBox(height: 4),
+              Text(
+                _formatTime(notification.createdAt),
+                style: TextStyle(fontSize: 10, color: Colors.grey.shade500),
+              ),
+            ],
+          ),
+          trailing: notification.isRead
+              ? null
+              : Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    color: Colors.blue,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+          onTap: () {
+            if (_isSelectionMode) {
+              _toggleSelection(notification.id);
+            } else {
+              _handleNotificationTap(notification, provider);
+            }
+          },
+          onLongPress: () {
+            if (!_isSelectionMode) {
+              setState(() {
+                _isSelectionMode = true;
+                _selectedIds.add(notification.id);
+              });
+            }
+          },
+        ),
       ),
     );
   }

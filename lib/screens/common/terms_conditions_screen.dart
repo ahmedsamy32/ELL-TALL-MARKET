@@ -11,261 +11,55 @@ class TermsConditionsScreen extends StatelessWidget {
 
     return Directionality(
       textDirection: TextDirection.rtl,
-      child: Scaffold(
-        backgroundColor: colorScheme.surface,
-        body: ResponsiveCenter(
-          maxWidth: 700,
-          child: CustomScrollView(
+      child: DefaultTabController(
+        length: 3,
+        child: Scaffold(
+          backgroundColor: colorScheme.surface,
+          appBar: AppBar(
+            backgroundColor: AppColors.primary,
+            elevation: 2,
+            shadowColor: Colors.black.withValues(alpha: 0.1),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back, color: Colors.white),
+              onPressed: () => Navigator.pop(context),
+            ),
+            title: const Text(
+              'الشروط والأحكام',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontFamily: 'Cairo',
+              ),
+            ),
+            centerTitle: true,
+            bottom: TabBar(
+              indicatorColor: Colors.white,
+              indicatorWeight: 3,
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white.withValues(alpha: 0.7),
+              labelStyle: const TextStyle(
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+              unselectedLabelStyle: const TextStyle(
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.normal,
+                fontSize: 13,
+              ),
+              tabs: const [
+                Tab(text: 'العملاء والمستخدمين'),
+                Tab(text: 'التجار والمتاجر'),
+                Tab(text: 'مكاتب الدليفري'),
+              ],
+            ),
+          ),
+          body: TabBarView(
             physics: const BouncingScrollPhysics(),
-            slivers: [
-              // ── App Bar ──
-              SliverAppBar(
-                expandedHeight: 200,
-                pinned: true,
-                stretch: true,
-                backgroundColor: AppColors.primary,
-                leading: IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                flexibleSpace: FlexibleSpaceBar(
-                  centerTitle: true,
-                  background: Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [AppColors.primary, Color(0xFF1A4FA0)],
-                      ),
-                    ),
-                    child: SafeArea(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const SizedBox(height: 10),
-                          Container(
-                            width: 64,
-                            height: 64,
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                            child: const Icon(
-                              Icons.gavel_rounded,
-                              color: Colors.white,
-                              size: 34,
-                            ),
-                          ),
-                          const SizedBox(height: 14),
-                          const Text(
-                            'الشروط والأحكام',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              fontFamily: 'Cairo',
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'آخر تحديث: 1 فبراير 2026',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Colors.white.withValues(alpha: 0.8),
-                              fontFamily: 'Cairo',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
-              // ── Body Content ──
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Important notice
-                      _buildNoticeCard(
-                        'باستخدامك لتطبيق "سوق التل" فإنك توافق على الالتزام بهذه الشروط والأحكام. يرجى قراءتها بعناية قبل استخدام خدماتنا.',
-                      ),
-                      const SizedBox(height: 20),
-
-                      _buildTermSection(
-                        context,
-                        number: '1',
-                        title: 'التعريفات',
-                        content:
-                            'في هذه الشروط والأحكام، تشير المصطلحات التالية إلى:',
-                        bulletPoints: [
-                          '"التطبيق": تطبيق سوق التل للهواتف المحمولة.',
-                          '"الخدمة": جميع الخدمات المقدمة عبر التطبيق بما في ذلك البيع والتوصيل.',
-                          '"المستخدم": أي شخص يقوم بتسجيل حساب واستخدام التطبيق.',
-                          '"التاجر": أي بائع مسجل يعرض منتجاته عبر التطبيق.',
-                          '"الكابتن": مسؤول التوصيل المعتمد لدينا.',
-                          '"نحن" أو "الشركة": إدارة تطبيق سوق التل.',
-                        ],
-                      ),
-
-                      _buildTermSection(
-                        context,
-                        number: '2',
-                        title: 'شروط الاستخدام',
-                        content: '',
-                        bulletPoints: [
-                          'يجب أن يكون عمرك 18 عامًا على الأقل لاستخدام التطبيق.',
-                          'يجب تقديم معلومات صحيحة ودقيقة عند التسجيل.',
-                          'أنت مسؤول عن الحفاظ على سرية بيانات حسابك.',
-                          'يُحظر استخدام التطبيق لأي أغراض غير قانونية.',
-                          'يُحظر إنشاء أكثر من حساب لنفس الشخص.',
-                          'يجب الالتزام بالقوانين المحلية السارية عند استخدام الخدمة.',
-                        ],
-                      ),
-
-                      _buildTermSection(
-                        context,
-                        number: '3',
-                        title: 'الطلبات والشراء',
-                        content: '',
-                        bulletPoints: [
-                          'جميع الأسعار المعروضة بالجنيه المصري وتشمل الضريبة (إن وجدت).',
-                          'يحق لنا رفض أو إلغاء أي طلب لأسباب مشروعة.',
-                          'يتم تأكيد الطلب بعد التحقق من توفر المنتج وصحة البيانات.',
-                          'قد تختلف الأسعار وتوفر المنتجات دون إشعار مسبق.',
-                          'رسوم التوصيل تُحسب حسب المنطقة وحجم الطلب ويتم عرضها قبل التأكيد.',
-                        ],
-                      ),
-
-                      _buildTermSection(
-                        context,
-                        number: '4',
-                        title: 'التوصيل',
-                        content: '',
-                        bulletPoints: [
-                          'نسعى لتوصيل الطلبات في الوقت المحدد، لكن قد تحدث تأخيرات بسبب ظروف خارجة عن إرادتنا.',
-                          'يجب أن يكون عنوان التوصيل ضمن نطاق الخدمة.',
-                          'يجب تواجد المستلم في العنوان المحدد وقت التوصيل.',
-                          'في حال عدم تواجد المستلم، سيتم محاولة التواصل وقد يتم إرجاع الطلب.',
-                          'لا نتحمل مسؤولية التأخير الناتج عن بيانات توصيل خاطئة.',
-                        ],
-                      ),
-
-                      _buildTermSection(
-                        context,
-                        number: '5',
-                        title: 'المدفوعات',
-                        content: '',
-                        bulletPoints: [
-                          'نقبل الدفع عند الاستلام والدفع الإلكتروني.',
-                          'جميع المعاملات المالية مشفرة وآمنة.',
-                          'في حال فشل الدفع الإلكتروني، قد يتم إلغاء الطلب تلقائيًا.',
-                          'لا نحتفظ ببيانات بطاقات الدفع الخاصة بك على خوادمنا.',
-                        ],
-                      ),
-
-                      _buildTermSection(
-                        context,
-                        number: '6',
-                        title: 'حقوق الملكية الفكرية',
-                        content:
-                            'جميع المحتويات المعروضة في التطبيق بما في ذلك النصوص والصور والشعارات والتصميمات هي ملكية حصرية لسوق التل أو مرخصة لنا. يُحظر نسخ أو إعادة إنتاج أو توزيع أي محتوى دون إذن كتابي مسبق.',
-                      ),
-
-                      _buildTermSection(
-                        context,
-                        number: '7',
-                        title: 'المسؤولية والضمانات',
-                        content: '',
-                        bulletPoints: [
-                          'نسعى لضمان دقة المعلومات المعروضة لكن لا نضمن خلوها من الأخطاء.',
-                          'التاجر مسؤول عن جودة المنتجات المعروضة ومطابقتها للوصف.',
-                          'لا نتحمل مسؤولية الأضرار غير المباشرة الناتجة عن استخدام الخدمة.',
-                          'نحتفظ بالحق في تعليق أو إنهاء حسابك في حال مخالفة الشروط.',
-                        ],
-                      ),
-
-                      _buildTermSection(
-                        context,
-                        number: '8',
-                        title: 'الكوبونات والعروض',
-                        content: '',
-                        bulletPoints: [
-                          'الكوبونات لها تاريخ صلاحية محدد ولا يمكن تمديده.',
-                          'لا يمكن الجمع بين أكثر من كوبون في طلب واحد إلا إذا ذُكر خلاف ذلك.',
-                          'يحق لنا إلغاء أي كوبون أو عرض في أي وقت.',
-                          'الكوبونات غير قابلة للتحويل أو الاستبدال النقدي.',
-                        ],
-                      ),
-
-                      _buildTermSection(
-                        context,
-                        number: '9',
-                        title: 'تعديل الشروط والأحكام',
-                        content:
-                            'نحتفظ بالحق في تعديل هذه الشروط والأحكام في أي وقت. سيتم إخطارك بأي تغييرات جوهرية عبر التطبيق أو البريد الإلكتروني. استمرارك في استخدام الخدمة بعد التعديل يعني موافقتك على الشروط الجديدة.',
-                      ),
-
-                      _buildTermSection(
-                        context,
-                        number: '10',
-                        title: 'القانون الحاكم',
-                        content:
-                            'تخضع هذه الشروط والأحكام لقوانين جمهورية مصر العربية. أي نزاع ينشأ عن استخدام الخدمة يخضع لاختصاص المحاكم المصرية المختصة.',
-                      ),
-
-                      _buildTermSection(
-                        context,
-                        number: '11',
-                        title: 'التواصل والاستفسارات',
-                        content:
-                            'لأي أسئلة أو استفسارات حول هذه الشروط والأحكام:\n\n📧 البريد الإلكتروني: legal@elltall.com\n📞 الهاتف: +20 123 456 7890\n🏢 العنوان: التل الكبير - مصر',
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // Acceptance note
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: AppColors.accent.withValues(alpha: 0.08),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: AppColors.accent.withValues(alpha: 0.3),
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            const Icon(
-                              Icons.check_circle_outline_rounded,
-                              color: AppColors.accent,
-                              size: 40,
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              'باستخدامك للتطبيق فإنك تقر بقراءة وفهم وموافقتك على جميع الشروط والأحكام المذكورة أعلاه.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Colors.grey[700],
-                                fontFamily: 'Cairo',
-                                height: 1.6,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 32),
-                    ],
-                  ),
-                ),
-              ),
+            children: [
+              _buildCustomersTab(context),
+              _buildMerchantsTab(context),
+              _buildLogisticsTab(context),
             ],
           ),
         ),
@@ -273,21 +67,243 @@ class TermsConditionsScreen extends StatelessWidget {
     );
   }
 
+  // ── Customer Tab (Document 2) ──
+  Widget _buildCustomersTab(BuildContext context) {
+    return ResponsiveCenter(
+      maxWidth: 700,
+      child: ListView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          _buildDocumentHeader(
+            title: 'وثيقة رقم (2)',
+            subtitle: 'الشروط والأحكام الخاصة بالعملاء والمستخدمين',
+            icon: Icons.person_outline_rounded,
+          ),
+          const SizedBox(height: 16),
+          _buildNoticeCard(
+            'تطبيق "سوق التل" هو منصة إلكترونية وسيطة تربط العميل بالمتاجر المتنوعة ومقدمي خدمات التوصيل داخل مصر.',
+            icon: Icons.info_outline_rounded,
+          ),
+          const SizedBox(height: 16),
+          _buildArticleCard(
+            context,
+            articleNumber: '1',
+            title: 'حساب المستخدم وبيانات التوصيل',
+            paragraphs: [
+              'يلتزم العميل بإنشاء حساب حقيقي وتقديم بيانات صحيحة ودقيقة تشمل (الاسم، رقم الهاتف الفعّال، وعنوان التوصيل بالتفصيل).',
+              'يتحمل العميل مسؤولية أي تأخير أو فشل في تسليم الأوردر نتيجة خطأ في البيانات.',
+            ],
+          ),
+          _buildArticleCard(
+            context,
+            articleNumber: '2',
+            title: 'سياسة طلب وإلغاء الأوردرات',
+            paragraphs: [
+              'يحق للعميل إلغاء الطلب مجاناً وبدون أي رسوم طالما لم يقم المتجر بقبوله والبدء في تجهيزه.',
+              'في حال إلغاء العميل للأوردر لأسباب شخصية بعد قبول المتجر له وتحرك مندوب الدليفري (الطيار) بالشحنة فعلياً، يحق للتطبيق فرض رسوم توصيل ثابتة (حق مشوار للطيار) تُخصم من حساب العميل أو تُضاف إجبارياً على قيمته الإجمالية في أوردره القادم.',
+            ],
+          ),
+          _buildArticleCard(
+            context,
+            articleNumber: '3',
+            title: 'المرتجعات والمنتجات الطازجة',
+            paragraphs: [
+              'نظراً للطبيعة الاستهلاككية الخاصة بالمواد الغذائية والمنتجات الطازجة (مثل الخضروات، الفواكه، اللحوم، والمأكولات الساخنة)، لا يحق للعميل طلب إرجاعها أو استبدالها بعد مغادرة المندوب إلا في حال وجود عيب واضح في الجودة أو تلف ظاهر يتم إثباته ومراجعته مع المندوب فوراً وقت التسليم وقبل الاستلام.',
+              'بالنسبة للمنتجات غير الاستهلاكية (كالملابس أو الأدوات المنزلية)، تخضع لسياسة الاستبدال والاسترجاع المحددة من قِبل المتجر البائع ووفقاً لقانون حماية المستهلك المصري.',
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildAcceptanceFooter(),
+        ],
+      ),
+    );
+  }
+
+  // ── Merchant Tab (Document 1) ──
+  Widget _buildMerchantsTab(BuildContext context) {
+    return ResponsiveCenter(
+      maxWidth: 700,
+      child: ListView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          _buildDocumentHeader(
+            title: 'وثيقة رقم (1)',
+            subtitle: 'الشروط والأحكام الخاصة بالتجار والمتاجر الشريكة',
+            icon: Icons.storefront_outlined,
+          ),
+          const SizedBox(height: 16),
+          _buildArticleCard(
+            context,
+            articleNumber: '1',
+            title: 'طبيعة الخدمة ونظام العمل المالي',
+            paragraphs: [
+              'يعتمد تطبيق "سوق التل" في جمهورية مصر العربية على نظام الباقات مسبقة الدفع (Prepaid Wallet). يلتزم التاجر بشحن محفظته الإلكترونية مسبقاً بقيمة الباقة المتفق عليها لتفعيل ظهور متجره على المنصة واستقبال طلبات العملاء.',
+              'تنتهي صلاحية الباقة المشترك بها تلقائياً بمرور 30 (ثلاثين) يوماً من تاريخ التفعيل، أو بنفاذ عدد الأوردرات المحدد في الباقة (أيهما أقرب).',
+              'في حال نفاذ عدد أوردرات الباقة قبل نهاية مدة الصلاحية (30 يوماً)، يحق للتاجر الاستمرار في استقبال الطلبات بنظام "الأوردر الإضافي" مقابل رسوم ثابتة ومقطوعة تتراوح بين 6 إلى 7 جنيهات عن كل أوردر إضافي، وتُخصم تلقائياً من رصيد محفظته.',
+              'يوضع حد أقصى (Cap Limit) لعدد الأوردرات الإضافية المسموح بها؛ وعند تجاوزه، يتم تعليق حساب المتجر إلكترونياً ولا يعاد تفعيله إلا بعد تجديد الباقة أو الترقية للباقة الأعلى.',
+              'يحق لإدارة تطبيق "سوق التل" حظر وظهور المتجر فوراً (Hard Block) في حال وصول رصيد محفظة التاجر إلى (صفر جنيه).',
+            ],
+          ),
+          _buildArticleCard(
+            context,
+            articleNumber: '2',
+            title: 'سياسة إلغاء الطلبات ومكافحة التحايل التجاري',
+            paragraphs: [
+              'يُحظر تماماً على التاجر الشريك تحويل الطلبات الواردة إليه عبر منصة "سوق التل" إلى معاملات خارجية مباشرة مع العميل للتهرب من الرسوم؛ وإذا ثبت ذلك، يحق لإدارة التطبيق حظر حساب المتجر نهائياً واتخاذ الإجراءات القانونية لحفظ حقوقها.',
+              'تخضع نسبة إلغاء الأوردرات (Cancellation Rate) من قِبل المتجر للرقابة المستمرة؛ وفي حال تكرار إلغاء الطلبات المقبولة بدون أسباب قهرية تتجاوز النسبة التشغيلية المقبولة، يحق للتطبيق توقيف الحساب للمراجعة.',
+              'بمجرد قبول الطلب من قِبل مندوب الدليفري (الطيار) وتحديث حالته على النظام إلى "تم الاستلام من المتجر"، تسقط صلاحية الإلغاء تماماً من لوحة تحكم التاجر، ويُعد الأوردر نافذاً وتُستحق عنه الرسوم.',
+            ],
+          ),
+          _buildArticleCard(
+            context,
+            articleNumber: '3',
+            title: 'أمانة التسعير وجودة المنتجات',
+            paragraphs: [
+              'يلتزم التاجر بتقديم أسعار حقيقية ومطابقة للسياسة المتفق عليها مع المنصة، ويتحمل وحده مسؤولية أي تضليل في الأسعار قد يضر بالسمعة التجارية للتطبيق.',
+              'التاجر هو المسؤول القانوني والجنائي والمدني الأول والوايد عن جودة وصلاحية وسلامة المنتجات المعروضة (خاصة المواد الغذائية والمنتجات الطازجة) أمام الجهات الرقابية الحكومية وأمام المستهلك، دون أدنى مسؤولية على التطبيق.',
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildAcceptanceFooter(),
+        ],
+      ),
+    );
+  }
+
+  // ── Logistics Tab (Document 3) ──
+  Widget _buildLogisticsTab(BuildContext context) {
+    return ResponsiveCenter(
+      maxWidth: 700,
+      child: ListView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        children: [
+          _buildDocumentHeader(
+            title: 'وثيقة رقم (3)',
+            subtitle: 'اتفاقية شروط تقديم الخدمات اللوجستية (مكاتب الدليفري)',
+            icon: Icons.local_shipping_outlined,
+          ),
+          const SizedBox(height: 16),
+          _buildArticleCard(
+            context,
+            articleNumber: '1',
+            title: 'طبيعة التعاقد ونفي الشراكة التجارية',
+            paragraphs: [
+              'يعتبر هذا الاتفاق عقد "تقديم خدمات لوجستية وتوصيل عند الطلب" (On-Demand Delivery)، والعلاقة بين تطبيق "سوق التل" ومكتب الدليفري (المشار إليه بـ "مقدم الخدمة") هي علاقة بين طرفين مستقلين تماماً (عميل ومُورّد خدمة).',
+              'يقر مكتب الدليفري صراحةً بأنه لا يترتب على هذا التعاقد أو تنفيذ الأوردرات أي حق له أو لتابعيه في المطالبة بأي شراكة تجارية، أو حصة، أو أسهم، أو نسبة من أرباح التطبيق أو ملكيته الفكرية.',
+              'يحاسب مكتب الدليفري بناءً على رسوم توصيل ثابتة ومقطوعة متفق عليها عن كل أوردر ناجح يتم تسليمه (وفقاً لجدول المناطق والزونات المرفق)، وليس له أي علاقة بقيمة الفاتورة أو حجم مبيعات المنصة.',
+            ],
+          ),
+          _buildArticleCard(
+            context,
+            articleNumber: '2',
+            title: 'مستوى الخدمة والالتزام بالتوقيت (SLA)',
+            paragraphs: [
+              'يلتزم مكتب الدليفري بنظام "عند الطلب"، ويتعهد بتوجيه أقرب طيار تابع له إلى مقر المتجر المعني خلال مدة زمنية قياسية لا تتجاوز (15 إلى 20 دقيقة) كحد أقصى من وقت إرسال الأوردر عبر السيستم.',
+              'يتعهد مقدم الخدمة بتوفير الكثافة العددية اللازمة من الطيارين لتغطية طلبات التطبيق في أوقات الذروة، والمواسم، والأعياد الرسمية، ولا يحق له الاعتذار عن استقبال الطلبات طالما كانت في مواعيد العمل المتفق عليها.',
+            ],
+          ),
+          _buildArticleCard(
+            context,
+            articleNumber: '3',
+            title: 'المسؤولية القانونية والعمالية والمدنية',
+            paragraphs: [
+              'يعتبر مكتب الدليفري هو المسؤول القانوني والعمالي والفعلي الأول والوحيد عن جميع السائقين والطيارين التابعين له، ويتحمل وحده سداد أجورهم، وتأميناتهم، وضمان استخراج تراخيص قيادتهم وتراخيص مركباتهم وفقاً لقانون المرور المصري، دون أي مسؤولية تبعية على التطبيق.',
+            ],
+          ),
+          _buildArticleCard(
+            context,
+            articleNumber: '4',
+            title: 'سياسة إلغاء الأوردرات أثناء الرحلة',
+            paragraphs: [
+              'في حال إلغاء الأوردر من قِبل العميل لأي سبب خارج عن إرادة الطيار بعد قيام الطيار باستلام الشحنة والتحرك بها فعلياً، يلتزم التطبيق بدفع قيمة ماليّة رمزية محددة (حق مشوار) لمكتب الدليفري، شريطة أن يلتزم الطيار بإعادة المنتجات بحالتها الأصلية السليمة والطازجة إلى المتجر فوراً ودون أي تأخير.',
+            ],
+          ),
+          _buildArticleCard(
+            context,
+            articleNumber: '5',
+            title: 'سرية البيانات والأمانة التجارية (Non-Circumvention)',
+            paragraphs: [
+              'يتعهد مكتب الدليفري وكافة الطيارين التابعين له بالحفاظ على السرية التامة لبيانات العملاء والتجار (الأسماء، الهواتف، العناوين) التي تظهر لهم عبر التطبيق، ويُحظر تماماً استغلالها أو تخزينها أو استخدامها لمحاولة التعامل معهم بشكل شخصي أو خارجي بعيداً عن سيستم "سوق التل".',
+              'أي خرق لهذا البند يؤدي إلى فسخ التعاقد فوراً مع حق التطبيق في المطالبة بالتعويضات القانونية.',
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildAcceptanceFooter(),
+        ],
+      ),
+    );
+  }
+
+  // ── Document Header ──
+  Widget _buildDocumentHeader({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppColors.primary, Color(0xFF1B4E9B)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.2),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: Colors.white, size: 48),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+              fontFamily: 'Cairo',
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.white.withValues(alpha: 0.9),
+              fontFamily: 'Cairo',
+              height: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Notice Card ──
-  Widget _buildNoticeCard(String text) {
+  Widget _buildNoticeCard(String text, {required IconData icon}) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.warning.withValues(alpha: 0.08),
+        color: AppColors.primary.withValues(alpha: 0.05),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(
-            Icons.warning_amber_rounded,
-            color: AppColors.warning,
+          Icon(
+            icon,
+            color: AppColors.primary,
             size: 24,
           ),
           const SizedBox(width: 12),
@@ -308,105 +324,115 @@ class TermsConditionsScreen extends StatelessWidget {
     );
   }
 
-  // ── Term Section ──
-  Widget _buildTermSection(
+  // ── Article Card ──
+  Widget _buildArticleCard(
     BuildContext context, {
-    required String number,
+    required String articleNumber,
     required String title,
-    required String content,
-    List<String>? bulletPoints,
+    required List<String> paragraphs,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
           color: colorScheme.outlineVariant.withValues(alpha: 0.3),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Title
-          Row(
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Center(
-                  child: Text(
-                    number,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
-                      fontFamily: 'Cairo',
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
-                    fontFamily: 'Cairo',
-                  ),
-                ),
-              ),
-            ],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 6,
+            offset: const Offset(0, 3),
           ),
-
-          if (content.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Text(
-              content,
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey[700],
-                fontFamily: 'Cairo',
-                height: 1.7,
+        ],
+      ),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Colored side bar
+            Container(
+              width: 5,
+              decoration: const BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.only(
+                  topRight: Radius.circular(14),
+                  bottomRight: Radius.circular(14),
+                ),
               ),
             ),
-          ],
-
-          // Bullet Points
-          if (bulletPoints != null) ...[
-            const SizedBox(height: 10),
-            ...bulletPoints.map(
-              (point) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      margin: const EdgeInsets.only(top: 8),
-                      width: 6,
-                      height: 6,
-                      decoration: const BoxDecoration(
-                        color: AppColors.primary,
-                        shape: BoxShape.circle,
-                      ),
+                    // Article Header
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'مادة ($articleNumber)',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primary,
+                              fontFamily: 'Cairo',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              fontFamily: 'Cairo',
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        point,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[700],
-                          fontFamily: 'Cairo',
-                          height: 1.6,
+                    const SizedBox(height: 12),
+                    // Article paragraphs
+                    ...paragraphs.map(
+                      (paragraph) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              margin: const EdgeInsets.only(top: 8),
+                              width: 6,
+                              height: 6,
+                              decoration: const BoxDecoration(
+                                color: AppColors.primary,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                paragraph,
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[700],
+                                  fontFamily: 'Cairo',
+                                  height: 1.6,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -415,6 +441,43 @@ class TermsConditionsScreen extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // ── Acceptance Footer ──
+  Widget _buildAcceptanceFooter() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      margin: const EdgeInsets.only(bottom: 24),
+      decoration: BoxDecoration(
+        color: AppColors.accent.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppColors.accent.withValues(alpha: 0.3),
+        ),
+      ),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.check_circle_outline_rounded,
+            color: AppColors.accent,
+            size: 40,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'باستخدامك للتطبيق فإنك تقر بقراءة وفهم وموافقتك على جميع الشروط والأحكام المذكورة أعلاه.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey[800],
+              fontFamily: 'Cairo',
+              height: 1.6,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
         ],
       ),
     );

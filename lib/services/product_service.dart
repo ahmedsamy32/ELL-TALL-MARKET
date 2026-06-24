@@ -216,7 +216,7 @@ class ProductService {
     try {
       final response = await _supabase
           .from('products')
-          .select('*, categories(*), stores(*, profiles(*))')
+          .select('*, categories(*), stores(*)')
           .eq('id', productId)
           .single();
 
@@ -229,6 +229,28 @@ class ProductService {
       return null;
     }
   }
+
+  // ===== جلب منتجات متعددة حسب المعرفات =====
+  static Future<List<ProductModel>> getProductsByIds(List<String> productIds) async {
+    if (productIds.isEmpty) return [];
+    try {
+      final response = await _supabase
+          .from('products')
+          .select('*, categories(*), stores(*)')
+          .inFilter('id', productIds);
+
+      return (response as List)
+          .map((data) => ProductModel.fromMap(data))
+          .toList();
+    } on PostgrestException catch (e) {
+      AppLogger.error('PostgreSQL خطأ في جلب المنتجات بالمعرفات: ${e.message}', e);
+      return [];
+    } catch (e) {
+      AppLogger.error('خطأ في جلب المنتجات بالمعرفات', e);
+      return [];
+    }
+  }
+
 
   // ===== إضافة منتج جديد =====
   static Future<ProductModel?> addProduct(ProductModel product) async {
@@ -316,6 +338,60 @@ class ProductService {
     } catch (e) {
       AppLogger.error('خطأ في حذف المنتج', e);
       throw Exception('فشل حذف المنتج: ${e.toString()}');
+    }
+  }
+
+  // ===== حذف منتجات متعددة دفعة واحدة (Batch Delete) =====
+  /// يحذف قائمة منتجات بـ query واحد بدلاً من loop
+  /// يُرجع عدد المحذوفين وقائمة المعرفات التي فشلت (مرتبطة بطلبات)
+  static Future<({int deleted, List<String> skipped})> deleteManyProducts(
+    List<String> productIds,
+  ) async {
+    if (productIds.isEmpty) return (deleted: 0, skipped: <String>[]);
+
+    try {
+      // 1) اكتشف المنتجات المرتبطة بطلبات دفعةً واحدة
+      final linkedItems = await _supabase
+          .from('order_items')
+          .select('product_id')
+          .inFilter('product_id', productIds);
+
+      final linkedIds =
+          (linkedItems as List).map((r) => r['product_id'] as String).toSet();
+
+      final deletableIds =
+          productIds.where((id) => !linkedIds.contains(id)).toList();
+
+      if (deletableIds.isEmpty) {
+        AppLogger.warning(
+          'جميع المنتجات المحددة مرتبطة بطلبات ولا يمكن حذفها',
+        );
+        return (deleted: 0, skipped: productIds);
+      }
+
+      // 2) احذف جميع المنتجات القابلة للحذف بـ query واحد
+      final deleted = await _supabase
+          .from('products')
+          .delete()
+          .inFilter('id', deletableIds)
+          .select('id');
+
+      final deletedCount = (deleted as List).length;
+      AppLogger.info(
+        'تم حذف $deletedCount منتج دفعةً واحدة'
+        '${linkedIds.isNotEmpty ? " (تم تخطي ${linkedIds.length} مرتبطة بطلبات)" : ""}',
+      );
+
+      return (deleted: deletedCount, skipped: linkedIds.toList());
+    } on PostgrestException catch (e) {
+      AppLogger.error(
+        'PostgreSQL خطأ في الحذف الدفعي للمنتجات: ${e.message}',
+        e,
+      );
+      throw Exception('فشل الحذف الدفعي: ${e.message}');
+    } catch (e) {
+      AppLogger.error('خطأ في الحذف الدفعي للمنتجات', e);
+      throw Exception('فشل الحذف الدفعي: ${e.toString()}');
     }
   }
 
@@ -1764,17 +1840,24 @@ class ProductService {
   static Future<List<ProductModel>> getRelatedProducts({
     required String productId,
     String? categoryId,
+    String? storeId,
     int limit = 4,
   }) async {
     try {
       if (categoryId == null) return [];
 
-      final response = await _supabase
+      var query = _supabase
           .from('products')
           .select('*, categories(*), stores(*)')
           .eq('category_id', categoryId)
           .neq('id', productId)
-          .eq('is_active', true)
+          .eq('is_active', true);
+
+      if (storeId != null) {
+        query = query.eq('store_id', storeId);
+      }
+
+      final response = await query
           .order('rating', ascending: false)
           .limit(limit);
 

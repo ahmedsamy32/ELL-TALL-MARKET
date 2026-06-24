@@ -25,6 +25,26 @@ class DeliveryCompanyService {
     }
   }
 
+  /// جلب مكاتب التوصيل الخاصة بمدينة معينة
+  static Future<List<DeliveryCompanyModel>> getCompaniesByCity(String city) async {
+    try {
+      final response = await _supabase
+          .from('delivery_companies')
+          .select()
+          .eq('city', city);
+
+      return (response as List)
+          .map((data) => DeliveryCompanyModel.fromMap(data))
+          .toList();
+    } on PostgrestException catch (e) {
+      AppLogger.error('PostgreSQL خطأ في جلب مكاتب المدينة $city: ${e.message}', e);
+      return [];
+    } catch (e) {
+      AppLogger.error('خطأ في جلب مكاتب المدينة $city', e);
+      return [];
+    }
+  }
+
   /// جلب مكتب توصيل محدد بالمعرّف
   static Future<DeliveryCompanyModel?> getCompanyById(String companyId) async {
     try {
@@ -69,6 +89,7 @@ class DeliveryCompanyService {
   /// إضافة مكتب توصيل جديد
   static Future<DeliveryCompanyModel?> createCompany({
     required String companyName,
+    String? companyNameEn,
     String? ownerEmail,
     String? ownerName,
     String? ownerPhone,
@@ -84,6 +105,7 @@ class DeliveryCompanyService {
       final now = DateTime.now();
       final data = {
         'company_name': companyName,
+        'company_name_en': companyNameEn,
         'owner_email': ownerEmail,
         'owner_name': ownerName,
         'owner_phone': ownerPhone,
@@ -119,6 +141,7 @@ class DeliveryCompanyService {
   static Future<DeliveryCompanyModel?> updateCompany({
     required String companyId,
     String? companyName,
+    String? companyNameEn,
     String? ownerEmail,
     String? ownerName,
     String? ownerPhone,
@@ -135,6 +158,7 @@ class DeliveryCompanyService {
       };
 
       if (companyName != null) updateData['company_name'] = companyName;
+      if (companyNameEn != null) updateData['company_name_en'] = companyNameEn;
       if (ownerEmail != null) updateData['owner_email'] = ownerEmail;
       if (ownerName != null) updateData['owner_name'] = ownerName;
       if (ownerPhone != null) updateData['owner_phone'] = ownerPhone;

@@ -16,6 +16,7 @@ import 'package:ell_tall_market/utils/validators.dart';
 import 'package:ell_tall_market/screens/shared/advanced_map_screen.dart';
 import 'package:ell_tall_market/services/address_service.dart';
 import 'package:ell_tall_market/services/delivery_zone_pricing_service.dart';
+import 'package:ell_tall_market/services/delivery_company_service.dart';
 import 'package:ell_tall_market/services/store_wallet_service.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/widgets/address/address_form_section.dart';
@@ -25,6 +26,7 @@ import 'package:ell_tall_market/screens/user/order_history_screen.dart';
 import 'package:uuid/uuid.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
 import 'package:ell_tall_market/models/delivery_zone_pricing_model.dart';
+import 'package:ell_tall_market/utils/map_helpers.dart';
 
 class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({super.key});
@@ -65,6 +67,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   AddressModel? _selectedAddress;
   List<DeliveryZonePricingModel> _activeDeliveryZones =
       <DeliveryZonePricingModel>[];
+  List<String> _matchedDeliveryCompanies = [];
+  bool _isLoadingDeliveryCompanies = false;
 
   double _swipeValue = 0.0;
   final double _swipeThreshold = 0.85;
@@ -316,9 +320,59 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return _settingsProvider.appSettings.appDeliveryBaseFee;
   }
 
+  double _calculateMultiStoreDistanceFee(CartProvider cartProvider) {
+    final appSettings = _settingsProvider.appSettings;
+    if (!appSettings.multiStoreDeliveryFeeEnabled) {
+      return 0.0;
+    }
+
+    final processedStoreIds = <String>{};
+    final List<LatLng> storeLocations = [];
+
+    for (final item in cartProvider.cartItems) {
+      final product = item['product'] as Map<String, dynamic>?;
+      final store = product?['stores'] as Map<String, dynamic>?;
+      if (store == null) continue;
+
+      final storeId = store['id']?.toString() ?? '';
+      if (storeId.isEmpty || processedStoreIds.contains(storeId)) continue;
+
+      final lat = (store['latitude'] as num?)?.toDouble();
+      final lng = (store['longitude'] as num?)?.toDouble();
+
+      if (lat != null && lng != null) {
+        processedStoreIds.add(storeId);
+        storeLocations.add(LatLng(lat, lng));
+      }
+    }
+
+    if (storeLocations.length < 2) {
+      return 0.0;
+    }
+
+    double totalDistance = 0.0;
+    for (int i = 0; i < storeLocations.length - 1; i++) {
+      totalDistance += MapHelpers.calculateDistance(
+        storeLocations[i],
+        storeLocations[i + 1],
+      );
+    }
+
+    final minDistance = appSettings.multiStoreDeliveryMinDistance;
+    final pricePerKm = appSettings.multiStoreDeliveryFeePerKm;
+
+    final distanceToCharge = (totalDistance - minDistance).clamp(
+      0.0,
+      double.infinity,
+    );
+    return distanceToCharge * pricePerKm;
+  }
+
   double _calculateTotalDeliveryFee(CartProvider cartProvider) {
     if (_selectedAddress == null) return 0.0;
-    return _getAppDeliveryFeeBySelectedZone();
+    final baseZoneFee = _getAppDeliveryFeeBySelectedZone();
+    final multiStoreFee = _calculateMultiStoreDistanceFee(cartProvider);
+    return baseZoneFee + multiStoreFee;
   }
 
   // حساب الخصم الإجمالي
@@ -745,8 +799,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     double storeSubtotal = 0;
     int totalQuantity = 0;
     for (var item in storeItems) {
-      storeSubtotal += (item['total_price'] as num).toDouble();
-      totalQuantity += (item['quantity'] as int?) ?? 1;
+      final product = item['product'] as Map<String, dynamic>?;
+      final price = (item['product_price'] as num?)?.toDouble() ??
+          (product?['price'] as num?)?.toDouble() ??
+          0.0;
+      final qty = (item['quantity'] as int?) ?? 1;
+      storeSubtotal += price * qty;
+      totalQuantity += qty;
     }
 
     // ── Product Specific: فلتر المنتجات المؤهلة فقط ──
@@ -759,7 +818,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         for (var item in storeItems) {
           final product = item['product'] as Map<String, dynamic>;
           if (productIds.contains(product['id'])) {
-            eligibleAmount += (item['total_price'] as num).toDouble();
+            final price = (item['product_price'] as num?)?.toDouble() ??
+                (product['price'] as num?)?.toDouble() ??
+                0.0;
+            final qty = (item['quantity'] as int?) ?? 1;
+            eligibleAmount += price * qty;
             hasMatch = true;
           }
         }
@@ -873,8 +936,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     double merchantSubtotal = 0;
     int totalQuantity = 0;
     for (var item in merchantItems) {
-      merchantSubtotal += (item['total_price'] as num).toDouble();
-      totalQuantity += (item['quantity'] as int?) ?? 1;
+      final product = item['product'] as Map<String, dynamic>?;
+      final price = (item['product_price'] as num?)?.toDouble() ??
+          (product?['price'] as num?)?.toDouble() ??
+          0.0;
+      final qty = (item['quantity'] as int?) ?? 1;
+      merchantSubtotal += price * qty;
+      totalQuantity += qty;
     }
 
     // ── Product Specific: فلتر المنتجات المؤهلة فقط ──
@@ -887,7 +955,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         for (var item in merchantItems) {
           final product = item['product'] as Map<String, dynamic>;
           if (productIds.contains(product['id'])) {
-            eligibleAmount += (item['total_price'] as num).toDouble();
+            final price = (item['product_price'] as num?)?.toDouble() ??
+                (product['price'] as num?)?.toDouble() ??
+                0.0;
+            final qty = (item['quantity'] as int?) ?? 1;
+            eligibleAmount += price * qty;
             hasMatch = true;
           }
         }
@@ -980,7 +1052,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         for (var item in cartProvider.cartItems) {
           final product = item['product'] as Map<String, dynamic>;
           if (productIds.contains(product['id'])) {
-            eligibleAmount += (item['total_price'] as num).toDouble();
+            final price = (item['product_price'] as num?)?.toDouble() ??
+                (product['price'] as num?)?.toDouble() ??
+                0.0;
+            final qty = (item['quantity'] as int?) ?? 1;
+            eligibleAmount += price * qty;
             hasMatch = true;
           }
         }
@@ -1198,9 +1274,47 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             );
           }
         });
+        _loadMatchedDeliveryCompanies();
       }
     } catch (e) {
       // يمكن إضافة رسالة خطأ هنا إذا لزم الأمر
+    }
+  }
+
+  Future<void> _loadMatchedDeliveryCompanies() async {
+    final city = _selectedAddress?.city;
+    if (city == null || city.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _matchedDeliveryCompanies = [];
+        });
+      }
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _isLoadingDeliveryCompanies = true;
+      });
+    }
+
+    try {
+      final companies = await DeliveryCompanyService.getCompaniesByCity(city);
+      if (mounted) {
+        setState(() {
+          _matchedDeliveryCompanies =
+              companies.map((c) => c.companyName).toList();
+          _isLoadingDeliveryCompanies = false;
+        });
+      }
+    } catch (e) {
+      AppLogger.error('خطأ في جلب شركات التوصيل للمدينة $city', e);
+      if (mounted) {
+        setState(() {
+          _matchedDeliveryCompanies = [];
+          _isLoadingDeliveryCompanies = false;
+        });
+      }
     }
   }
 
@@ -1435,6 +1549,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             setState(() {
               _selectedAddress = address;
             });
+            _loadMatchedDeliveryCompanies();
             Navigator.pop(context);
           }
         },
@@ -1912,6 +2027,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         _selectedAddress = newAddress;
         _savedAddresses.insert(0, newAddress);
       });
+      _loadMatchedDeliveryCompanies();
 
       if (sheetContext.mounted) {
         Navigator.pop(sheetContext);
@@ -2385,9 +2501,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
             final name = product['name'] as String? ?? 'منتج';
             final quantity = item['quantity'] as int;
-            final price = (product['price'] as num?)?.toDouble() ?? 0.0;
-            final total = price * quantity;
+            final price =
+                (item['product_price'] as num?)?.toDouble() ??
+                (product['price'] as num?)?.toDouble() ??
+                0.0;
             final imageUrl = product['image_url'] as String?;
+
+            final Map<String, dynamic> selectedOpts = Map<String, dynamic>.from(
+              item['selected_options'] ?? {},
+            );
+            final attributes = selectedOpts.entries
+                .where((e) => e.key != 'addons')
+                .map((e) => '${e.key}: ${e.value}')
+                .join(' | ');
+            final addonsList = selectedOpts['addons'] as List<dynamic>?;
+            final addonsText = addonsList != null && addonsList.isNotEmpty
+                ? 'إضافات: ${addonsList.map((a) => a['name']).join(', ')}'
+                : '';
 
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
@@ -2443,18 +2573,26 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        if (item['selected_options'] != null &&
-                            (item['selected_options'] as Map).isNotEmpty)
+                        if (attributes.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(top: 2),
                             child: Text(
-                              (item['selected_options'] as Map).entries
-                                  .map((e) => '${e.key}: ${e.value}')
-                                  .join(' | '),
+                              attributes,
                               style: theme.textTheme.labelSmall?.copyWith(
                                 color: colorScheme.primary,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 9,
+                              ),
+                            ),
+                          ),
+                        if (addonsText.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Text(
+                              addonsText,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.green,
+                                fontSize: 10,
                               ),
                             ),
                           ),
@@ -2466,15 +2604,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           ),
                         ),
                       ],
-                    ),
-                  ),
-
-                  // السعر الإجمالي
-                  Text(
-                    '${total.toStringAsFixed(2)} ج.م',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: colorScheme.primary,
                     ),
                   ),
                 ],
@@ -2492,21 +2621,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             cartProvider.subtotal,
             colorScheme,
           ),
-          const SizedBox(height: 12),
-
-          // رسوم التوصيل
-          _buildDeliveryFeesSection(cartProvider, colorScheme, theme),
 
           // الخصم إن وجد
           if (_totalDiscount > 0) ...[
             const SizedBox(height: 12),
             _buildSummaryRow(
-              'الخصم',
+              'خصم الكوبون',
               -_totalDiscount,
               colorScheme,
               valueColor: Colors.green,
             ),
           ],
+          const SizedBox(height: 12),
+
+          // رسوم التوصيل
+          _buildDeliveryFeesSection(cartProvider, colorScheme, theme),
 
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 12),
@@ -2563,32 +2692,88 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     ColorScheme colorScheme,
     ThemeData theme,
   ) {
-    // رسوم التوصيل = سعر المنطقة فقط
     final matchedZone = _resolveDeliveryZone(_selectedAddress);
-    final zoneDeliveryFee = _calculateTotalDeliveryFee(cartProvider);
+    final baseZoneFee = _selectedAddress != null
+        ? _getAppDeliveryFeeBySelectedZone()
+        : 0.0;
+    final multiStoreFee = _calculateMultiStoreDistanceFee(cartProvider);
+    final totalDeliveryFee = baseZoneFee + multiStoreFee;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (zoneDeliveryFee > 0) ...[
-          _buildSummaryRow('رسوم التوصيل', zoneDeliveryFee, colorScheme),
+        if (totalDeliveryFee > 0) ...[
+          _buildSummaryRow('رسوم التوصيل', totalDeliveryFee, colorScheme),
           if (matchedZone != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
-                'منطقة التسعير: ${matchedZone.scopeLabel}',
+                matchedZone.scopeLabel,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
               ),
             ),
-        ] else ...[
-          Text(
-            'اختر عنوان التوصيل لحساب رسوم المنطقة',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
+          if (_isLoadingDeliveryCompanies)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'جاري تحديد مكتب التوصيل...',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            )
+          else if (_matchedDeliveryCompanies.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6, bottom: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.local_shipping_outlined,
+                    size: 18,
+                    color: colorScheme.primary,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'مكتب التوصيل: ${_matchedDeliveryCompanies.join("، ")}',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
+          if (multiStoreFee > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.store_mall_directory_outlined,
+                    size: 14,
+                    color: colorScheme.primary,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'رسوم مسافة بين المتاجر: ${multiStoreFee.toStringAsFixed(2)} ج.م (${_settingsProvider.appSettings.multiStoreDeliveryFeePerKm.toStringAsFixed(1)} ج.م/كم)',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ] else ...[
+          const SizedBox.shrink(),
         ],
       ],
     );
@@ -3626,17 +3811,87 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         double storeSubtotal = 0;
         Map<String, dynamic>? storeData;
         for (var item in storeItems) {
-          storeSubtotal += (item['total_price'] as num).toDouble();
-          if (storeData == null) {
-            final product = item['product'] as Map<String, dynamic>;
-            storeData = product['stores'] as Map<String, dynamic>;
+          final product = item['product'] as Map<String, dynamic>?;
+          final price = (item['product_price'] as num?)?.toDouble() ??
+              (product?['price'] as num?)?.toDouble() ??
+              0.0;
+          final qty = (item['quantity'] as int?) ?? 1;
+          storeSubtotal += price * qty;
+          if (storeData == null && product != null) {
+            storeData = product['stores'] as Map<String, dynamic>?;
           }
         }
 
         final deliveryFee = i == 0 ? groupDeliveryFee : 0.0;
         final cashFee = 0.0;
         final taxAmount = 0.0;
-        final totalAmount = storeSubtotal + deliveryFee + cashFee + taxAmount;
+
+        // حساب الخصم وكود الكوبون للمتجر
+        double storeDiscount = 0.0;
+        String? storeCouponCode;
+        if (_appliedCoupon != null) {
+          final couponStoreId = _appliedCoupon!['store_id']?.toString();
+          final couponMerchantId = _appliedCoupon!['merchant_id']?.toString();
+          final storeMerchantId = storeData?['merchant_id']?.toString();
+          final couponCodeVal = _appliedCoupon!['code'] as String?;
+
+          if (couponStoreId != null && couponStoreId == storeId) {
+            storeDiscount = _merchantDiscounts[storeId] ?? 0.0;
+            storeCouponCode = couponCodeVal;
+          } else if (couponMerchantId != null && couponMerchantId == storeMerchantId) {
+            // توزيع الخصم الخاص بالتاجر نسبياً
+            double totalMerchantSubtotal = 0.0;
+            for (final tempEntry in entries) {
+              final tempItems = tempEntry.value;
+              Map<String, dynamic>? tempStoreData;
+              for (var item in tempItems) {
+                final product = item['product'] as Map<String, dynamic>?;
+                if (product != null) {
+                  tempStoreData = product['stores'] as Map<String, dynamic>?;
+                  break;
+                }
+              }
+              if (tempStoreData?['merchant_id']?.toString() == couponMerchantId) {
+                double tempSub = 0.0;
+                for (var item in tempItems) {
+                  final product = item['product'] as Map<String, dynamic>?;
+                  final price = (item['product_price'] as num?)?.toDouble() ??
+                      (product?['price'] as num?)?.toDouble() ??
+                      0.0;
+                  final qty = (item['quantity'] as int?) ?? 1;
+                  tempSub += price * qty;
+                }
+                totalMerchantSubtotal += tempSub;
+              }
+            }
+            final totalMerchantDiscount = _merchantDiscounts[couponMerchantId] ?? 0.0;
+            if (totalMerchantSubtotal > 0) {
+              storeDiscount = (storeSubtotal / totalMerchantSubtotal) * totalMerchantDiscount;
+            }
+            storeCouponCode = couponCodeVal;
+          } else if (couponStoreId == null && couponMerchantId == null) {
+            // توزيع الخصم العام نسبياً على جميع طلبات المتاجر في السلة
+            double totalCartSubtotal = 0.0;
+            for (final tempEntry in entries) {
+              for (var item in tempEntry.value) {
+                final product = item['product'] as Map<String, dynamic>?;
+                final price = (item['product_price'] as num?)?.toDouble() ??
+                    (product?['price'] as num?)?.toDouble() ??
+                    0.0;
+                final qty = (item['quantity'] as int?) ?? 1;
+                totalCartSubtotal += price * qty;
+              }
+            }
+            final totalGlobalDiscount = _merchantDiscounts['global'] ?? 0.0;
+            if (totalCartSubtotal > 0) {
+              storeDiscount = (storeSubtotal / totalCartSubtotal) * totalGlobalDiscount;
+            }
+            storeCouponCode = couponCodeVal;
+          }
+        }
+
+        final totalAmount = (storeSubtotal + deliveryFee + cashFee + taxAmount - storeDiscount)
+            .clamp(0.0, double.infinity);
         final storeName = (storeData?['name'] as String?) ?? 'متجر';
 
         storeOrders.add({
@@ -3647,6 +3902,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           'cash_fee': cashFee,
           'tax_amount': taxAmount,
           'total_amount': totalAmount,
+          'discount_amount': storeDiscount,
+          'coupon_code': storeCouponCode,
         });
       }
 
@@ -3736,6 +3993,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         final deliveryFee = (draft['delivery_fee'] as num).toDouble();
         final taxAmount = (draft['tax_amount'] as num).toDouble();
         final totalAmount = (draft['total_amount'] as num).toDouble();
+        final discountAmount = (draft['discount_amount'] as num?)?.toDouble() ?? 0.0;
+        final couponCode = draft['coupon_code'] as String?;
 
         final order = OrderModel(
           id: '',
@@ -3745,9 +4004,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           totalAmount: totalAmount,
           deliveryFee: deliveryFee,
           taxAmount: taxAmount,
+          couponCode: couponCode,
+          discountAmount: discountAmount,
           deliveryAddress: _formatAddressForDisplay(
             _selectedAddress!.formattedAddress,
           ),
+          deliveryLatitude: _selectedAddress!.latitude,
+          deliveryLongitude: _selectedAddress!.longitude,
+          deliveryNotes: _notesController.text.trim().isNotEmpty
+              ? _notesController.text.trim()
+              : null,
+          clientPhone: authProvider.currentUserProfile?.phone ?? _userPhoneController.text.trim(),
           status: OrderStatus.pending,
           paymentMethod: PaymentMethod.cash,
           paymentStatus: PaymentStatus.pending,
@@ -3779,7 +4046,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           final quantity = quantityRaw is num
               ? quantityRaw
               : int.tryParse(quantityRaw.toString()) ?? 1;
-          final totalPrice = item['total_price'] ?? productPrice * quantity;
+          final totalPrice = productPrice * quantity;
 
           return {
             'order_id': newOrderId,

@@ -1,11 +1,15 @@
 // Removed dart:io for Web compatibility
-import 'package:flutter/foundation.dart'; // For kIsWeb
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:ell_tall_market/services/permission_service.dart';
 import '../../services/import_service.dart';
 import '../../core/logger.dart';
+import '../../services/store_service.dart';
+import '../../services/category_service.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:ell_tall_market/utils/file_bytes_reader.dart';
+
 
 class ImportProductsScreen extends StatefulWidget {
   final String storeId;
@@ -34,7 +38,14 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
     'price': 'السعر',
     'description': 'الوصف',
     'stock_quantity': 'المخزون',
+    'section_name': 'القسم',
+    'custom_fields': 'المواصفات الفنية',
+    'variants_column': 'الخصائص',
+    'addons': 'الاضافات',
   };
+
+  // Controllers for mapping text fields to avoid recreating controllers
+  final Map<String, TextEditingController> _mappingControllers = {};
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +64,25 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
           ? _buildBottomActions()
           : null,
     );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    // initialize controllers for mapping fields
+    for (var key in _columnMapping.keys) {
+      _mappingControllers[key] = TextEditingController(
+        text: _columnMapping[key],
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final c in _mappingControllers.values) {
+      c.dispose();
+    }
+    super.dispose();
   }
 
   Widget _buildFilePicker() {
@@ -123,18 +153,21 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
       );
 
       if (result != null) {
-        Uint8List? fileBytes;
+        final fileBytes =
+            result.files.single.bytes ??
+            await readFileBytes(result.files.single.path);
 
-        if (kIsWeb) {
-          fileBytes = result.files.single.bytes;
-          // On Web and Mobile (withData: true), we try to use bytes.
-          if (result.files.single.bytes != null) {
-            fileBytes = result.files.single.bytes;
-          } else {
-            // If bytes are missing, we can't proceed without dart:io File.
-            // For this specific task, we rely on withData: true.
-            throw Exception('فشل قراءة بيانات الملف (Bytes missing)');
+        if (fileBytes == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'فشل قراءة بيانات الملف. جرّب ملف أصغر أو تأكد من صلاحيات الوصول.',
+                ),
+              ),
+            );
           }
+          return;
         }
 
         setState(() {
@@ -159,6 +192,8 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
 
     try {
       final rows = await ImportService.parseExcelFile(_selectedFileBytes!);
+      // Try to auto-map columns if headers don't match current mapping
+      _autoMapColumns(rows);
       setState(() {
         _rawRows = rows;
         _validateRows();
@@ -167,17 +202,63 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
     } catch (e) {
       AppLogger.error('فشل معالجة الملف', e);
       if (mounted) {
+        // Show a more detailed message to help debugging while keeping the
+        // selected bytes so the user can retry or inspect.
+        final msg = e.toString();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('فشل معالجة الملف. تأكد من أنه ملف Excel صالح.'),
+          SnackBar(
+            content: Text('فشل معالجة الملف: $msg'),
+            duration: const Duration(seconds: 6),
           ),
         );
         setState(() {
-          _selectedFileBytes = null;
-          // _selectedFileName = null;
+          // keep _selectedFileBytes to allow retry; just stop parsing state
           _isParsing = false;
         });
       }
+    }
+  }
+
+  void _autoMapColumns(List<Map<String, dynamic>> rows) {
+    if (rows.isEmpty) return;
+
+    final headers = rows.first.keys.map((k) => k.toString()).toList();
+    final changes = <String>[];
+
+    String normalize(String s) =>
+        s.toLowerCase().replaceAll(RegExp(r"\s+|[^\w\u0600-\u06FF]"), '');
+
+    for (var key in _columnMapping.keys.toList()) {
+      final current = _columnMapping[key] ?? '';
+      if (current.isNotEmpty && headers.any((h) => h == current)) continue;
+
+      final normCurrent = normalize(current);
+      String? found;
+      for (var h in headers) {
+        final normH = normalize(h);
+        if (normH == normCurrent ||
+            normH.contains(normCurrent) ||
+            normCurrent.contains(normH)) {
+          found = h;
+          break;
+        }
+      }
+
+      if (found != null) {
+        _columnMapping[key] = found;
+        // update controller text if exists
+        if (_mappingControllers.containsKey(key)) {
+          _mappingControllers[key]!.text = found;
+        }
+        changes.add('${_getFieldLabel(key)} ← $found');
+      }
+    }
+
+    if (changes.isNotEmpty && mounted) {
+      final msg = 'تمت محاولة مطابقة الأعمدة تلقائياً: ${changes.join(', ')}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), duration: const Duration(seconds: 6)),
+      );
     }
   }
 
@@ -417,14 +498,12 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
+                        controller: _mappingControllers[key],
                         onChanged: (value) {
                           _columnMapping[key] = value;
                           _validateRows();
                           setState(() {});
                         },
-                        controller: TextEditingController(
-                          text: _columnMapping[key],
-                        ),
                       ),
                     ),
                   ],
@@ -447,6 +526,14 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
         return 'الوصف';
       case 'stock_quantity':
         return 'المخزون';
+      case 'section_name':
+        return 'القسم';
+      case 'custom_fields':
+        return 'المواصفات الفنية';
+      case 'variants_column':
+        return 'الخصائص';
+      case 'addons':
+        return 'الاضافات';
       default:
         return key;
     }
@@ -513,11 +600,62 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
     setState(() => _isImporting = true);
 
     try {
-      final count = await ImportService.importProducts(
+      // Fetch store data to get the default category
+      final store = await StoreService.getStoreById(widget.storeId);
+
+      if (store == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('لم يتم العثور على بيانات المتجر'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        setState(() => _isImporting = false);
+        return;
+      }
+
+      if (store.category == null || store.category!.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'المتجر لم يملك فئة افتراضية. يرجى تعيين فئة للمتجر أولاً.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        setState(() => _isImporting = false);
+        return;
+      }
+
+      // Resolve category name to UUID if needed
+      String resolvedCategoryId = store.category!;
+      if (!RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+              caseSensitive: false)
+          .hasMatch(resolvedCategoryId)) {
+        try {
+          final cat = await CategoryService.getCategoryByName(resolvedCategoryId);
+          if (cat != null) {
+            resolvedCategoryId = cat.id;
+            AppLogger.info('Resolved store category name "$resolvedCategoryId" for import');
+          }
+        } catch (e) {
+          AppLogger.warning('⚠️ فشل جلب معرف الفئة من الاسم: $e');
+        }
+      }
+
+      final result = await ImportService.importProducts(
         validatedRows: rows,
         storeId: widget.storeId,
         sectionId: widget.sectionId,
+        categoryId: resolvedCategoryId,
       );
+
+      final count = result['count'] as int;
+      final errors = result['errors'] as List<String>;
 
       if (mounted) {
         showDialog(
@@ -525,12 +663,42 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
           barrierDismissible: false,
           builder: (context) => AlertDialog(
             title: Text(
-              count > 0 ? 'تم اكتمال الاستيراد' : 'لم يتم استيراد أي منتج',
-            ),
-            content: Text(
               count > 0
-                  ? 'تم بنجاح استيراد $count منتج إلى متجرك.\n\nملاحظة: المنتجات المستوردة معطلة (غير مفعلة) حالياً لتتمكن من مراجعتها وإكمال بياناتها ثم تفعيلها.'
-                  : 'لم يتم العثور على أي منتجات صالحة للاستيراد. يرجى التأكد من تعبئة البيانات بشكل صحيح في ملف Excel.',
+                  ? 'تم اكتمال الاستيراد'
+                  : 'فشل الاستيراد لمعظم/جميع المنتجات',
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    count > 0
+                        ? 'تم بنجاح استيراد $count منتج إلى متجرك.\n\nملاحظة: المنتجات المستوردة معطلة (غير مفعلة) حالياً لتتمكن من مراجعتها وإكمال بياناتها ثم تفعيلها.'
+                        : 'لم يتم استيراد أي منتج بشكل صحيح. يرجى مراجعة الأخطاء.',
+                  ),
+                  if (errors.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    const Text(
+                      'تفاصيل الأخطاء:',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.red,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...errors.map(
+                      (e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4.0),
+                        child: Text(
+                          '• $e',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
             ),
             actions: [
               TextButton(

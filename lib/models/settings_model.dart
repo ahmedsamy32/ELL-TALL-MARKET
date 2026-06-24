@@ -139,6 +139,11 @@ class AppSettingsModel with BaseModelMixin {
   final double appDeliveryMaxDistance; // أقصى مسافة للتوصيل (كم)
   final int appDeliveryEstimatedTime; // الوقت التقديري للتوصيل (دقائق)
 
+  // Multi-store delivery fee settings
+  final double multiStoreDeliveryFeePerKm; // رسوم لكل كم بين المتاجر
+  final double multiStoreDeliveryMinDistance; // الحد الأدنى للمسافة لتطبيق الرسوم
+  final bool multiStoreDeliveryFeeEnabled; // تفعيل رسوم المتاجر المتعددة
+
   @override
   final DateTime createdAt;
   @override
@@ -167,6 +172,9 @@ class AppSettingsModel with BaseModelMixin {
     this.appDeliveryFeePerKm = 3.0,
     this.appDeliveryMaxDistance = 25.0,
     this.appDeliveryEstimatedTime = 30,
+    this.multiStoreDeliveryFeePerKm = 5.0,
+    this.multiStoreDeliveryMinDistance = 1.0,
+    this.multiStoreDeliveryFeeEnabled = true,
     required this.createdAt,
     this.updatedAt,
   });
@@ -204,6 +212,12 @@ class AppSettingsModel with BaseModelMixin {
           (map['app_delivery_max_distance'] as num?)?.toDouble() ?? 25.0,
       appDeliveryEstimatedTime:
           map['app_delivery_estimated_time'] as int? ?? 30,
+      multiStoreDeliveryFeePerKm:
+          (map['multi_store_delivery_fee_per_km'] as num?)?.toDouble() ?? 5.0,
+      multiStoreDeliveryMinDistance:
+          (map['multi_store_delivery_min_distance'] as num?)?.toDouble() ?? 1.0,
+      multiStoreDeliveryFeeEnabled:
+          map['multi_store_delivery_fee_enabled'] as bool? ?? true,
       createdAt: BaseModelMixin.parseDateTime(map['created_at']),
       updatedAt: map['updated_at'] != null
           ? BaseModelMixin.parseDateTime(map['updated_at'])
@@ -252,6 +266,9 @@ class AppSettingsModel with BaseModelMixin {
       'app_delivery_fee_per_km': appDeliveryFeePerKm,
       'app_delivery_max_distance': appDeliveryMaxDistance,
       'app_delivery_estimated_time': appDeliveryEstimatedTime,
+      'multi_store_delivery_fee_per_km': multiStoreDeliveryFeePerKm,
+      'multi_store_delivery_min_distance': multiStoreDeliveryMinDistance,
+      'multi_store_delivery_fee_enabled': multiStoreDeliveryFeeEnabled,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
     };
@@ -281,6 +298,9 @@ class AppSettingsModel with BaseModelMixin {
       'app_delivery_fee_per_km': appDeliveryFeePerKm,
       'app_delivery_max_distance': appDeliveryMaxDistance,
       'app_delivery_estimated_time': appDeliveryEstimatedTime,
+      'multi_store_delivery_fee_per_km': multiStoreDeliveryFeePerKm,
+      'multi_store_delivery_min_distance': multiStoreDeliveryMinDistance,
+      'multi_store_delivery_fee_enabled': multiStoreDeliveryFeeEnabled,
     };
   }
 
@@ -307,6 +327,9 @@ class AppSettingsModel with BaseModelMixin {
     double? appDeliveryFeePerKm,
     double? appDeliveryMaxDistance,
     int? appDeliveryEstimatedTime,
+    double? multiStoreDeliveryFeePerKm,
+    double? multiStoreDeliveryMinDistance,
+    bool? multiStoreDeliveryFeeEnabled,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -335,6 +358,12 @@ class AppSettingsModel with BaseModelMixin {
           appDeliveryMaxDistance ?? this.appDeliveryMaxDistance,
       appDeliveryEstimatedTime:
           appDeliveryEstimatedTime ?? this.appDeliveryEstimatedTime,
+      multiStoreDeliveryFeePerKm:
+          multiStoreDeliveryFeePerKm ?? this.multiStoreDeliveryFeePerKm,
+      multiStoreDeliveryMinDistance:
+          multiStoreDeliveryMinDistance ?? this.multiStoreDeliveryMinDistance,
+      multiStoreDeliveryFeeEnabled:
+          multiStoreDeliveryFeeEnabled ?? this.multiStoreDeliveryFeeEnabled,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -362,6 +391,9 @@ class AppSettingsModel with BaseModelMixin {
     double? appDeliveryFeePerKm,
     double? appDeliveryMaxDistance,
     int? appDeliveryEstimatedTime,
+    double? multiStoreDeliveryFeePerKm,
+    double? multiStoreDeliveryMinDistance,
+    bool? multiStoreDeliveryFeeEnabled,
   }) {
     return copyWith(
       notificationsEnabled: notificationsEnabled,
@@ -384,6 +416,9 @@ class AppSettingsModel with BaseModelMixin {
       appDeliveryFeePerKm: appDeliveryFeePerKm,
       appDeliveryMaxDistance: appDeliveryMaxDistance,
       appDeliveryEstimatedTime: appDeliveryEstimatedTime,
+      multiStoreDeliveryFeePerKm: multiStoreDeliveryFeePerKm,
+      multiStoreDeliveryMinDistance: multiStoreDeliveryMinDistance,
+      multiStoreDeliveryFeeEnabled: multiStoreDeliveryFeeEnabled,
       updatedAt: DateTime.now(),
     );
   }

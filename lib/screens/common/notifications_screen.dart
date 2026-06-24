@@ -18,6 +18,8 @@ class NotificationsScreen extends StatefulWidget {
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
+  bool _isSelectionMode = false;
+  final Set<String> _selectedIds = {};
   @override
   void initState() {
     super.initState();
@@ -46,67 +48,120 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     final unreadCount = notificationProvider.getUnreadCountForRole(
       widget.targetRole,
     );
+    final notifications = notificationProvider.getNotificationsForRole(
+      widget.targetRole,
+    );
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('الإشعارات'),
-        centerTitle: true,
-        actions: [
-          if (unreadCount > 0 && userId != null)
-            TextButton.icon(
-              onPressed: () {
-                notificationProvider.markAllAsRead(userId);
-              },
-              icon: const Icon(Icons.mark_email_read, size: 18),
-              label: const Text('قراءة الكل'),
-              style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      appBar: _isSelectionMode
+          ? AppBar(
+              leading: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () {
+                  setState(() {
+                    _isSelectionMode = false;
+                    _selectedIds.clear();
+                  });
+                },
               ),
-            ),
-          if (notificationProvider
-              .getNotificationsForRole(widget.targetRole)
-              .isNotEmpty)
-            IconButton(
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('حذف جميع الإشعارات'),
-                    content: const Text('هل أنت متأكد من حذف جميع الإشعارات؟'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('إلغاء'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          if (userId != null) {
-                            notificationProvider.deleteUserNotifications(
-                              userId,
-                            );
-                          }
-                          Navigator.pop(context);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('تم حذف جميع الإشعارات'),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        },
-                        child: const Text(
-                          'حذف',
-                          style: TextStyle(color: Colors.red),
+              title: Text('${_selectedIds.length} محدد'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.select_all),
+                  tooltip: 'تحديد الكل',
+                  onPressed: () {
+                    setState(() {
+                      _selectedIds.addAll(notifications.map((n) => n.id));
+                    });
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.mark_email_read),
+                  tooltip: 'تحديد كمقروء',
+                  onPressed: () async {
+                    for (final id in _selectedIds) {
+                      await notificationProvider.markAsRead(id);
+                    }
+                    setState(() {
+                      _isSelectionMode = false;
+                      _selectedIds.clear();
+                    });
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('تم تحديد الإشعارات كمقروءة'),
+                          backgroundColor: Colors.green,
                         ),
-                      ),
-                    ],
+                      );
+                    }
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: 'حذف المحدد',
+                  onPressed: () {
+                    _confirmDeleteSelected(context, notificationProvider);
+                  },
+                ),
+              ],
+            )
+          : AppBar(
+              title: const Text('الإشعارات'),
+              centerTitle: true,
+              actions: [
+                if (unreadCount > 0 && userId != null)
+                  TextButton.icon(
+                    onPressed: () {
+                      notificationProvider.markAllAsRead(userId);
+                    },
+                    icon: const Icon(Icons.mark_email_read, size: 18),
+                    label: const Text('قراءة الكل'),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    ),
                   ),
-                );
-              },
-              icon: const Icon(Icons.delete_outline, size: 20),
-              tooltip: 'مسح الكل',
+                if (notifications.isNotEmpty)
+                  IconButton(
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text('حذف جميع الإشعارات'),
+                          content: const Text('هل أنت متأكد من حذف جميع الإشعارات؟'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('إلغاء'),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                if (userId != null) {
+                                  notificationProvider.deleteUserNotifications(
+                                    userId,
+                                  );
+                                }
+                                Navigator.pop(context);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('تم حذف جميع الإشعارات'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              },
+                              child: const Text(
+                                'حذف',
+                                style: TextStyle(color: Colors.red),
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.delete_outline, size: 20),
+                    tooltip: 'مسح الكل',
+                  ),
+              ],
             ),
-        ],
-      ),
       body: ResponsiveCenter(
         maxWidth: 700,
         child: SafeArea(
@@ -221,13 +276,66 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     );
   }
 
+  void _toggleSelection(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+        if (_selectedIds.isEmpty) {
+          _isSelectionMode = false;
+        }
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  void _confirmDeleteSelected(BuildContext context, NotificationProvider provider) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الإشعارات المحددة'),
+        content: Text('هل أنت متأكد من حذف ${_selectedIds.length} إشعار؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final idsToDelete = _selectedIds.toList();
+              setState(() {
+                _isSelectionMode = false;
+                _selectedIds.clear();
+              });
+              await provider.deleteNotifications(idsToDelete);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('تم حذف الإشعارات المحددة'),
+                    backgroundColor: Colors.red,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            child: const Text(
+              'حذف',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildNotificationItem(
     NotificationModel notification,
     NotificationProvider provider,
   ) {
     return Dismissible(
       key: Key(notification.id),
-      direction: DismissDirection.endToStart,
+      direction: _isSelectionMode ? DismissDirection.none : DismissDirection.endToStart,
       background: Container(
         color: Colors.red,
         alignment: Alignment.centerLeft,
@@ -249,9 +357,16 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ? Colors.white
             : AppColors.primary.withAlpha(25),
         child: ListTile(
-          leading: _getNotificationIcon(
-            notification.type ?? NotificationType.system,
-          ),
+          leading: _isSelectionMode
+              ? Checkbox(
+                  value: _selectedIds.contains(notification.id),
+                  onChanged: (val) {
+                    _toggleSelection(notification.id);
+                  },
+                )
+              : _getNotificationIcon(
+                  notification.type ?? NotificationType.system,
+                ),
           title: Text(
             notification.title,
             style: TextStyle(
@@ -275,10 +390,22 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               ? null
               : const Icon(Icons.circle, size: 8, color: AppColors.primary),
           onTap: () {
-            if (!notification.isRead) {
-              provider.markAsRead(notification.id);
+            if (_isSelectionMode) {
+              _toggleSelection(notification.id);
+            } else {
+              if (!notification.isRead) {
+                provider.markAsRead(notification.id);
+              }
+              _handleNotificationTap(notification);
             }
-            _handleNotificationTap(notification);
+          },
+          onLongPress: () {
+            if (!_isSelectionMode) {
+              setState(() {
+                _isSelectionMode = true;
+                _selectedIds.add(notification.id);
+              });
+            }
           },
         ),
       ),

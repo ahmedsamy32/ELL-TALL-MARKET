@@ -156,6 +156,7 @@ DECLARE
   v_latitude DOUBLE PRECISION;
   v_longitude DOUBLE PRECISION;
   v_category TEXT;
+  v_category_name TEXT;
   v_user_id UUID;
 BEGIN
   -- Ensure this trigger can write to RLS-protected tables during signup.
@@ -187,6 +188,19 @@ BEGIN
     concat_ws('، ', NULLIF(v_governorate,''), NULLIF(v_city,''), NULLIF(v_area,''), NULLIF(v_street,''), NULLIF(v_landmark,''))
   );
   v_category := NEW.raw_user_meta_data->>'category';
+
+  -- Resolve category (could be name or UUID) to Category Name (TEXT)
+  IF v_category IS NOT NULL AND v_category <> '' THEN
+    IF v_category ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+      SELECT name INTO v_category_name FROM public.categories WHERE id = v_category::uuid;
+    ELSE
+      SELECT name INTO v_category_name FROM public.categories WHERE name = v_category OR description = v_category;
+    END IF;
+  END IF;
+
+  IF v_category_name IS NULL THEN
+    v_category_name := COALESCE(NULLIF(v_category, ''), 'عام');
+  END IF;
 
   -- STRICT validation for merchants
   IF v_user_role = 'merchant' THEN
@@ -242,6 +256,7 @@ BEGIN
       address,
       latitude,
       longitude,
+      location,
       category
     )
     VALUES (
@@ -257,7 +272,12 @@ BEGIN
       v_address,
       v_latitude,
       v_longitude,
-      v_category
+      CASE 
+        WHEN v_latitude IS NOT NULL AND v_longitude IS NOT NULL 
+        THEN ST_SetSRID(ST_MakePoint(v_longitude, v_latitude), 4326)::geography
+        ELSE NULL 
+      END,
+      v_category_name
     );
   END IF;
 
@@ -304,7 +324,7 @@ EXCEPTION
     RAISE LOG '[handle_new_user] FAILED user_id=%, email=%, err=%', NEW.id, NEW.email, SQLERRM;
     RAISE;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 COMMENT ON FUNCTION public.handle_new_user() IS 
 'Enhanced trigger function that creates profile and role-specific records for new users.
@@ -438,7 +458,7 @@ CREATE TABLE public.stores (
   is_open BOOLEAN DEFAULT TRUE,
   delivery_fee DECIMAL(10,2) DEFAULT 0,
   min_order DECIMAL(10,2) DEFAULT 0,
-  delivery_mode TEXT CHECK (delivery_mode IN ('store','app')) DEFAULT 'store',
+  delivery_mode TEXT CHECK (delivery_mode IN ('store','app')) DEFAULT 'app',
   rating DECIMAL(2,1) DEFAULT 0.0,
   review_count INT DEFAULT 0,
   category TEXT,
@@ -747,7 +767,8 @@ CREATE TABLE public.products (
   tags TEXT[],
   variant_groups JSONB DEFAULT '[]', -- 🏷️ مجموعات المتغيرات (مثال: لون، مقاس)
   variants JSONB DEFAULT '[]',       -- 🎨 المتغيرات المتاحة (تركيبات محددة)
-  custom_fields JSONB DEFAULT '{}', -- 🧩 بيانات ديناميكية إضافية
+  custom_fields JSONB DEFAULT '{}', -- 🧩 بيانات ديناميكية إضافية (المواصفات)
+  addons JSONB DEFAULT '[]',         -- ➕ إضافات المنتج (الأسعار والصور)
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -1052,12 +1073,15 @@ CREATE TABLE public.orders (
   total_amount DECIMAL(10,2) NOT NULL CHECK (total_amount >= 0),
   delivery_fee DECIMAL(10,2) DEFAULT 0,
   tax_amount DECIMAL(10,2) DEFAULT 0,
+  coupon_code TEXT, -- كود الكوبون المطبق
+  discount_amount DECIMAL(10,2) DEFAULT 0.0, -- قيمة الخصم المطبق
   
   -- معلومات التوصيل
   delivery_address TEXT NOT NULL,
   delivery_latitude DECIMAL(10, 8),
   delivery_longitude DECIMAL(11, 8),
   delivery_notes TEXT,
+  prescription_url TEXT,
   
   -- حالة الطلب
   status order_status_enum DEFAULT 'pending',
@@ -1096,6 +1120,12 @@ FOR SELECT USING (auth.uid() IN (SELECT merchant_id FROM public.stores WHERE sto
 
 CREATE POLICY "Captains view assigned orders" ON public.orders 
 FOR SELECT USING (auth.uid() = captain_id);
+
+-- 👑 Admins can manage all orders
+CREATE POLICY "Admins can manage all orders" ON public.orders
+FOR ALL TO authenticated
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
 -- ➕ INSERT Policy: Clients can create their own orders
 CREATE POLICY "Clients can create orders" ON public.orders
@@ -1148,11 +1178,31 @@ FOR SELECT USING (
   EXISTS (
     SELECT 1 FROM public.orders o 
     WHERE o.id = order_items.order_id 
-    AND (o.client_id = auth.uid() OR o.captain_id = auth.uid() OR o.store_id IN (
-      SELECT id FROM public.stores WHERE merchant_id = auth.uid()
-    ))
+    AND (
+      o.client_id = auth.uid() 
+      OR o.captain_id = auth.uid() 
+      OR o.store_id IN (
+        SELECT id FROM public.stores WHERE merchant_id = auth.uid()
+      )
+      OR (
+        EXISTS (
+          SELECT 1 FROM public.profiles p 
+          WHERE p.id = auth.uid() AND p.role = 'delivery_company_admin'
+        )
+        AND EXISTS (
+          SELECT 1 FROM public.stores s 
+          WHERE s.id = o.store_id AND s.delivery_mode = 'app'
+        )
+      )
+    )
   )
 );
+
+-- 👑 Admins can manage all order items
+CREATE POLICY "Admins can manage all order items" ON public.order_items
+FOR ALL TO authenticated
+USING (public.is_admin())
+WITH CHECK (public.is_admin());
 
 -- ➕ INSERT Policy: Allow inserting items for orders created by the user
 CREATE POLICY "Clients can create order items for their orders" ON public.order_items
@@ -1161,6 +1211,66 @@ FOR INSERT WITH CHECK (
     SELECT 1 FROM public.orders o 
     WHERE o.id = order_items.order_id 
     AND o.client_id = auth.uid()
+  )
+);
+
+-- ➕ INSERT Policy for participants
+CREATE POLICY "Order participants can insert order items" ON public.order_items
+FOR INSERT WITH CHECK (
+  EXISTS (
+    SELECT 1 FROM public.orders o 
+    WHERE o.id = order_items.order_id 
+    AND (
+      o.client_id = auth.uid() 
+      OR o.captain_id = auth.uid() 
+      OR o.store_id IN (
+        SELECT id FROM public.stores WHERE merchant_id = auth.uid()
+      )
+    )
+  )
+);
+
+-- 🔄 UPDATE Policy for participants
+CREATE POLICY "Order participants can update order items" ON public.order_items
+FOR UPDATE USING (
+  EXISTS (
+    SELECT 1 FROM public.orders o 
+    WHERE o.id = order_items.order_id 
+    AND (
+      o.client_id = auth.uid() 
+      OR o.captain_id = auth.uid() 
+      OR o.store_id IN (
+        SELECT id FROM public.stores WHERE merchant_id = auth.uid()
+      )
+    )
+  )
+) WITH CHECK (
+  EXISTS (
+    SELECT 1 FROM public.orders o 
+    WHERE o.id = order_items.order_id 
+    AND (
+      o.client_id = auth.uid() 
+      OR o.captain_id = auth.uid() 
+      OR o.store_id IN (
+        SELECT id FROM public.stores WHERE merchant_id = auth.uid()
+      )
+    )
+  )
+);
+
+-- ❌ DELETE Policy for participants
+CREATE POLICY "Order participants can delete order items" ON public.order_items
+FOR DELETE USING (
+  EXISTS (
+    SELECT 1 FROM public.orders o 
+    WHERE o.id = order_items.order_id 
+    AND (
+      o.client_id = auth.uid() 
+      OR o.captain_id = auth.uid() 
+      OR o.store_id IN (
+        SELECT id FROM public.stores WHERE merchant_id = auth.uid()
+      )
+    )
   )
 );
 
@@ -1431,8 +1541,12 @@ CREATE POLICY "Users can remove favorites" ON public.favorites
 CREATE TYPE coupon_type_enum AS ENUM (
   'percentage',
   'fixed_amount',
-  'free_delivery'
+  'free_delivery',
+  'product_specific',
+  'tiered_quantity',
+  'flash_sale'
 );
+
 
 CREATE TABLE public.coupons (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -4374,6 +4488,30 @@ CREATE POLICY "Delivery admins view own captains" ON public.captains
     )
   );
 
+DROP POLICY IF EXISTS "Delivery admins update own captains" ON public.captains;
+CREATE POLICY "Delivery admins update own captains" ON public.captains
+  FOR UPDATE TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM public.delivery_companies dc
+      JOIN public.profiles p ON p.id = auth.uid()
+      WHERE dc.id = captains.delivery_company_id
+        AND dc.admin_id = auth.uid()
+        AND p.role = 'delivery_company_admin'
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM public.delivery_companies dc
+      JOIN public.profiles p ON p.id = auth.uid()
+      WHERE dc.id = captains.delivery_company_id
+        AND dc.admin_id = auth.uid()
+        AND p.role = 'delivery_company_admin'
+    )
+  );
+
 -- >>> Source: 20260429_delivery_admin_orders_view.sql
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
 
@@ -6030,5 +6168,44 @@ GRANT EXECUTE ON FUNCTION public.admin_adjust_store_wallet_balance(UUID, NUMERIC
 GRANT EXECUTE ON FUNCTION public.admin_adjust_delivery_company_wallet_balance(UUID, NUMERIC, BOOLEAN, TEXT) TO authenticated;
 
 -- ============================================================================
+-- 📍 AUTOMATIC LOCATION SYNCHRONIZATION TRIGGER FOR STORES
+-- ============================================================================
+CREATE OR REPLACE FUNCTION public.trg_fn_sync_store_location()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL THEN
+    NEW.location := ST_SetSRID(ST_MakePoint(NEW.longitude, NEW.latitude), 4326)::geography;
+  ELSE
+    NEW.location := NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE TRIGGER trg_sync_store_location
+BEFORE INSERT OR UPDATE OF latitude, longitude ON public.stores
+FOR EACH ROW EXECUTE FUNCTION public.trg_fn_sync_store_location();
+
+-- Add multi-store delivery fee settings
+ALTER TABLE public.app_settings
+  ADD COLUMN IF NOT EXISTS multi_store_delivery_fee_per_km NUMERIC DEFAULT 5.0,
+  ADD COLUMN IF NOT EXISTS multi_store_delivery_min_distance NUMERIC DEFAULT 1.0,
+  ADD COLUMN IF NOT EXISTS multi_store_delivery_fee_enabled BOOLEAN DEFAULT TRUE;
+
+-- Add auto_accept_orders column to stores
+ALTER TABLE public.stores
+  ADD COLUMN IF NOT EXISTS auto_accept_orders BOOLEAN DEFAULT FALSE;
+
+-- ============================================================================
+-- ❌ DEPRECATED: auto_accept_old_pending_orders
+-- لم يعد مطلوباً — الطلبات تُنشأ بحالة 'ready' مباشرة وتذهب لمكتب التوصيل
+-- بدون الحاجة لقبول التاجر.
+-- ============================================================================
+
+-- DROP FUNCTION IF EXISTS public.auto_accept_old_pending_orders();
+-- SELECT cron.unschedule('auto-accept-pending-orders-job');
+
+-- ============================================================================
 -- ✅ END OF CONSOLIDATED SCHEMA
 -- ============================================================================
+

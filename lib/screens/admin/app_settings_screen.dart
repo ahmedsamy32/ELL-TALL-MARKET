@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/app_settings_provider.dart';
 import 'package:ell_tall_market/models/settings_model.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
-import 'package:ell_tall_market/utils/app_routes.dart';
 
 class AppSettingsScreen extends StatefulWidget {
   const AppSettingsScreen({super.key});
@@ -17,6 +16,11 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   final _formKey = GlobalKey<FormState>();
   late AppSettingsModel _currentSettings;
 
+  // Controllers to avoid rebuilding / focus loss / framework crashes on keystroke
+  final _supportEmailController = TextEditingController();
+  final _supportPhoneController = TextEditingController();
+  final _supportWebsiteController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -27,9 +31,25 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   }
 
   @override
+  void dispose() {
+    _supportEmailController.dispose();
+    _supportPhoneController.dispose();
+    _supportWebsiteController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final settingsProvider = Provider.of<AppSettingsProvider>(context);
-    _currentSettings = settingsProvider.appSettings;
+    final loadedSettings = settingsProvider.appSettings;
+
+    // Only populate controllers when settings are loaded/changed from database
+    if (loadedSettings.id != _currentSettings.id) {
+      _currentSettings = loadedSettings;
+      _supportEmailController.text = _currentSettings.supportEmail;
+      _supportPhoneController.text = _currentSettings.supportPhone;
+      _supportWebsiteController.text = _currentSettings.supportWebsite;
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -93,6 +113,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                   (value) => _updateSetting(
                     language: AppLanguageExtension.fromCode(value!),
                   ),
+                  key: const ValueKey('setting_language'),
                 ),
                 _buildDropdownSetting(
                   "💰 العملة",
@@ -101,6 +122,7 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
                   (value) => _updateSetting(
                     currency: AppCurrencyExtension.fromCode(value!),
                   ),
+                  key: const ValueKey('setting_currency'),
                 ),
               ],
             ),
@@ -165,62 +187,23 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
               children: [
                 _buildStringFieldSetting(
                   "📧 البريد الإلكتروني للدعم",
-                  _currentSettings.supportEmail,
-                  (value) => _updateSetting(supportEmail: value),
+                  _supportEmailController,
                   keyboardType: TextInputType.emailAddress,
                 ),
                 _buildStringFieldSetting(
                   "📞 رقم الهاتف للدعم",
-                  _currentSettings.supportPhone,
-                  (value) => _updateSetting(supportPhone: value),
+                  _supportPhoneController,
                   keyboardType: TextInputType.phone,
                 ),
                 _buildStringFieldSetting(
                   "🌐 موقع الدعم",
-                  _currentSettings.supportWebsite,
-                  (value) => _updateSetting(supportWebsite: value),
+                  _supportWebsiteController,
                   keyboardType: TextInputType.url,
                 ),
               ],
             ),
 
-            _buildCard(
-              title: "🚚 إعدادات التوصيل",
-              children: [
-                _buildDeliveryInfoBanner(),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.of(
-                      context,
-                    ).pushNamed(AppRoutes.deliveryZonePricing);
-                  },
-                  icon: const Icon(Icons.map_rounded),
-                  label: const Text('إدارة تسعير المناطق (Owner فقط)'),
-                ),
-                const SizedBox(height: 12),
-                _buildTextFieldSetting(
-                  "💰 رسوم التوصيل الأساسية (ج.م)",
-                  _currentSettings.appDeliveryBaseFee,
-                  (value) => _updateSetting(appDeliveryBaseFee: value),
-                ),
-                _buildTextFieldSetting(
-                  "📏 رسوم لكل كيلومتر (ج.م)",
-                  _currentSettings.appDeliveryFeePerKm,
-                  (value) => _updateSetting(appDeliveryFeePerKm: value),
-                ),
-                _buildTextFieldSetting(
-                  "🗺️ أقصى مسافة للتوصيل (كم)",
-                  _currentSettings.appDeliveryMaxDistance,
-                  (value) => _updateSetting(appDeliveryMaxDistance: value),
-                ),
-                _buildIntFieldSetting(
-                  "⏱️ الوقت التقديري للتوصيل (دقيقة)",
-                  _currentSettings.appDeliveryEstimatedTime,
-                  (value) => _updateSetting(appDeliveryEstimatedTime: value),
-                ),
-              ],
-            ),
+
 
             const SizedBox(height: 24),
             _buildActionButtons(provider),
@@ -274,11 +257,14 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     String title,
     String value,
     List<String> options,
-    ValueChanged<String?> onChanged,
-  ) {
+    ValueChanged<String?> onChanged, {
+    required Key key,
+  }) {
     return ListTile(
+      key: key,
       title: Text(title),
       trailing: DropdownButton<String>(
+        key: ValueKey('dropdown_${key.toString()}'),
         value: value,
         items: options.map((String option) {
           return DropdownMenuItem<String>(
@@ -314,68 +300,16 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     );
   }
 
-  Widget _buildTextFieldSetting(
-    String title,
-    double value,
-    ValueChanged<double> onChanged,
-  ) {
-    final controller = TextEditingController(text: value.toString());
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: TextField(
-        controller: controller,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        decoration: InputDecoration(
-          labelText: title,
-          border: const OutlineInputBorder(),
-          suffixIcon: const Icon(Icons.edit),
-        ),
-        onChanged: (val) {
-          final parsed = double.tryParse(val);
-          if (parsed != null) {
-            onChanged(parsed);
-          }
-        },
-      ),
-    );
-  }
 
-  Widget _buildIntFieldSetting(
-    String title,
-    int value,
-    ValueChanged<int> onChanged,
-  ) {
-    final controller = TextEditingController(text: value.toString());
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: TextField(
-        controller: controller,
-        keyboardType: TextInputType.number,
-        decoration: InputDecoration(
-          labelText: title,
-          border: const OutlineInputBorder(),
-          suffixIcon: const Icon(Icons.edit),
-        ),
-        onChanged: (val) {
-          final parsed = int.tryParse(val);
-          if (parsed != null) {
-            onChanged(parsed);
-          }
-        },
-      ),
-    );
-  }
 
   Widget _buildStringFieldSetting(
     String title,
-    String value,
-    ValueChanged<String> onChanged, {
+    TextEditingController controller, {
     TextInputType keyboardType = TextInputType.text,
   }) {
-    final controller = TextEditingController(text: value);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: TextField(
+      child: TextFormField(
         controller: controller,
         keyboardType: keyboardType,
         decoration: InputDecoration(
@@ -383,33 +317,17 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
           border: const OutlineInputBorder(),
           suffixIcon: const Icon(Icons.edit),
         ),
-        onChanged: onChanged,
+        validator: (value) {
+          if (value == null || value.trim().isEmpty) {
+            return 'هذا الحقل مطلوب';
+          }
+          return null;
+        },
       ),
     );
   }
 
-  Widget _buildDeliveryInfoBanner() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.blue.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.info_outline, color: Colors.blue[700]),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Text(
-              'هذه الإعدادات تُطبق عند اختيار التاجر "توصيل التطبيق".\nيتم حساب رسوم التوصيل تلقائياً بناءً على المسافة.',
-              style: TextStyle(fontSize: 12, height: 1.4),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+
 
   Widget _buildActionButtons(AppSettingsProvider provider) {
     return Row(
@@ -458,10 +376,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
     String? supportEmail,
     String? supportPhone,
     String? supportWebsite,
-    double? appDeliveryBaseFee,
-    double? appDeliveryFeePerKm,
-    double? appDeliveryMaxDistance,
-    int? appDeliveryEstimatedTime,
   }) {
     setState(() {
       _currentSettings = _currentSettings.copyWith(
@@ -484,15 +398,6 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
         supportEmail: supportEmail ?? _currentSettings.supportEmail,
         supportPhone: supportPhone ?? _currentSettings.supportPhone,
         supportWebsite: supportWebsite ?? _currentSettings.supportWebsite,
-        appDeliveryBaseFee:
-            appDeliveryBaseFee ?? _currentSettings.appDeliveryBaseFee,
-        appDeliveryFeePerKm:
-            appDeliveryFeePerKm ?? _currentSettings.appDeliveryFeePerKm,
-        appDeliveryMaxDistance:
-            appDeliveryMaxDistance ?? _currentSettings.appDeliveryMaxDistance,
-        appDeliveryEstimatedTime:
-            appDeliveryEstimatedTime ??
-            _currentSettings.appDeliveryEstimatedTime,
       );
     });
   }
@@ -513,11 +418,19 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
   // 🔹 Actions
 
   void _saveSettings() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    final updatedSettings = _currentSettings.copyWith(
+      supportEmail: _supportEmailController.text.trim(),
+      supportPhone: _supportPhoneController.text.trim(),
+      supportWebsite: _supportWebsiteController.text.trim(),
+    );
+
     try {
       await Provider.of<AppSettingsProvider>(
         context,
         listen: false,
-      ).updateAppSettings(_currentSettings);
+      ).updateAppSettings(updatedSettings);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -552,11 +465,15 @@ class _AppSettingsScreenState extends State<AppSettingsScreen> {
             onPressed: () async {
               Navigator.pop(context);
               try {
-                await Provider.of<AppSettingsProvider>(
-                  context,
-                  listen: false,
-                ).resetSettings();
-                setState(() {});
+                final provider = Provider.of<AppSettingsProvider>(context, listen: false);
+                await provider.resetSettings();
+                final loaded = provider.appSettings;
+                setState(() {
+                  _currentSettings = loaded;
+                  _supportEmailController.text = loaded.supportEmail;
+                  _supportPhoneController.text = loaded.supportPhone;
+                  _supportWebsiteController.text = loaded.supportWebsite;
+                });
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(

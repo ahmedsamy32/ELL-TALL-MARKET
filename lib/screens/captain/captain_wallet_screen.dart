@@ -294,13 +294,15 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen>
   Widget _buildTransactionsTab() {
     return RefreshIndicator(
       onRefresh: _loadData,
-      child: Column(
-        children: [
-          _buildBalanceCard(),
-          if (_isOfficeView) _buildOfficeTopupCard(),
-          if (_isOfficeView) _buildOfficeTopupRequestsSection(),
-          _buildFilters(),
-          Expanded(child: _buildOrdersList()),
+      child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverToBoxAdapter(child: _buildBalanceCard()),
+          if (_isOfficeView) SliverToBoxAdapter(child: _buildOfficeTopupCard()),
+          if (_isOfficeView)
+            SliverToBoxAdapter(child: _buildOfficeTopupRequestsSection()),
+          SliverToBoxAdapter(child: _buildFilters()),
+          _buildSliverOrdersList(),
         ],
       ),
     );
@@ -429,66 +431,73 @@ class _CaptainWalletScreenState extends State<CaptainWalletScreen>
     );
   }
 
-  Widget _buildOrdersList() {
+  Widget _buildSliverOrdersList() {
     if (_filteredOrders.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.receipt_long, size: 80, color: Colors.grey),
-            SizedBox(height: 16),
-            Text('لا توجد طلبات مكتملة'),
-          ],
+      return const SliverFillRemaining(
+        hasScrollBody: false,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.receipt_long, size: 80, color: Colors.grey),
+              SizedBox(height: 16),
+              Text('لا توجد طلبات مكتملة'),
+            ],
+          ),
         ),
       );
     }
 
-    return ListView.builder(
-      itemCount: _filteredOrders.length,
-      padding: EdgeInsets.all(16),
-      itemBuilder: (context, index) {
-        final order = _filteredOrders[index];
-        final commission = CaptainOrderHelpers.calculateCommission(
-          order.totalAmount,
-        );
+    return SliverPadding(
+      padding: const EdgeInsets.all(16),
+      sliver: SliverList(
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final order = _filteredOrders[index];
+            final commission = CaptainOrderHelpers.calculateCommission(
+              order.totalAmount,
+            );
 
-        return Card(
-          clipBehavior: Clip.antiAlias,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: Colors.green,
-              child: Icon(Icons.attach_money, color: Colors.white),
-            ),
-            title: Text('طلب #${order.id.substring(0, 8)}'),
-            subtitle: Text(
-              _formatDate(order.createdAt),
-              style: TextStyle(fontSize: 12),
-            ),
-            trailing: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '+${_settingsProvider.formatCurrency(commission)}',
-                  style: const TextStyle(
-                    color: Colors.green,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
+            return Card(
+              clipBehavior: Clip.antiAlias,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.green,
+                  child: Icon(Icons.attach_money, color: Colors.white),
                 ),
-                Text(
-                  'من ${_settingsProvider.formatCurrency(order.totalAmount)}',
-                  style: const TextStyle(fontSize: 10, color: Colors.grey),
+                title: Text('طلب #${order.id.substring(0, 8)}'),
+                subtitle: Text(
+                  _formatDate(order.createdAt),
+                  style: const TextStyle(fontSize: 12),
                 ),
-              ],
-            ),
-            onTap: () => _showOrderDetails(order),
-          ),
-        );
-      },
+                trailing: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '+${_settingsProvider.formatCurrency(commission)}',
+                      style: const TextStyle(
+                        color: Colors.green,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                    Text(
+                      'من ${_settingsProvider.formatCurrency(order.totalAmount)}',
+                      style: const TextStyle(fontSize: 10, color: Colors.grey),
+                    ),
+                  ],
+                ),
+                onTap: () => _showOrderDetails(order),
+              ),
+            );
+          },
+          childCount: _filteredOrders.length,
+        ),
+      ),
     );
   }
 

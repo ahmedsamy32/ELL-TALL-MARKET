@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
@@ -22,6 +23,8 @@ import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/services/delivery_zone_pricing_service.dart';
 import 'package:ell_tall_market/models/delivery_zone_pricing_model.dart';
 import 'package:ell_tall_market/services/notification_service.dart';
+import 'package:ell_tall_market/services/permission_service.dart';
+import 'package:ell_tall_market/services/store_service.dart';
 
 /// شاشة تسجيل التاجر
 ///
@@ -72,6 +75,10 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
   List<Map<String, dynamic>> _categories = [];
   bool _isLoadingCategories = false;
 
+  // State - شعار المتجر
+  XFile? _logoImage;
+  Uint8List? _logoImageBytes;
+
   // FocusNodes للتنقل بين الحقول
   final _firstNameFocus = FocusNode();
   final _middleNameFocus = FocusNode();
@@ -102,6 +109,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
   final _storeNameFieldKey = GlobalKey();
   final _storeMapSectionKey = GlobalKey();
   final _storeCategorySectionKey = GlobalKey();
+  final _storeLogoSectionKey = GlobalKey();
 
   final _passwordFieldKey = GlobalKey();
   final _confirmPasswordFieldKey = GlobalKey();
@@ -492,6 +500,13 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
         return false;
       }
 
+      if (_logoImageBytes == null) {
+        _showWarningMessage('يرجى اختيار صورة/شعار المتجر');
+        enableAutovalidate();
+        scrollToKey(_storeLogoSectionKey);
+        return false;
+      }
+
       if (_selectedCategory == null || _selectedCategory!.isEmpty) {
         _showWarningMessage('يرجى اختيار فئة المتجر');
         enableAutovalidate();
@@ -858,6 +873,44 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
       AppLogger.info(
         "[RegisterMerchant] ✅ تم إنشاء حساب التاجر: ${authResponse!.user!.id}",
       );
+
+      final userId = authResponse.user!.id;
+      final session = Supabase.instance.client.auth.currentSession;
+      if (session != null && _logoImageBytes != null) {
+        try {
+          AppLogger.info("[RegisterMerchant] 🔄 جاري محاولة رفع شعار المتجر...");
+          final storeData = await Supabase.instance.client
+              .from('stores')
+              .select('id')
+              .eq('merchant_id', userId)
+              .maybeSingle();
+
+          if (storeData != null) {
+            final storeId = storeData['id'] as String;
+            final fileName = _logoImage?.name ?? 'logo.jpg';
+            final uploadedUrl = await StoreService.uploadStoreImageV2(
+              storeId: storeId,
+              bytes: _logoImageBytes!,
+              fileName: fileName,
+              type: 'logo',
+            );
+
+            if (uploadedUrl != null) {
+              await StoreService.updateStoreFieldsV2(
+                storeId: storeId,
+                imageUrl: uploadedUrl,
+              );
+              AppLogger.info("[RegisterMerchant] ✅ تم رفع شعار المتجر وتحديثه بنجاح: $uploadedUrl");
+            }
+          } else {
+            AppLogger.warning("[RegisterMerchant] ⚠️ لم يتم العثور على متجر للتاجر لرفع الشعار له");
+          }
+        } catch (e, st) {
+          AppLogger.error("[RegisterMerchant] ⚠️ فشل رفع الشعار (قد يكون بسبب انتظار تأكيد البريد)", e, st);
+        }
+      } else {
+        AppLogger.info("[RegisterMerchant] ℹ️ تخطي رفع الشعار (لا توجد جلسة نشطة أو لم يتم اختيار صورة)");
+      }
 
       try {
         await NotificationServiceEnhanced.instance
@@ -1268,11 +1321,13 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                             keyboardType: TextInputType.multiline,
                           ),
 
-                          const SizedBox(height: 16),
+                           const SizedBox(height: 16),
 
-                          // Store logo (mandatory)
-                          // Category Dropdown
-                          Container(
+                           _buildStoreLogoPicker(theme),
+                           const SizedBox(height: 16),
+
+                           // Category Dropdown
+                           Container(
                             key: _storeCategorySectionKey,
                             child: DropdownButtonFormField<String>(
                               key: ValueKey<String>(
@@ -1360,7 +1415,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                                   }
 
                                   return DropdownMenuItem<String>(
-                                    value: category['id']?.toString() ?? '',
+                                    value: category['name']?.toString() ?? '',
                                     child: Row(
                                       children: [
                                         Icon(
@@ -1752,6 +1807,308 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
           title,
           style: theme.textTheme.titleLarge?.copyWith(
             fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pickStoreLogo() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext context) {
+        return Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(24),
+              topRight: Radius.circular(24),
+            ),
+          ),
+          child: SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 12, bottom: 8),
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'اختر مصدر شعار المتجر',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.photo_library_rounded,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                  title: const Text(
+                    'المعرض',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: const Text('اختر صورة من معرض الصور'),
+                  trailing: Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  onTap: () => Navigator.pop(context, ImageSource.gallery),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.secondaryContainer.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.camera_alt_rounded,
+                      color: Theme.of(context).colorScheme.secondary,
+                    ),
+                  ),
+                  title: const Text(
+                    'الكاميرا',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: const Text('التقط صورة جديدة'),
+                  trailing: Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  onTap: () => Navigator.pop(context, ImageSource.camera),
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (source == null) return;
+
+    try {
+      final permissionService = PermissionService();
+      final result = await permissionService.requestImagePermissions(
+        useCamera: source == ImageSource.camera,
+        useGallery: source == ImageSource.gallery,
+      );
+
+      if (!result.granted) {
+        if (!mounted) return;
+        if (result.permanentlyDenied) {
+          _showPermissionDialog(result.message ?? 'يجب منح الأذونات المطلوبة');
+        } else {
+          _showErrorMessage(result.message ?? 'تم رفض الإذن');
+        }
+        return;
+      }
+
+      final picker = ImagePicker();
+      final pickedFile = await picker.pickImage(
+        source: source,
+        imageQuality: 80,
+        maxWidth: 800,
+        maxHeight: 800,
+      );
+
+      if (pickedFile != null && mounted) {
+        final bytes = await pickedFile.readAsBytes();
+        if (!mounted) return;
+        setState(() {
+          _logoImage = pickedFile;
+          _logoImageBytes = bytes;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        _showErrorMessage('فشل في اختيار الصورة');
+      }
+    }
+  }
+
+  void _showPermissionDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('إذن مطلوب'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await PermissionService().openAppSettings();
+            },
+            child: const Text('فتح الإعدادات'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStoreLogoPicker(ThemeData theme) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'شعار المتجر',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Text(
+              '*',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        GestureDetector(
+          onTap: _pickStoreLogo,
+          child: Container(
+            key: _storeLogoSectionKey,
+            width: double.infinity,
+            height: 160,
+            decoration: BoxDecoration(
+              color: _logoImageBytes == null
+                  ? theme.colorScheme.primaryContainer.withValues(alpha: 0.05)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: _logoImageBytes == null
+                    ? theme.colorScheme.primary.withValues(alpha: 0.3)
+                    : Colors.transparent,
+                style: _logoImageBytes == null ? BorderStyle.solid : BorderStyle.none,
+                width: 1.5,
+              ),
+            ),
+            child: _logoImageBytes == null
+                ? Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.add_photo_alternate_outlined,
+                          color: theme.colorScheme.primary,
+                          size: 32,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'اضغط لرفع شعار المتجر',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'يفضل مقاس 512x512 بكسل (JPEG/PNG)',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  )
+                : Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Image.memory(
+                          _logoImageBytes!,
+                          width: double.infinity,
+                          height: 160,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: CircleAvatar(
+                          backgroundColor: Colors.black.withValues(alpha: 0.6),
+                          radius: 18,
+                          child: IconButton(
+                            icon: const Icon(
+                              Icons.delete_outline_rounded,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                _logoImage = null;
+                                _logoImageBytes = null;
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        bottom: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.6),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.cached_rounded,
+                                color: Colors.white,
+                                size: 14,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'تغيير الشعار',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
           ),
         ),
       ],
@@ -2238,6 +2595,8 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
           keyboardType: TextInputType.multiline,
         ),
         const SizedBox(height: 16),
+        _buildStoreLogoPicker(theme),
+        const SizedBox(height: 16),
         Container(
           key: _storeCategorySectionKey,
           child: DropdownButtonFormField<String>(
@@ -2279,7 +2638,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
               ),
               ..._categories.map((category) {
                 return DropdownMenuItem<String>(
-                  value: category['id']?.toString() ?? '',
+                  value: category['name']?.toString() ?? '',
                   child: Text(category['name']?.toString() ?? ''),
                 );
               }),
@@ -2450,11 +2809,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                       height: 110,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Colors.white.withValues(alpha: 0.15),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.4),
-                          width: 2.5,
-                        ),
+                        color: Colors.white,
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withValues(alpha: 0.2),

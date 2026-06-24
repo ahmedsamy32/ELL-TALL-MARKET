@@ -8,6 +8,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 // Firebase & Supabase
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 // State Management
@@ -62,8 +63,68 @@ import 'generated/l10n.dart';
 /// Handler for Firebase Messaging background messages.
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
-  AppLogger.info('Handling a background message: ${message.messageId}');
+  try {
+    // Initialize Firebase with platform-specific options
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+
+    // Initialize local notifications to create the channel in the background isolate
+    final FlutterLocalNotificationsPlugin localNotifications = FlutterLocalNotificationsPlugin();
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const initSettings = InitializationSettings(android: androidSettings);
+    await localNotifications.initialize(settings: initSettings);
+
+    // Programmatically create the Android notification channel if it doesn't exist
+    final androidPlugin = localNotifications
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    if (androidPlugin != null) {
+      const channel = AndroidNotificationChannel(
+        'ell_tall_market',
+        'Ell Tall Market',
+        description: 'إشعارات سوق التل',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
+        enableLights: true,
+        showBadge: true,
+      );
+      await androidPlugin.createNotificationChannel(channel);
+    }
+
+    // Safely print/log background event
+    debugPrint('Handling a background message: ${message.messageId}');
+
+    // Fallback for data-only messages: if notification is null but data contains title/body
+    if (message.notification == null && message.data.isNotEmpty) {
+      final title = message.data['title'] ?? 'سوق التل';
+      final body = message.data['body'] ?? message.data['message'] ?? '';
+      
+      if (body.isNotEmpty) {
+        const androidDetails = AndroidNotificationDetails(
+          'ell_tall_market',
+          'Ell Tall Market',
+          channelDescription: 'إشعارات سوق التل',
+          importance: Importance.high,
+          priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
+          showWhen: true,
+          icon: '@mipmap/ic_launcher',
+        );
+        const details = NotificationDetails(android: androidDetails);
+        final notifId = (message.messageId ?? DateTime.now().millisecondsSinceEpoch.toString()).hashCode & 0x7FFFFFFF;
+        await localNotifications.show(
+          id: notifId,
+          title: title,
+          body: body,
+          notificationDetails: details,
+        );
+      }
+    }
+  } catch (e) {
+    debugPrint('Error in background message handler: $e');
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -359,16 +420,14 @@ Future<void> initializeAppServices() async {
     }
 
     // Initialize notification service (FCM + local notifications)
-    if (!kIsWeb) {
-      final notifReady = await NotificationServiceEnhanced.instance
-          .initialize();
-      if (ProductionConfig.shouldShowDebugLogs) {
-        AppLogger.info(
-          notifReady
-              ? '✅ Notification service initialized'
-              : '⚠️ Notification service initialization failed',
-        );
-      }
+    final notifReady = await NotificationServiceEnhanced.instance
+        .initialize();
+    if (ProductionConfig.shouldShowDebugLogs) {
+      AppLogger.info(
+        notifReady
+            ? '✅ Notification service initialized'
+            : '⚠️ Notification service initialization failed',
+      );
     }
   } catch (e) {
     if (ProductionConfig.shouldShowDebugLogs) {

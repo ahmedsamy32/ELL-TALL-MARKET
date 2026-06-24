@@ -21,7 +21,7 @@ enum AddressFormType {
 /// Actual visibility is still controlled per-screen/per-user.
 const bool _isMapPickingEnabled = true;
 
-class AddressFormSection extends StatelessWidget {
+class AddressFormSection extends StatefulWidget {
   final GlobalKey<FormState> formKey;
 
   /// When true (default), this section wraps its fields in a [Form].
@@ -51,6 +51,7 @@ class AddressFormSection extends StatelessWidget {
   final FocusNode governorateFocus;
   final FocusNode cityFocus;
   final FocusNode streetFocus;
+  final FocusNode? areaFocus;
 
   final VoidCallback onPickFromMap;
 
@@ -91,6 +92,7 @@ class AddressFormSection extends StatelessWidget {
     required this.governorateFocus,
     required this.cityFocus,
     required this.streetFocus,
+    this.areaFocus,
     required this.onPickFromMap,
     this.position,
     this.requirePosition = false,
@@ -106,10 +108,42 @@ class AddressFormSection extends StatelessWidget {
   });
 
   @override
+  State<AddressFormSection> createState() => _AddressFormSectionState();
+}
+
+class _AddressFormSectionState extends State<AddressFormSection> {
+  late FocusNode _areaFocus;
+
+  @override
+  void initState() {
+    super.initState();
+    _areaFocus = widget.areaFocus ?? FocusNode();
+  }
+
+  @override
+  void didUpdateWidget(AddressFormSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.areaFocus != oldWidget.areaFocus) {
+      if (oldWidget.areaFocus == null) {
+        _areaFocus.dispose();
+      }
+      _areaFocus = widget.areaFocus ?? FocusNode();
+    }
+  }
+
+  @override
+  void dispose() {
+    if (widget.areaFocus == null) {
+      _areaFocus.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final color = Theme.of(context).colorScheme;
     final text = Theme.of(context).textTheme;
-    final isResidential = formType == AddressFormType.residential;
+    final isResidential = widget.formType == AddressFormType.residential;
 
     List<String> withCurrent(List<String>? options, String currentValue) {
       final current = currentValue.trim();
@@ -121,29 +155,29 @@ class AddressFormSection extends StatelessWidget {
     }
 
     final governorates = withCurrent(
-      governorateOptions,
-      governorateController.text,
+      widget.governorateOptions,
+      widget.governorateController.text,
     );
-    final cities = withCurrent(cityOptions, cityController.text);
-    final areas = withCurrent(areaOptions, areaController.text);
+    final cities = withCurrent(widget.cityOptions, widget.cityController.text);
+    final areas = withCurrent(widget.areaOptions, widget.areaController.text);
 
     // إذا تم تمرير options فهذا يعني أن الحقل يجب أن يكون اختياراً فقط
     // (حتى لو كانت القائمة فارغة مؤقتاً أثناء اختيار الحقل السابق)
-    final useGovernorateDropdown = governorateOptions != null;
-    final useCityDropdown = cityOptions != null;
-    final useAreaDropdown = areaOptions != null;
-    final effectiveShowMapPicker = _isMapPickingEnabled && showMapPicker;
-    final hasGovernorateSelection = governorateController.text
+    final useGovernorateDropdown = widget.governorateOptions != null;
+    final useCityDropdown = widget.cityOptions != null;
+    final useAreaDropdown = widget.areaOptions != null;
+    final effectiveShowMapPicker = _isMapPickingEnabled && widget.showMapPicker;
+    final hasGovernorateSelection = widget.governorateController.text
         .trim()
         .isNotEmpty;
-    final hasCitySelection = cityController.text.trim().isNotEmpty;
+    final hasCitySelection = widget.cityController.text.trim().isNotEmpty;
 
     final fields = Column(
       children: [
         // اسم العنوان (للعناوين السكنية فقط)
-        if (isResidential && labelController != null) ...[
+        if (isResidential && widget.labelController != null) ...[
           TextFormField(
-            controller: labelController,
+            controller: widget.labelController,
             textInputAction: TextInputAction.next,
             decoration: const InputDecoration(
               labelText: 'اسم العنوان',
@@ -158,7 +192,7 @@ class AddressFormSection extends StatelessWidget {
               return null;
             },
             onFieldSubmitted: (_) =>
-                FocusScope.of(context).requestFocus(governorateFocus),
+                FocusScope.of(context).requestFocus(widget.governorateFocus),
           ),
           const SizedBox(height: 12),
         ],
@@ -167,14 +201,15 @@ class AddressFormSection extends StatelessWidget {
             Expanded(
               child: useGovernorateDropdown
                   ? DropdownButtonFormField<String>(
+                      focusNode: widget.governorateFocus,
                       key: ValueKey<String>(
-                        'gov-${governorateController.text.trim()}-${governorates.length}',
+                        'gov-${widget.governorateController.text.trim()}-${governorates.length}',
                       ),
                       isExpanded: true,
                       isDense: true,
-                      initialValue: governorateController.text.trim().isEmpty
+                      initialValue: widget.governorateController.text.trim().isEmpty
                           ? null
-                          : governorateController.text.trim(),
+                          : widget.governorateController.text.trim(),
                       decoration: const InputDecoration(
                         labelText: 'المحافظة',
                         prefixIcon: Icon(Icons.map_outlined),
@@ -194,10 +229,10 @@ class AddressFormSection extends StatelessWidget {
                           .toList(),
                       onChanged: (value) {
                         final selected = (value ?? '').trim();
-                        governorateController.text = selected;
-                        onGovernorateChanged?.call(selected);
+                        widget.governorateController.text = selected;
+                        widget.onGovernorateChanged?.call(selected);
                         if (selected.isNotEmpty) {
-                          FocusScope.of(context).nextFocus();
+                          FocusScope.of(context).requestFocus(widget.cityFocus);
                         }
                       },
                       validator: (v) {
@@ -208,8 +243,8 @@ class AddressFormSection extends StatelessWidget {
                       },
                     )
                   : TextFormField(
-                      controller: governorateController,
-                      focusNode: governorateFocus,
+                      controller: widget.governorateController,
+                      focusNode: widget.governorateFocus,
                       textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(
                         labelText: 'المحافظة',
@@ -222,23 +257,24 @@ class AddressFormSection extends StatelessWidget {
                         }
                         return null;
                       },
-                      onChanged: onGovernorateChanged,
+                      onChanged: widget.onGovernorateChanged,
                       onFieldSubmitted: (_) =>
-                          FocusScope.of(context).requestFocus(cityFocus),
+                          FocusScope.of(context).requestFocus(widget.cityFocus),
                     ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: useCityDropdown
                   ? DropdownButtonFormField<String>(
+                      focusNode: widget.cityFocus,
                       key: ValueKey<String>(
-                        'city-${cityController.text.trim()}-${cities.length}',
+                        'city-${widget.cityController.text.trim()}-${cities.length}',
                       ),
                       isExpanded: true,
                       isDense: true,
-                      initialValue: cityController.text.trim().isEmpty
+                      initialValue: widget.cityController.text.trim().isEmpty
                           ? null
-                          : cityController.text.trim(),
+                          : widget.cityController.text.trim(),
                       decoration: const InputDecoration(
                         labelText: 'المدينة/المركز',
                         prefixIcon: Icon(Icons.location_city),
@@ -258,10 +294,10 @@ class AddressFormSection extends StatelessWidget {
                           .toList(),
                       onChanged: (value) {
                         final selected = (value ?? '').trim();
-                        cityController.text = selected;
-                        onCityChanged?.call(selected);
+                        widget.cityController.text = selected;
+                        widget.onCityChanged?.call(selected);
                         if (selected.isNotEmpty) {
-                          FocusScope.of(context).nextFocus();
+                          FocusScope.of(context).requestFocus(_areaFocus);
                         }
                       },
                       validator: (v) {
@@ -272,8 +308,8 @@ class AddressFormSection extends StatelessWidget {
                       },
                     )
                   : TextFormField(
-                      controller: cityController,
-                      focusNode: cityFocus,
+                      controller: widget.cityController,
+                      focusNode: widget.cityFocus,
                       textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(
                         labelText: 'المدينة/المركز',
@@ -286,9 +322,9 @@ class AddressFormSection extends StatelessWidget {
                         }
                         return null;
                       },
-                      onChanged: onCityChanged,
+                      onChanged: widget.onCityChanged,
                       onFieldSubmitted: (_) =>
-                          FocusScope.of(context).nextFocus(),
+                          FocusScope.of(context).requestFocus(_areaFocus),
                     ),
             ),
           ],
@@ -316,14 +352,15 @@ class AddressFormSection extends StatelessWidget {
         const SizedBox(height: 12),
         useAreaDropdown
             ? DropdownButtonFormField<String>(
+                focusNode: _areaFocus,
                 key: ValueKey<String>(
-                  'area-${areaController.text.trim()}-${areas.length}',
+                  'area-${widget.areaController.text.trim()}-${areas.length}',
                 ),
                 isExpanded: true,
                 isDense: true,
-                initialValue: areaController.text.trim().isEmpty
+                initialValue: widget.areaController.text.trim().isEmpty
                     ? null
-                    : areaController.text.trim(),
+                    : widget.areaController.text.trim(),
                 decoration: const InputDecoration(
                   labelText: 'المنطقة/الحي',
                   prefixIcon: Icon(Icons.cottage_outlined),
@@ -343,10 +380,10 @@ class AddressFormSection extends StatelessWidget {
                     .toList(),
                 onChanged: (value) {
                   final selected = (value ?? '').trim();
-                  areaController.text = selected;
-                  onAreaChanged?.call(selected);
+                  widget.areaController.text = selected;
+                  widget.onAreaChanged?.call(selected);
                   if (selected.isNotEmpty) {
-                    FocusScope.of(context).requestFocus(streetFocus);
+                    FocusScope.of(context).requestFocus(widget.streetFocus);
                   }
                 },
                 validator: (v) {
@@ -357,14 +394,15 @@ class AddressFormSection extends StatelessWidget {
                 },
               )
             : TextFormField(
-                controller: areaController,
+                controller: widget.areaController,
+                focusNode: _areaFocus,
                 textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(
                   labelText: 'المنطقة/الحي',
                   prefixIcon: Icon(Icons.cottage_outlined),
                   border: OutlineInputBorder(),
                 ),
-                onChanged: onAreaChanged,
+                onChanged: widget.onAreaChanged,
                 validator: (v) {
                   if (isResidential && (v == null || v.trim().isEmpty)) {
                     return 'الرجاء إدخال المنطقة/الحي';
@@ -372,7 +410,7 @@ class AddressFormSection extends StatelessWidget {
                   return null;
                 },
                 onFieldSubmitted: (_) =>
-                    FocusScope.of(context).requestFocus(streetFocus),
+                    FocusScope.of(context).requestFocus(widget.streetFocus),
               ),
         if (useAreaDropdown &&
             hasGovernorateSelection &&
@@ -389,8 +427,8 @@ class AddressFormSection extends StatelessWidget {
         ],
         const SizedBox(height: 12),
         TextFormField(
-          controller: streetController,
-          focusNode: streetFocus,
+          controller: widget.streetController,
+          focusNode: widget.streetFocus,
           textInputAction: TextInputAction.next,
           decoration: const InputDecoration(
             labelText: 'الشارع',
@@ -411,10 +449,10 @@ class AddressFormSection extends StatelessWidget {
           Row(
             children: [
               // رقم المبنى
-              if (buildingNumberController != null)
+              if (widget.buildingNumberController != null)
                 Expanded(
                   child: TextFormField(
-                    controller: buildingNumberController,
+                    controller: widget.buildingNumberController,
                     textInputAction: TextInputAction.next,
                     keyboardType: TextInputType.text,
                     decoration: const InputDecoration(
@@ -425,14 +463,14 @@ class AddressFormSection extends StatelessWidget {
                     onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
                   ),
                 ),
-              if (buildingNumberController != null &&
-                  floorNumberController != null)
+              if (widget.buildingNumberController != null &&
+                  widget.floorNumberController != null)
                 const SizedBox(width: 12),
               // رقم الطابق
-              if (floorNumberController != null)
+              if (widget.floorNumberController != null)
                 Expanded(
                   child: TextFormField(
-                    controller: floorNumberController,
+                    controller: widget.floorNumberController,
                     textInputAction: TextInputAction.next,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(
@@ -443,14 +481,14 @@ class AddressFormSection extends StatelessWidget {
                     onFieldSubmitted: (_) => FocusScope.of(context).nextFocus(),
                   ),
                 ),
-              if (floorNumberController != null &&
-                  apartmentNumberController != null)
+              if (widget.floorNumberController != null &&
+                  widget.apartmentNumberController != null)
                 const SizedBox(width: 12),
               // رقم الشقة
-              if (apartmentNumberController != null)
+              if (widget.apartmentNumberController != null)
                 Expanded(
                   child: TextFormField(
-                    controller: apartmentNumberController,
+                    controller: widget.apartmentNumberController,
                     textInputAction: TextInputAction.next,
                     keyboardType: TextInputType.text,
                     decoration: const InputDecoration(
@@ -466,7 +504,7 @@ class AddressFormSection extends StatelessWidget {
         ],
         const SizedBox(height: 12),
         TextFormField(
-          controller: landmarkController,
+          controller: widget.landmarkController,
           textInputAction: isResidential
               ? TextInputAction.next
               : TextInputAction.done,
@@ -485,10 +523,10 @@ class AddressFormSection extends StatelessWidget {
           },
         ),
         // ملاحظات إضافية (للعناوين السكنية فقط)
-        if (isResidential && notesController != null) ...[
+        if (isResidential && widget.notesController != null) ...[
           const SizedBox(height: 12),
           TextFormField(
-            controller: notesController,
+            controller: widget.notesController,
             textInputAction: TextInputAction.done,
             maxLines: 2,
             decoration: const InputDecoration(
@@ -521,7 +559,7 @@ class AddressFormSection extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               IconButton.filledTonal(
-                onPressed: onPickFromMap,
+                onPressed: widget.onPickFromMap,
                 icon: const Icon(Icons.map),
                 tooltip: 'اختر من الخريطة',
                 iconSize: 24,
@@ -530,7 +568,7 @@ class AddressFormSection extends StatelessWidget {
           ),
         // Hide coordinates from UI; only show a hint when location is required
         // but not picked yet.
-        if (effectiveShowMapPicker && requirePosition && position == null) ...[
+        if (effectiveShowMapPicker && widget.requirePosition && widget.position == null) ...[
           const SizedBox(height: 8),
           Text(
             'الرجاء اختيار الموقع من الخريطة',
@@ -538,16 +576,16 @@ class AddressFormSection extends StatelessWidget {
           ),
         ],
         const SizedBox(height: 12),
-        if (wrapInForm)
+        if (widget.wrapInForm)
           Form(
-            key: formKey,
+            key: widget.formKey,
             autovalidateMode: AutovalidateMode.onUserInteraction,
             child: fields,
           )
         else
           fields,
-        if ((summaryCity ?? '').trim().isNotEmpty &&
-            (summaryGovernorate ?? '').trim().isNotEmpty) ...[
+        if ((widget.summaryCity ?? '').trim().isNotEmpty &&
+            (widget.summaryGovernorate ?? '').trim().isNotEmpty) ...[
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -560,7 +598,7 @@ class AddressFormSection extends StatelessWidget {
                 Icon(Icons.check_circle, size: 16, color: color.primary),
                 const SizedBox(width: 8),
                 Text(
-                  '${summaryCity!}، ${summaryGovernorate!}',
+                  '${widget.summaryCity!}، ${widget.summaryGovernorate!}',
                   style: text.bodySmall?.copyWith(
                     color: color.onSurface,
                     fontWeight: FontWeight.w500,
@@ -609,6 +647,7 @@ class AddressLocationFormSection extends StatelessWidget {
   final FocusNode governorateFocus;
   final FocusNode cityFocus;
   final FocusNode streetFocus;
+  final FocusNode? areaFocus;
 
   final LatLng? position;
   final ValueChanged<LatLng?> onPositionChanged;
@@ -667,6 +706,7 @@ class AddressLocationFormSection extends StatelessWidget {
     required this.governorateFocus,
     required this.cityFocus,
     required this.streetFocus,
+    this.areaFocus,
     required this.position,
     required this.onPositionChanged,
     this.onGovernorateChanged,
@@ -764,6 +804,7 @@ class AddressLocationFormSection extends StatelessWidget {
       governorateFocus: governorateFocus,
       cityFocus: cityFocus,
       streetFocus: streetFocus,
+      areaFocus: areaFocus,
       onPickFromMap: () => _pickFromMap(context),
       position: position,
       requirePosition:

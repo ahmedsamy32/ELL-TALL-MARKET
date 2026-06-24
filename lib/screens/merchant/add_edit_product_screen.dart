@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:ell_tall_market/services/permission_service.dart';
-import 'package:image_cropper/image_cropper.dart';
+// import 'package:image_cropper/image_cropper.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
@@ -16,6 +16,7 @@ import 'package:ell_tall_market/services/store_service.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_settings_screen.dart';
 import 'package:ell_tall_market/services/template_service.dart';
 import 'package:ell_tall_market/models/template_model.dart';
+import 'package:ell_tall_market/services/category_service.dart';
 import 'package:uuid/uuid.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
 
@@ -56,6 +57,14 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
   String? _selectedSectionId;
   List<Map<String, dynamic>> _storeSections = [];
   bool _existingGalleryLoaded = false;
+  bool _isActive = true;
+
+  // ===========================================================================
+  // 6. Addons
+  // ===========================================================================
+  final List<ProductAddon> _addons = [];
+  final Map<String, XFile> _addonNewImages = <String, XFile>{};
+  final Map<String, Uint8List> _addonNewImageBytes = <String, Uint8List>{};
 
   // ===========================================================================
   // 4. Image Data
@@ -76,7 +85,11 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
   // 5. Attributes (Variant Groups)
   // ===========================================================================
   bool _attributesTouched = false;
+  bool _variantsTouched = false;
   final List<_AttributeDraft> _attributeDrafts = [];
+  final List<ProductVariant> _variants = [];
+  final Map<String, TextEditingController> _variantPriceControllers = {};
+  final Map<String, TextEditingController> _variantStockControllers = {};
   Timer? _debounceTimer;
   StreamSubscription<bool>? _keyboardSubscription;
 
@@ -95,7 +108,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
       case 'weight':
         return 'الوزن';
       case 'volume':
-        return 'السعة/الحجم';
+        return 'الحجم';
       case 'unit':
         return 'وحدة القياس';
       case 'warranty':
@@ -155,6 +168,12 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     for (final draft in _attributeDrafts) {
       draft.dispose();
     }
+    for (final controller in _variantPriceControllers.values) {
+      controller.dispose();
+    }
+    for (final controller in _variantStockControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -177,6 +196,15 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     _stockController.text = product.stockQuantity.toString();
     _imageUrl = product.imageUrl;
     _selectedSectionId = product.sectionId;
+    _isActive = product.isActive;
+
+    // تحميل الإضافات
+    _addons.clear();
+    _addonNewImages.clear();
+    _addonNewImageBytes.clear();
+    if (product.addons != null) {
+      _addons.addAll(product.addons!);
+    }
 
     // احتفظ بالفئة الحالية للمنتج إن وجدت
     _storeCategoryId = product.categoryId;
@@ -205,6 +233,141 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         _attributeDrafts.add(draft);
       }
     }
+
+    // تحميل المتغيرات
+    _variants.clear();
+    if (product.variants != null) {
+      _variants.addAll(product.variants!);
+    }
+    _syncVariantControllers();
+  }
+
+  void _syncVariantControllers() {
+    for (final variant in _variants) {
+      if (!_variantPriceControllers.containsKey(variant.id)) {
+        _variantPriceControllers[variant.id] = TextEditingController(
+          text: variant.price != null ? variant.price!.toStringAsFixed(2) : '',
+        );
+      }
+      if (!_variantStockControllers.containsKey(variant.id)) {
+        _variantStockControllers[variant.id] = TextEditingController(
+          text: variant.stockQuantity != null ? variant.stockQuantity!.toString() : '',
+        );
+      }
+    }
+
+    final activeIds = _variants.map((v) => v.id).toSet();
+    _variantPriceControllers.removeWhere((id, controller) {
+      if (!activeIds.contains(id)) {
+        controller.dispose();
+        return true;
+      }
+      return false;
+    });
+    _variantStockControllers.removeWhere((id, controller) {
+      if (!activeIds.contains(id)) {
+        controller.dispose();
+        return true;
+      }
+      return false;
+    });
+  }
+
+  void _generateVariants() {
+    if (_attributeDrafts.isEmpty) {
+      _variants.clear();
+      return;
+    }
+
+    final validDrafts = _attributeDrafts.where((d) {
+      final name = d.type == 'custom'
+          ? d.customName.trim()
+          : _attributeTypeDisplayName(d.type);
+      return name.isNotEmpty && d.values.isNotEmpty;
+    }).toList();
+
+    if (validDrafts.isEmpty) {
+      _variants.clear();
+      return;
+    }
+
+    // Generate Cartesian product of all option values
+    List<List<ProductVariantOption>> combinations = [[]];
+
+    for (final draft in validDrafts) {
+      final groupName = draft.type == 'custom'
+          ? draft.customName.trim()
+          : _attributeTypeDisplayName(draft.type);
+      final List<List<ProductVariantOption>> nextCombinations = [];
+
+      for (final comb in combinations) {
+        for (final val in draft.values) {
+          final option = ProductVariantOption(
+            id: _uuid.v4(),
+            name: groupName,
+            value: val,
+            sortOrder: draft.values.indexOf(val),
+            isActive: true,
+            createdAt: DateTime.now(),
+          );
+          nextCombinations.add([...comb, option]);
+        }
+      }
+      combinations = nextCombinations;
+    }
+
+    final now = DateTime.now();
+    final List<ProductVariant> newVariants = combinations.map((comb) {
+      // Check if we already have a matching variant in our current list to preserve its price/stock/SKU
+      final existing = _variants.firstWhere(
+        (v) => _areOptionsMatching(v.selectedOptions, comb),
+        orElse: () => ProductVariant(
+          id: _uuid.v4(),
+          productId: widget.product?.id ?? '',
+          selectedOptions: comb,
+          sku: '',
+          price: null,
+          stockQuantity: null,
+          createdAt: now,
+        ),
+      );
+
+      return ProductVariant(
+        id: existing.id,
+        productId: widget.product?.id ?? '',
+        selectedOptions: comb,
+        sku: existing.sku,
+        price: existing.price,
+        stockQuantity: existing.stockQuantity,
+        imageUrl: existing.imageUrl,
+        isActive: existing.isActive,
+        createdAt: existing.createdAt,
+        updatedAt: now,
+      );
+    }).toList();
+
+    _variants.clear();
+    _variants.addAll(newVariants);
+  }
+
+  bool _areOptionsMatching(
+    List<ProductVariantOption> a,
+    List<ProductVariantOption> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (final optA in a) {
+      final hasMatch = b.any(
+        (optB) => optB.name == optA.name && optB.value == optA.value,
+      );
+      if (!hasMatch) return false;
+    }
+    return true;
+  }
+
+  void _onAttributesChanged() {
+    _attributesTouched = true;
+    _generateVariants();
+    _syncVariantControllers();
   }
 
   Future<void> _loadExistingGalleryImages({
@@ -244,10 +407,30 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         final store = await StoreService.getStoreById(widget.product!.storeId);
         if (!mounted) return;
 
+        // Resolve store.category name to UUID if needed
+        String? resolvedCategoryId = widget.product!.categoryId;
+        if (store?.category != null && store!.category!.isNotEmpty) {
+          if (!RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+                  caseSensitive: false)
+              .hasMatch(store.category!)) {
+            try {
+              final cat = await CategoryService.getCategoryByName(store.category!);
+              if (cat != null) {
+                resolvedCategoryId = cat.id;
+                AppLogger.info('Resolved store category name "${store.category}" to UUID "$resolvedCategoryId"');
+              }
+            } catch (e) {
+              AppLogger.warning('⚠️ فشل جلب معرف الفئة من الاسم: $e');
+            }
+          } else {
+            resolvedCategoryId = store.category;
+          }
+        }
+
         setState(() {
           _storeId = widget.product!.storeId;
           // خزّن UUID الفئة مباشرة من المتجر (بدون تحميل اسم الفئة)
-          _storeCategoryId = store?.category ?? widget.product?.categoryId;
+          _storeCategoryId = resolvedCategoryId ?? store?.category ?? widget.product?.categoryId;
           _isLoading = false;
         });
 
@@ -299,9 +482,29 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
 
       final firstStore = stores.first;
 
+      // Resolve store.category name to UUID if needed
+      String? resolvedCategoryId;
+      if (firstStore.category != null && firstStore.category!.isNotEmpty) {
+        if (!RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+                caseSensitive: false)
+            .hasMatch(firstStore.category!)) {
+          try {
+            final cat = await CategoryService.getCategoryByName(firstStore.category!);
+            if (cat != null) {
+              resolvedCategoryId = cat.id;
+              AppLogger.info('Resolved store category name "${firstStore.category}" to UUID "$resolvedCategoryId"');
+            }
+          } catch (e) {
+            AppLogger.warning('⚠️ فشل جلب معرف الفئة من الاسم: $e');
+          }
+        } else {
+          resolvedCategoryId = firstStore.category;
+        }
+      }
+
       setState(() {
         _storeId = firstStore.id;
-        _storeCategoryId = firstStore.category; // UUID الفئة
+        _storeCategoryId = resolvedCategoryId ?? firstStore.category; // UUID الفئة
         _isLoading = false;
       });
 
@@ -486,6 +689,31 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
           elevation: 1,
           iconTheme: const IconThemeData(color: Colors.black),
           actions: [
+            IconButton(
+              icon: Icon(
+                _isActive ? Icons.visibility : Icons.visibility_off,
+                color: _isActive ? Colors.green : Colors.grey,
+              ),
+              tooltip: _isActive
+                  ? 'تفعيل المنتج (اضغط للتعطيل)'
+                  : 'تعطيل المنتج (اضغط للتفعيل)',
+              onPressed: () {
+                setState(() {
+                  _isActive = !_isActive;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      _isActive
+                          ? 'تم تفعيل المنتج 🔓'
+                          : 'تم إيقاف تفعيل المنتج 🔒',
+                    ),
+                    duration: const Duration(seconds: 1),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              },
+            ),
             // Show duplicate button only in edit mode
             if (widget.product != null)
               IconButton(
@@ -511,6 +739,8 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                         _buildTemplatesSection(),
                         _buildSpecificationsSection(),
                         _buildAttributesSection(),
+                        _buildVariantsSection(),
+                        _buildAddonsSection(),
                         const SizedBox(height: 80),
                       ],
                     ),
@@ -1061,9 +1291,6 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
 
       if (!mounted || image == null) return;
 
-      final croppedImage = await _cropImage(image);
-      if (!mounted || croppedImage == null) return;
-
       setState(() {
         if (isPrimary) {
           if (_imageUrl != null && _imageUrl!.isNotEmpty) {
@@ -1075,9 +1302,9 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
               _pickedImagesBytes.insert(0, _primaryNewImageBytes!);
             }
           }
-          _primaryNewImage = croppedImage;
+          _primaryNewImage = image;
           // Read bytes immediately
-          croppedImage.readAsBytes().then((bytes) {
+          image.readAsBytes().then((bytes) {
             if (mounted) setState(() => _primaryNewImageBytes = bytes);
           });
 
@@ -1087,7 +1314,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
           // Note: The original logic removed from _pickedImages if path matches.
           // We must also remove from _pickedImagesBytes at the same index.
           final index = _pickedImages.indexWhere(
-            (f) => f.path == croppedImage.path,
+            (f) => f.path == image.path,
           );
           if (index != -1) {
             _pickedImages.removeAt(index);
@@ -1097,14 +1324,14 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
           }
         } else {
           final alreadyInGallery = _pickedImages.any(
-            (f) => f.path == croppedImage.path,
+            (f) => f.path == image.path,
           );
           final isPrimaryImage =
               _primaryNewImage != null &&
-              croppedImage.path == _primaryNewImage!.path;
+              image.path == _primaryNewImage!.path;
           if (!alreadyInGallery && !isPrimaryImage) {
-            _pickedImages.add(croppedImage);
-            croppedImage.readAsBytes().then((bytes) {
+            _pickedImages.add(image);
+            image.readAsBytes().then((bytes) {
               if (mounted) setState(() => _pickedImagesBytes.add(bytes));
             });
           }
@@ -1142,149 +1369,47 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
 
       if (images.isEmpty || !mounted) return;
 
-      final List<XFile> croppedImages = [];
-      int successCount = 0;
-      int cancelCount = 0;
-
-      for (final image in images) {
-        if (!mounted) break;
-        try {
-          final cropped = await _cropImage(image);
-          if (cropped != null) {
-            croppedImages.add(cropped);
-            successCount++;
-          } else {
-            cancelCount++;
-          }
-        } on MissingPluginException catch (e) {
-          AppLogger.warning(
-            '⚠️ MissingPluginException: القص غير متاح على هذه المنصة: $e',
+      setState(() {
+        // أضف كل صورة جديدة مباشرة إلى القائمة
+        for (final image in images) {
+          final alreadyInGallery = _pickedImages.any(
+            (f) => f.path == image.path,
           );
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'القص غير متاح على هذا الجهاز، سيتم استخدام الصور الأصلية',
-              ),
-              backgroundColor: Colors.orange,
-            ),
-          );
-          croppedImages.addAll(images);
-          break;
-        } catch (e) {
-          AppLogger.error('❌ خطأ في قص الصورة', e);
-          cancelCount++;
-        }
-      }
-
-      if (!mounted) return;
-
-      if (croppedImages.isNotEmpty) {
-        setState(() {
-          // أضف كل صورة جديدة مباشرة إلى القائمة
-          for (final image in croppedImages) {
-            final alreadyInGallery = _pickedImages.any(
-              (f) => f.path == image.path,
+          final isPrimaryImage =
+              _primaryNewImage != null &&
+              image.path == _primaryNewImage!.path;
+          if (!alreadyInGallery && !isPrimaryImage) {
+            _pickedImages.add(image);
+            image.readAsBytes().then((bytes) {
+              if (mounted) setState(() => _pickedImagesBytes.add(bytes));
+            });
+            AppLogger.info(
+              '✅ تم إضافة صورة: ${image.name}, العدد الكلي: ${_pickedImages.length}',
             );
-            final isPrimaryImage =
-                _primaryNewImage != null &&
-                image.path == _primaryNewImage!.path;
-            if (!alreadyInGallery && !isPrimaryImage) {
-              _pickedImages.add(image);
-              image.readAsBytes().then((bytes) {
-                if (mounted) setState(() => _pickedImagesBytes.add(bytes));
-              });
-              AppLogger.info(
-                '✅ تم إضافة صورة: ${image.name}, العدد الكلي: ${_pickedImages.length}',
-              );
-            } else {
-              AppLogger.info('⚠️ تم تخطي صورة مكررة أو رئيسية: ${image.name}');
-            }
+          } else {
+            AppLogger.info('⚠️ تم تخطي صورة مكررة أو رئيسية: ${image.name}');
           }
-        });
-
-        AppLogger.info(
-          '📊 إجمالي الصور الإضافية الآن: ${_pickedImages.length}',
-        );
-
-        if (successCount > 0) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'تم إضافة $successCount صورة بنجاح${cancelCount > 0 ? " (تم إلغاء $cancelCount)" : ""}',
-              ),
-              backgroundColor: Colors.green,
-            ),
-          );
         }
-      } else if (cancelCount > 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم إلغاء جميع عمليات القص'),
-            backgroundColor: Colors.orange,
+      });
+
+      AppLogger.info(
+        '📊 إجمالي الصور الإضافية الآن: ${_pickedImages.length}',
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'تم إضافة ${images.length} صورة بنجاح',
           ),
-        );
-      }
+          backgroundColor: Colors.green,
+        ),
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('فشل تحميل الصور: $e')));
       }
-    }
-  }
-
-  /// قص الصورة باستخدام ImageCropper
-  Future<XFile?> _cropImage(XFile imageFile) async {
-    try {
-      // احفظ الألوان قبل أي async gap
-      final primaryColor = Theme.of(context).colorScheme.primary;
-      final onPrimaryColor = Theme.of(context).colorScheme.onPrimary;
-
-      final cropper = ImageCropper();
-      final cropped = await cropper.cropImage(
-        sourcePath: imageFile.path,
-        compressQuality: 85,
-        aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
-        uiSettings: [
-          AndroidUiSettings(
-            toolbarTitle: 'قص الصورة',
-            toolbarColor: primaryColor,
-            toolbarWidgetColor: onPrimaryColor,
-            initAspectRatio: CropAspectRatioPreset.square,
-            lockAspectRatio: true,
-            aspectRatioPresets: [CropAspectRatioPreset.square],
-          ),
-          IOSUiSettings(
-            title: 'قص الصورة',
-            aspectRatioLockEnabled: true,
-            aspectRatioPresets: [CropAspectRatioPreset.square],
-          ),
-          // WebUiSettings removed - causes crashes on Android/iOS
-        ],
-      );
-
-      if (!mounted) return null;
-
-      // إذا ألغى المستخدم القص
-      if (cropped == null) {
-        AppLogger.warning('تم إلغاء القص');
-        return null;
-      }
-
-      // إرجاع الصورة المقصوصة
-      return XFile(cropped.path);
-    } on MissingPluginException {
-      // إعادة رمي الاستثناء ليتم التعامل معه في الدالة المستدعية
-      rethrow;
-    } catch (e) {
-      AppLogger.error('خطأ في قص الصورة', e);
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('فشل قص الصورة: $e')));
-      }
-      return null;
     }
   }
 
@@ -1674,8 +1799,8 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                 OutlinedButton.icon(
                   onPressed: () {
                     setState(() {
-                      _attributesTouched = true;
                       _attributeDrafts.add(_AttributeDraft());
+                      _onAttributesChanged();
                     });
                   },
                   icon: const Icon(Icons.add),
@@ -1701,6 +1826,424 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildVariantsSection() {
+    if (_variants.isEmpty) return const SizedBox.shrink();
+
+
+
+    return Card(
+      margin: const EdgeInsets.all(16),
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'أسعار المتغيرات والمخزون',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'حدد سعراً وكمية لكل خيار/حجم مضاف. إذا تركت السعر فارغاً، فسيتم استخدام سعر المنتج الأساسي.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _variants.length,
+              separatorBuilder: (context, index) => const Divider(),
+              itemBuilder: (context, index) {
+                final variant = _variants[index];
+                final priceController = _variantPriceControllers[variant.id];
+                final stockController = _variantStockControllers[variant.id];
+
+                final displayName = variant.variantName;
+
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              displayName,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                          Switch(
+                            value: variant.isActive,
+                            onChanged: (val) {
+                              setState(() {
+                                _variantsTouched = true;
+                                _variants[index] = variant.copyWith(isActive: val);
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: priceController,
+                              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                              decoration: const InputDecoration(
+                                labelText: 'السعر (اختياري)',
+                                suffixText: 'ج.م',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              onChanged: (val) {
+                                _variantsTouched = true;
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
+                              controller: stockController,
+                              keyboardType: TextInputType.number,
+                              decoration: const InputDecoration(
+                                labelText: 'الكمية في المخزن',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              onChanged: (val) {
+                                _variantsTouched = true;
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddonsSection() {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'إضافات المنتج',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+                TextButton.icon(
+                  onPressed: () => _showAddonModal(),
+                  icon: const Icon(Icons.add),
+                  label: const Text('إضافة جديدة'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'يمكنك إضافة خيارات إضافية يمكن للعميل اختيارها مع هذا المنتج (مثل: جبنة إضافية، صلصة، إلخ) مع تحديد سعر لكل إضافة وصورة.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+            const SizedBox(height: 16),
+            if (_addons.isEmpty)
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text(
+                    'لا توجد إضافات لهذا المنتج حتى الآن',
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: _addons.length,
+                separatorBuilder: (context, index) => const Divider(),
+                itemBuilder: (context, index) {
+                  final addon = _addons[index];
+                  return ListTile(
+                    leading: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SizedBox(
+                        width: 50,
+                        height: 50,
+                        child: _addonNewImageBytes[addon.id] != null
+                            ? Image.memory(
+                                _addonNewImageBytes[addon.id]!,
+                                fit: BoxFit.cover,
+                              )
+                            : (addon.imageUrl != null &&
+                                  addon.imageUrl!.isNotEmpty)
+                            ? Image.network(
+                                addon.imageUrl!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (c, e, s) => const Icon(
+                                  Icons.fastfood,
+                                  color: Colors.grey,
+                                ),
+                              )
+                            : Container(
+                                color: Colors.grey.shade100,
+                                child: const Icon(
+                                  Icons.fastfood,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                      ),
+                    ),
+                    title: Text(
+                      addon.name,
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text(
+                      '+ ${addon.price.toStringAsFixed(2)} ج.م',
+                      style: const TextStyle(
+                        color: Colors.green,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit, color: Colors.blue),
+                          onPressed: () => _showAddonModal(addon),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete, color: Colors.red),
+                          onPressed: () {
+                            setState(() {
+                              _addons.removeAt(index);
+                              _addonNewImages.remove(addon.id);
+                              _addonNewImageBytes.remove(addon.id);
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAddonModal([ProductAddon? existingAddon]) {
+    final nameController = TextEditingController(
+      text: existingAddon?.name ?? '',
+    );
+    final priceController = TextEditingController(
+      text: existingAddon != null ? existingAddon.price.toString() : '',
+    );
+    XFile? pickedFile;
+    Uint8List? pickedBytes;
+    String? existingUrl = existingAddon?.imageUrl;
+
+    final isEdit = existingAddon != null;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 16,
+                bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      isEdit ? 'تعديل الإضافة' : 'إضافة جديدة مع المنتج',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    GestureDetector(
+                      onTap: () async {
+                        final XFile? file = await _picker.pickImage(
+                          source: ImageSource.gallery,
+                          maxWidth: 500,
+                          maxHeight: 500,
+                        );
+                        if (file != null) {
+                          final bytes = await file.readAsBytes();
+                          setModalState(() {
+                            pickedFile = file;
+                            pickedBytes = bytes;
+                          });
+                        }
+                      },
+                      child: Container(
+                        width: 100,
+                        height: 100,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey.shade300),
+                        ),
+                        child: pickedBytes != null
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Image.memory(
+                                  pickedBytes!,
+                                  fit: BoxFit.cover,
+                                ),
+                              )
+                            : (existingUrl != null && existingUrl.isNotEmpty)
+                            ? ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Image.network(
+                                  existingUrl,
+                                  fit: BoxFit.cover,
+                                ),
+                              )
+                            : const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.add_a_photo, color: Colors.grey),
+                                  SizedBox(height: 4),
+                                  Text(
+                                    'صورة الإضافة',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'اسم الإضافة (مثال: جبنة إضافية) *',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: priceController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'السعر الإضافي *',
+                        border: OutlineInputBorder(),
+                        suffixText: 'ج.م',
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('إلغاء'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              final name = nameController.text.trim();
+                              final priceStr = priceController.text.trim();
+                              if (name.isEmpty) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('اسم الإضافة مطلوب'),
+                                  ),
+                                );
+                                return;
+                              }
+                              final price = double.tryParse(priceStr);
+                              if (price == null) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('يرجى إدخال سعر صحيح'),
+                                  ),
+                                );
+                                return;
+                              }
+
+                              final id = existingAddon?.id ?? const Uuid().v4();
+                              final newAddon = ProductAddon(
+                                id: id,
+                                name: name,
+                                price: price,
+                                imageUrl: existingUrl,
+                              );
+
+                              setState(() {
+                                if (isEdit) {
+                                  final index = _addons.indexWhere(
+                                    (a) => a.id == existingAddon.id,
+                                  );
+                                  if (index != -1) {
+                                    _addons[index] = newAddon;
+                                  }
+                                } else {
+                                  _addons.add(newAddon);
+                                }
+
+                                if (pickedFile != null) {
+                                  _addonNewImages[id] = pickedFile!;
+                                  _addonNewImageBytes[id] = pickedBytes!;
+                                }
+                              });
+
+                              Navigator.pop(context);
+                            },
+                            child: const Text('حفظ'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1734,7 +2277,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                     DropdownMenuItem(value: 'weight', child: Text('الوزن')),
                     DropdownMenuItem(
                       value: 'volume',
-                      child: Text('السعة/الحجم'),
+                      child: Text('الحجم'),
                     ),
                     DropdownMenuItem(value: 'unit', child: Text('وحدة القياس')),
                     DropdownMenuItem(value: 'warranty', child: Text('الضمان')),
@@ -1748,11 +2291,11 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                   onChanged: (value) {
                     if (value == null) return;
                     setState(() {
-                      _attributesTouched = true;
                       draft.type = value;
                       if (draft.type != 'custom') {
                         draft.customName = '';
                       }
+                      _onAttributesChanged();
                     });
                   },
                 ),
@@ -1761,9 +2304,9 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
               IconButton(
                 onPressed: () {
                   setState(() {
-                    _attributesTouched = true;
                     final draft = _attributeDrafts.removeAt(index);
                     draft.dispose();
+                    _onAttributesChanged();
                   });
                 },
                 icon: const Icon(Icons.delete_outline, color: Colors.red),
@@ -1783,8 +2326,8 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
               ),
               onChanged: (value) {
                 setState(() {
-                  _attributesTouched = true;
                   draft.customName = value;
+                  _onAttributesChanged();
                 });
               },
             ),
@@ -1800,8 +2343,8 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                   deleteIcon: const Icon(Icons.close, size: 14),
                   onDeleted: () {
                     setState(() {
-                      _attributesTouched = true;
                       draft.values.remove(value);
+                      _onAttributesChanged();
                     });
                   },
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1826,9 +2369,9 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
                 final clean = val.substring(0, val.length - 1).trim();
                 if (clean.isNotEmpty && !draft.values.contains(clean)) {
                   setState(() {
-                    _attributesTouched = true;
                     draft.values.add(clean);
                     draft.controller.clear();
+                    _onAttributesChanged();
                   });
                   draft.focusNode.requestFocus();
                 } else {
@@ -1842,9 +2385,9 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
               if (clean.isNotEmpty) {
                 if (!draft.values.contains(clean)) {
                   setState(() {
-                    _attributesTouched = true;
                     draft.values.add(clean);
                     draft.controller.clear();
+                    _onAttributesChanged();
                   });
                 }
                 draft.focusNode.requestFocus();
@@ -2500,6 +3043,12 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
 
   Future<void> _performSave() async {
     if (_isSaving) return;
+
+    // عند التعديل على منتج، لو مش مفعل يتفعل تلقائي
+    if (widget.product != null && !_isActive) {
+      _isActive = true;
+    }
+
     setState(() => _isSaving = true);
 
     showModalBottomSheet(
@@ -2535,6 +3084,7 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         name: _nameController.text.trim(),
         description: description.isEmpty ? null : description,
         price: price,
+        inStock: stock > 0,
         stockQuantity: stock,
         imageUrl: widget.product?.imageUrl ?? _imageUrl,
         customFields: {
@@ -2542,7 +3092,8 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
             if (field['key']!.isNotEmpty && field['value']!.isNotEmpty)
               field['key']!: field['value']!,
         },
-        isActive: widget.product?.isActive ?? true,
+        isActive: _isActive,
+        addons: _addons,
         createdAt: widget.product?.createdAt ?? now,
         updatedAt: widget.product != null ? now : null,
       );
@@ -2658,6 +3209,39 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         AppLogger.info('✅ Product updated with ID: ${savedProduct?.id}');
       }
 
+      // رفع صور الإضافات ومزامنتها
+      if (savedProduct != null) {
+        final List<ProductAddon> finalAddons = [];
+
+        for (final addon in _addons) {
+          final newImage = _addonNewImages[addon.id];
+          if (newImage != null) {
+            final bytes = await newImage.readAsBytes();
+            final uploaded = await ProductService.uploadProductImages(
+              storeId: _storeId!,
+              productId: savedProduct.id,
+              imagesBytesList: [bytes],
+              fileNames: [
+                newImage.name.isNotEmpty
+                    ? newImage.name
+                    : 'addon_${addon.id}.jpg',
+              ],
+            );
+            if (uploaded.isNotEmpty) {
+              finalAddons.add(addon.copyWith(imageUrl: uploaded.first));
+            } else {
+              finalAddons.add(addon);
+            }
+          } else {
+            finalAddons.add(addon);
+          }
+        }
+
+        // تحديث المنتج بقائمة الإضافات النهائية
+        savedProduct = savedProduct.copyWith(addons: finalAddons);
+        savedProduct = await ProductService.updateProduct(savedProduct);
+      }
+
       // Save Attributes (Variant Groups) only if the user touched them in this session.
       // This avoids wiping existing variant groups when editing a product.
       if (savedProduct != null && _attributesTouched) {
@@ -2706,6 +3290,57 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         await ProductService.saveProductVariantGroups(savedProduct.id, groups);
         // Correctly attach the new groups to the product object before returning it to the caller
         savedProduct = savedProduct.copyWith(variantGroups: groups);
+      }
+
+      // Save custom variants (price, stock) if attributes or variants were touched
+      if (savedProduct != null && (_attributesTouched || _variantsTouched)) {
+        final activeGroups = _attributesTouched 
+            ? (savedProduct.variantGroups ?? []) 
+            : (widget.product?.variantGroups ?? []);
+
+        final List<ProductVariant> variantsToSave = [];
+        for (final variant in _variants) {
+          final priceText = _variantPriceControllers[variant.id]?.text.trim() ?? '';
+          final stockText = _variantStockControllers[variant.id]?.text.trim() ?? '';
+          
+          final price = priceText.isNotEmpty ? double.tryParse(priceText) : null;
+          final stock = stockText.isNotEmpty ? int.tryParse(stockText) : null;
+
+          final selectedOptions = activeGroups.isNotEmpty ? variant.selectedOptions.map((opt) {
+            ProductVariantOption? matchedOption;
+            for (final g in activeGroups) {
+              for (final o in g.options) {
+                if (o.name == opt.name && o.value == opt.value) {
+                  matchedOption = o;
+                  break;
+                }
+              }
+              if (matchedOption != null) break;
+            }
+            if (matchedOption != null) {
+              return opt.copyWith(id: matchedOption.id);
+            }
+            return opt;
+          }).toList() : variant.selectedOptions;
+
+          variantsToSave.add(
+            ProductVariant(
+              id: variant.id,
+              productId: savedProduct.id,
+              selectedOptions: selectedOptions,
+              sku: variant.sku,
+              price: price,
+              stockQuantity: stock,
+              imageUrl: variant.imageUrl,
+              isActive: variant.isActive,
+              createdAt: variant.createdAt,
+              updatedAt: DateTime.now(),
+            ),
+          );
+        }
+
+        await ProductService.saveProductVariants(savedProduct.id, variantsToSave);
+        savedProduct = savedProduct.copyWith(variants: variantsToSave);
       }
 
       if (!mounted) return;
@@ -2765,13 +3400,30 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
           _priceController.text.isNotEmpty ||
           _stockController.text.isNotEmpty ||
           _primaryNewImage != null ||
-          _pickedImages.isNotEmpty;
+          _pickedImages.isNotEmpty ||
+          _addons.isNotEmpty;
     }
 
     // Check for changes in existing product
     final product = widget.product!;
     final currentDesc = _descriptionController.text.trim();
     final effectiveDesc = currentDesc.isEmpty ? null : currentDesc;
+
+    // Check if addons changed
+    bool addonsChanged = false;
+    final originalAddons = product.addons ?? [];
+    if (_addons.length != originalAddons.length) {
+      addonsChanged = true;
+    } else {
+      for (int i = 0; i < _addons.length; i++) {
+        if (_addons[i].name != originalAddons[i].name ||
+            _addons[i].price != originalAddons[i].price ||
+            _addonNewImages[_addons[i].id] != null) {
+          addonsChanged = true;
+          break;
+        }
+      }
+    }
 
     return product.name != _nameController.text.trim() ||
         product.description != effectiveDesc ||
@@ -2781,7 +3433,9 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         _primaryNewImage != null ||
         _pickedImages.isNotEmpty ||
         _attributesTouched ||
-        product.sectionId != _selectedSectionId;
+        product.sectionId != _selectedSectionId ||
+        product.isActive != _isActive ||
+        addonsChanged;
   }
 }
 

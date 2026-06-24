@@ -24,6 +24,7 @@ import 'package:ell_tall_market/screens/user/cart_screen.dart';
 import 'package:ell_tall_market/screens/user/checkout_screen.dart';
 import 'package:ell_tall_market/screens/user/order_tracking_screen.dart';
 import 'package:ell_tall_market/screens/user/store_detail_screen.dart';
+import 'package:ell_tall_market/screens/user/upload_prescription_screen.dart';
 
 import 'package:ell_tall_market/screens/merchant/merchant_dashboard_screen.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_products_screen.dart';
@@ -96,6 +97,7 @@ class AppRoutes {
   static const String settings = '/settings';
   static const String paymentMethods = '/payment-methods';
   static const String main = '/main'; // New main navigation route
+  static const String uploadPrescription = '/upload-prescription';
 
   // مسارات التاجر
   static const String merchantDashboard = '/merchant/dashboard';
@@ -212,6 +214,22 @@ class AppRoutes {
       aboutApp: (_) => const AboutAppScreen(),
       privacyPolicy: (_) => const PrivacyPolicyScreen(),
       termsConditions: (_) => const TermsConditionsScreen(),
+      uploadPrescription: (context) {
+        final args = ModalRoute.of(context)?.settings.arguments;
+        if (args is Map<String, dynamic>) {
+          final store = args['store'] as StoreModel?;
+          final prescriptionUrl = args['prescriptionUrl'] as String?;
+          final initialNotes = args['initialNotes'] as String?;
+          return UploadPrescriptionScreen(
+            initialStore: store,
+            prescriptionUrl: prescriptionUrl,
+            initialNotes: initialNotes,
+          );
+        } else if (args is StoreModel) {
+          return UploadPrescriptionScreen(initialStore: args);
+        }
+        return const UploadPrescriptionScreen();
+      },
     };
   }
 
@@ -223,6 +241,60 @@ class AppRoutes {
     final routeName = settings.name ?? '';
     if (routeName.contains('/callback')) {
       return _handleSupabaseAuthCallback(settings);
+    }
+
+    // معالجة مسار تتبع الطلب للعميل ديناميكياً من الإشعارات
+    if (routeName.startsWith('/orders/')) {
+      final orderId = routeName.substring('/orders/'.length);
+      return MaterialPageRoute(
+        builder: (_) => OrderTrackingScreen(orderId: orderId),
+        settings: settings,
+      );
+    }
+
+    // معالجة مسار طلبات المشرف ديناميكياً من الإشعارات
+    if (routeName.startsWith('/admin/orders/')) {
+      return MaterialPageRoute(
+        builder: (context) {
+          final authProvider = Provider.of<SupabaseProvider>(
+            context,
+            listen: false,
+          );
+          if (!authProvider.isLoggedIn) {
+            return _buildRedirectScreen(context, login);
+          }
+          if (authProvider.isAdmin) {
+            return const ManageOrdersScreen();
+          }
+          return _errorScaffold('Admin access required');
+        },
+        settings: settings,
+      );
+    }
+
+    // معالجة جميع أشكال مسارات طلبات التاجر (سواء كانت ثابتة، متغيرة مع معرف الطلب، أو بأسماء مختلفة من الإشعارات)
+    if (routeName == 'merchant_order' ||
+        routeName == 'merchant_orders' ||
+        routeName == '/merchant_order' ||
+        routeName == '/merchant_orders' ||
+        routeName == '/merchant/orders' ||
+        routeName.startsWith('/merchant/orders/')) {
+      return MaterialPageRoute(
+        builder: (context) {
+          final authProvider = Provider.of<SupabaseProvider>(
+            context,
+            listen: false,
+          );
+          if (!authProvider.isLoggedIn) {
+            return _buildRedirectScreen(context, login);
+          }
+          if (authProvider.isMerchant) {
+            return const MerchantOrdersScreen();
+          }
+          return _errorScaffold('Merchant not authenticated');
+        },
+        settings: settings,
+      );
     }
 
     switch (settings.name) {
@@ -270,6 +342,36 @@ class AppRoutes {
           );
         }
         return _errorRoute('Store data not provided');
+
+      case uploadPrescription:
+        StoreModel? store;
+        String? prescriptionUrl;
+        String? initialNotes;
+        if (args is Map<String, dynamic>) {
+          store = args['store'] as StoreModel?;
+          prescriptionUrl = args['prescriptionUrl'] as String?;
+          initialNotes = args['initialNotes'] as String?;
+        } else if (args is StoreModel) {
+          store = args;
+        }
+        return MaterialPageRoute(
+          builder: (_) => UploadPrescriptionScreen(
+            initialStore: store,
+            prescriptionUrl: prescriptionUrl,
+            initialNotes: initialNotes,
+          ),
+          settings: settings,
+        );
+
+      case addEditProduct:
+        final product = args is ProductModel ? args : null;
+        return MaterialPageRoute(
+          builder: (_) => AddEditProductScreen(
+            key: ValueKey<String>('addEdit-${product?.id ?? 'new'}'),
+            product: product,
+          ),
+          settings: settings,
+        );
 
       case resetPassword:
         if (args is Map<String, dynamic>) {
@@ -430,7 +532,10 @@ class AppRoutes {
 
       default:
         if (routes.containsKey(settings.name)) {
-          return MaterialPageRoute(builder: routes[settings.name]!);
+          return MaterialPageRoute(
+            builder: routes[settings.name]!,
+            settings: settings,
+          );
         }
         return _errorRoute('Route not found: ${settings.name}');
     }

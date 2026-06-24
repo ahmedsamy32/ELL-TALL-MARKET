@@ -633,6 +633,8 @@ class _OrderGroupCardState extends State<_OrderGroupCard> {
       widget.group.groupStatus.value,
     );
 
+
+
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -715,42 +717,6 @@ class _OrderGroupCardState extends State<_OrderGroupCard> {
                   ),
                 ),
               ],
-              const SizedBox(height: 8),
-              Text(
-                'الإجمالي: ${widget.group.totalAmount.toStringAsFixed(2)} ج.م',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: colorScheme.primary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (status == OrderStatus.delivered) ...[
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      final rated = await Navigator.push<bool>(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              RateOrderScreen(orders: widget.group.orders),
-                        ),
-                      );
-                      // تحديث الشاشة بعد التقييم بنجاح
-                      if (rated == true && context.mounted) {
-                        setState(() {});
-                      }
-                    },
-                    icon: const Icon(Icons.star_rounded, size: 18),
-                    label: const Text('تقييم الطلب'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.amber[800],
-                      side: BorderSide(color: Colors.amber[800]!),
-                    ),
-                  ),
-                ),
-              ],
               const SizedBox(height: 12),
               FutureBuilder<List<OrderItemModel>>(
                 future: _itemsFuture,
@@ -783,10 +749,70 @@ class _OrderGroupCardState extends State<_OrderGroupCard> {
                     );
                   }
 
+
+
+                  // Calculate grand total directly by summing order totalAmount columns from DB
+                  final grandTotal = widget.group.orders.fold<double>(
+                    0.0,
+                    (sum, order) => sum + order.totalAmount,
+                  );
+
                   return Column(
-                    children: items
-                        .map((item) => _GroupItemRow(item: item))
-                        .toList(),
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Products List
+                      ...items.map((item) => _GroupItemRow(item: item)),
+                      
+                      const Divider(height: 24),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'الإجمالي بالكامل:',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: colorScheme.primary,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            '${grandTotal.toStringAsFixed(2)} ج.م',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: colorScheme.primary,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (status == OrderStatus.delivered) ...[
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              final rated = await Navigator.push<bool>(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      RateOrderScreen(orders: widget.group.orders),
+                                ),
+                              );
+                              // تحديث الشاشة بعد التقييم بنجاح
+                              if (rated == true && context.mounted) {
+                                setState(() {});
+                              }
+                            },
+                            icon: const Icon(Icons.star_rounded, size: 18),
+                            label: const Text('تقييم الطلب'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.amber[800],
+                              side: BorderSide(color: Colors.amber[800]!),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   );
                 },
               ),
@@ -848,7 +874,7 @@ class _GroupItemRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'الكمية: ${item.quantity} • ${item.productPrice.toStringAsFixed(2)} ج.م',
+                  '${item.quantity} × ${item.productPrice.toStringAsFixed(2)} ج.م',
                   style: TextStyle(
                     fontSize: 12,
                     color: colorScheme.onSurfaceVariant,
@@ -856,18 +882,48 @@ class _GroupItemRow extends StatelessWidget {
                 ),
                 if (item.selectedOptions != null &&
                     item.selectedOptions!.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 2),
-                    child: Text(
-                      item.selectedOptions!.entries
+                  Builder(
+                    builder: (context) {
+                      final Map<String, dynamic> selectedOpts = Map<String, dynamic>.from(item.selectedOptions ?? {});
+                      final attributes = selectedOpts.entries
+                          .where((e) => e.key != 'addons')
                           .map((e) => '${e.key}: ${e.value}')
-                          .join(' | '),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colorScheme.primary,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                          .join(' | ');
+                      final addonsList = selectedOpts['addons'] as List<dynamic>?;
+                      final addonsText = addonsList != null && addonsList.isNotEmpty
+                          ? 'إضافات: ${addonsList.map((a) => a['name']).join(', ')}'
+                          : '';
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (attributes.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                attributes,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: colorScheme.primary,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          if (addonsText.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                addonsText,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
                   ),
                 if (item.specialInstructions != null &&
                     item.specialInstructions!.isNotEmpty)
@@ -883,15 +939,6 @@ class _GroupItemRow extends StatelessWidget {
                     ),
                   ),
               ],
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '${item.totalPrice.toStringAsFixed(2)} ج.م',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: colorScheme.primary,
             ),
           ),
         ],

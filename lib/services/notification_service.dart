@@ -2,6 +2,7 @@ import 'dart:convert';
 // Removed dart:io for Web compatibility
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -99,7 +100,7 @@ class NotificationServiceEnhanced {
       AppLogger.info('✅ Firebase messaging permissions granted');
 
       // Get FCM token (save to memory only; DB save happens after auth)
-      _fcmToken = await _firebaseMessaging.getToken();
+      _fcmToken = await _getFcmToken();
       if (_fcmToken != null) {
         AppLogger.info('FCM Token acquired: ${_fcmToken!.substring(0, 20)}...');
         // Try saving if user is already authenticated (e.g. app restart)
@@ -125,6 +126,10 @@ class NotificationServiceEnhanced {
 
   /// Initialize local notifications with platform-specific settings
   Future<void> _initializeLocalNotifications() async {
+    if (kIsWeb) {
+      AppLogger.info('Running on Web: Skipping local notifications configuration');
+      return;
+    }
     const androidSettings = AndroidInitializationSettings(
       '@mipmap/ic_launcher',
     );
@@ -1101,6 +1106,30 @@ class NotificationServiceEnhanced {
     }
   }
 
+  /// Retrieve the FCM token safely, supporting VAPID key on Web
+  Future<String?> _getFcmToken() async {
+    try {
+      if (kIsWeb) {
+        final vapidKey = dotenv.env['FCM_VAPID_KEY'];
+        if (vapidKey != null && vapidKey.trim().isNotEmpty) {
+          AppLogger.info('Fetching FCM token on Web using VAPID Key: ${vapidKey.substring(0, min(10, vapidKey.length))}...');
+          return await _firebaseMessaging.getToken(vapidKey: vapidKey);
+        } else {
+          AppLogger.warning(
+            '⚠️ FCM VAPID Key is missing in .env (add FCM_VAPID_KEY=your_public_key). '
+            'Attempting to retrieve Web FCM token without VAPID key...'
+          );
+          return await _firebaseMessaging.getToken();
+        }
+      } else {
+        return await _firebaseMessaging.getToken();
+      }
+    } catch (e) {
+      AppLogger.error('❌ Failed to retrieve FCM token', e);
+      return null;
+    }
+  }
+
   /// حفظ device token للمستخدم الحالي مع الدور المناسب
   /// يتم استدعاؤها بعد تسجيل الدخول أو عند تغير حالة المصادقة
   Future<void> saveTokenForCurrentUser({String role = 'client'}) async {
@@ -1112,7 +1141,7 @@ class NotificationServiceEnhanced {
       }
 
       // If FCM token not yet available, try to get it
-      _fcmToken ??= await _firebaseMessaging.getToken();
+      _fcmToken ??= await _getFcmToken();
 
       if (_fcmToken == null) {
         AppLogger.warning('⚠️ Cannot save token: FCM token unavailable');
@@ -1244,6 +1273,10 @@ class NotificationServiceEnhanced {
 
   /// عرض إشعار محلي من رسالة FCM
   Future<void> _showLocalNotification(RemoteMessage message) async {
+    if (kIsWeb) {
+      AppLogger.info('Running on Web: Skipping local notification display');
+      return;
+    }
     try {
       final notification = message.notification;
       if (notification == null) return;
@@ -1382,9 +1415,11 @@ class NotificationServiceEnhanced {
           // مدير النظام -> إدارة الطلبات
           NavigationService.navigateTo(AppRoutes.manageOrders);
         } else if (targetRole == 'captain' ||
+            targetRole == 'delivery_company_admin' ||
             data['audience'] == 'delivery_office') {
           // مكتب التوصيل أو الكابتن
-          if (data['audience'] == 'delivery_office') {
+          if (data['audience'] == 'delivery_office' ||
+              targetRole == 'delivery_company_admin') {
             NavigationService.navigateTo(AppRoutes.deliveryCompanyDashboard);
           } else {
             NavigationService.navigateTo(AppRoutes.captainOrders);
@@ -1914,7 +1949,7 @@ class NotificationServiceEnhanced {
           'total_amount': totalAmount,
         },
         actionUrl: '/admin/orders/$orderId',
-        sourceLabel: 'متجر $storeName',
+        sourceLabel: _formatStoreSourceName(storeName),
       );
     } catch (e) {
       AppLogger.error('❌ Failed to send admin notification', e);
@@ -1944,7 +1979,7 @@ class NotificationServiceEnhanced {
           'amount': amount,
         },
         actionUrl: '/store-wallet-topups',
-        sourceLabel: 'متجر $storeName',
+        sourceLabel: _formatStoreSourceName(storeName),
       );
     } catch (e) {
       AppLogger.error('❌ Failed to send topup request notification', e);
@@ -1978,7 +2013,7 @@ class NotificationServiceEnhanced {
           'status': status,
         },
         actionUrl: '/store-wallet-topups',
-        sourceLabel: 'متجر $storeName',
+        sourceLabel: _formatStoreSourceName(storeName),
       );
     } catch (e) {
       AppLogger.error('❌ Failed to send topup review notification', e);
@@ -2165,7 +2200,7 @@ class NotificationServiceEnhanced {
           'owner_name': ownerName,
         },
         actionUrl: '/admin/users',
-        sourceLabel: 'متجر $storeName',
+        sourceLabel: _formatStoreSourceName(storeName),
       );
     } catch (e) {
       AppLogger.error('❌ Failed to send store registration notification', e);
@@ -2198,7 +2233,7 @@ class NotificationServiceEnhanced {
           'amount': amount,
         },
         actionUrl: '/store-wallet-topups',
-        sourceLabel: 'متجر $storeName',
+        sourceLabel: _formatStoreSourceName(storeName),
       );
     } catch (e) {
       AppLogger.error('❌ Failed to send transaction notification', e);
@@ -2223,7 +2258,7 @@ class NotificationServiceEnhanced {
         final merchantName = additionalData['merchant_name'] as String?;
 
         if (storeName != null && storeName.trim().isNotEmpty) {
-          sourceLabel = 'متجر ${storeName.trim()}';
+          sourceLabel = _formatStoreSourceName(storeName);
         } else if (captainName != null && captainName.trim().isNotEmpty) {
           sourceLabel = 'الكابتن ${captainName.trim()}';
         } else if (deliveryOfficeName != null &&
@@ -2271,6 +2306,8 @@ class NotificationServiceEnhanced {
   Future<bool> notifyCaptainsOfAvailableOrder({
     required String orderId,
     required String storeName,
+    double? totalAmount,
+    double? deliveryFee,
     String? area,
   }) async {
     try {
@@ -2279,18 +2316,92 @@ class NotificationServiceEnhanced {
       final areaText = area != null ? ' في منطقة $area' : '';
       bool anySent = false;
 
-      // إشعار مكتب شركة التوصيل أيضاً (delivery_company_admin)
-      // ملاحظة: شاشة شركة التوصيل الحالية تقرأ targetRole = captain.
-      final deliveryAdminsResponse = await _supabase
-          .from('profiles')
-          .select('id')
-          .eq('role', 'delivery_company_admin');
+      // جلب معلومات المتجر والعميل والمدينة لتصفية مكاتب التوصيل
+      final orderResponse = await _supabase
+          .from('orders')
+          .select('store_id, client_id, stores(city, governorate)')
+          .eq('id', orderId)
+          .maybeSingle();
 
-      final deliveryAdmins = deliveryAdminsResponse as List;
-      if (deliveryAdmins.isEmpty) {
-        AppLogger.warning('⚠️ No delivery company admins found to notify');
-        return false;
+      String? storeCity;
+      String? storeGov;
+      String? clientCity;
+      String? clientGov;
+
+      if (orderResponse != null) {
+        if (orderResponse['stores'] != null) {
+          final storeData = orderResponse['stores'] as Map<String, dynamic>;
+          storeCity = storeData['city'] as String?;
+          storeGov = storeData['governorate'] as String?;
+        }
+        final clientId = orderResponse['client_id'] as String?;
+        if (clientId != null) {
+          final addressResponse = await _supabase
+              .from('addresses')
+              .select('city, governorate')
+              .eq('client_id', clientId)
+              .eq('is_default', true)
+              .maybeSingle();
+          if (addressResponse != null) {
+            clientCity = addressResponse['city'] as String?;
+            clientGov = addressResponse['governorate'] as String?;
+          }
+        }
       }
+
+      final cities = <String>{};
+      final governorates = <String>{};
+      if (storeCity != null && storeCity.trim().isNotEmpty) {
+        cities.add(storeCity.trim());
+      }
+      if (clientCity != null && clientCity.trim().isNotEmpty) {
+        cities.add(clientCity.trim());
+      }
+      if (storeGov != null && storeGov.trim().isNotEmpty) {
+        governorates.add(storeGov.trim());
+      }
+      if (clientGov != null && clientGov.trim().isNotEmpty) {
+        governorates.add(clientGov.trim());
+      }
+
+      List<dynamic> deliveryAdmins = [];
+      if (cities.isNotEmpty || governorates.isNotEmpty) {
+        var query = _supabase.from('delivery_companies').select('admin_id');
+        final clauses = <String>[];
+        for (final c in cities) {
+          clauses.add('city.ilike.%$c%');
+        }
+        for (final g in governorates) {
+          clauses.add('governorate.ilike.%$g%');
+        }
+        if (clauses.isNotEmpty) {
+          query = query.or(clauses.join(','));
+          final matchedCompanies = await query;
+          if (matchedCompanies.isNotEmpty) {
+            deliveryAdmins = matchedCompanies
+                .map((c) => {'id': c['admin_id']})
+                .where((c) => c['id'] != null)
+                .toList();
+          }
+        }
+      }
+
+      // Fallback: إذا لم نجد أي مكتب للمدينة المحددة، نرسل لجميع المكاتب
+      if (deliveryAdmins.isEmpty) {
+        final allAdmins = await _supabase
+            .from('profiles')
+            .select('id')
+            .eq('role', 'delivery_company_admin');
+        deliveryAdmins = allAdmins as List;
+      }
+
+      final totalProducts = totalAmount ?? 0.0;
+      final totalDelivery = deliveryFee ?? 0.0;
+      final totalOverall = totalProducts + totalDelivery;
+
+      final messageBody = 'طلب جديد من $storeName$areaText متاح للاستلام.\n'
+          'قيمة المنتجات: ${totalProducts.toStringAsFixed(0)} ج.م | التوصيل: ${totalDelivery.toStringAsFixed(0)} ج.م\n'
+          'الإجمالي الكلي: ${totalOverall.toStringAsFixed(0)} ج.م';
 
       for (final admin in deliveryAdmins) {
         final adminId = admin['id'] as String?;
@@ -2299,18 +2410,20 @@ class NotificationServiceEnhanced {
         final sent = await sendSmartNotification(
           clientId: adminId,
           title: '🚗 طلب جديد متاح للتوصيل',
-          message: 'طلب جديد من متجر $storeName$areaText متاح للاستلام',
+          message: messageBody,
           type: NotificationType.order,
           priority: NotificationPriority.high,
-          targetRole: 'captain',
-          sourceLabel: 'متجر $storeName',
+          targetRole: 'delivery_company_admin',
+          sourceLabel: storeName,
           data: {
             'type': 'available_order',
-            'target_role': 'captain',
+            'target_role': 'delivery_company_admin',
             'order_id': orderId,
             'store_name': storeName,
+            'total_amount': totalProducts,
+            'delivery_fee': totalDelivery,
             'audience': 'delivery_office',
-            'area': ?area,
+            'area': area,
           },
         );
         if (sent) anySent = true;
@@ -2326,25 +2439,161 @@ class NotificationServiceEnhanced {
     }
   }
 
+  /// إرسال إشعار لمكتب شركة التوصيل عند إلغاء طلب من قبل التاجر أو النظام
+  Future<bool> notifyDeliveryOfficeOfOrderCancellation({
+    required String orderId,
+    required String storeName,
+    String? orderNumber,
+  }) async {
+    try {
+      AppLogger.info('Sending order cancellation notification to delivery office: $orderId');
+
+      // جلب معلومات المتجر والعميل والمدينة لتصفية مكاتب التوصيل
+      final orderResponse = await _supabase
+          .from('orders')
+          .select('store_id, client_id, stores(city, governorate)')
+          .eq('id', orderId)
+          .maybeSingle();
+
+      String? storeCity;
+      String? storeGov;
+      String? clientCity;
+      String? clientGov;
+
+      if (orderResponse != null) {
+        if (orderResponse['stores'] != null) {
+          final storeData = orderResponse['stores'] as Map<String, dynamic>;
+          storeCity = storeData['city'] as String?;
+          storeGov = storeData['governorate'] as String?;
+        }
+        final clientId = orderResponse['client_id'] as String?;
+        if (clientId != null) {
+          final addressResponse = await _supabase
+              .from('addresses')
+              .select('city, governorate')
+              .eq('client_id', clientId)
+              .eq('is_default', true)
+              .maybeSingle();
+          if (addressResponse != null) {
+            clientCity = addressResponse['city'] as String?;
+            clientGov = addressResponse['governorate'] as String?;
+          }
+        }
+      }
+
+      final cities = <String>{};
+      final governorates = <String>{};
+      if (storeCity != null && storeCity.trim().isNotEmpty) {
+        cities.add(storeCity.trim());
+      }
+      if (clientCity != null && clientCity.trim().isNotEmpty) {
+        cities.add(clientCity.trim());
+      }
+      if (storeGov != null && storeGov.trim().isNotEmpty) {
+        governorates.add(storeGov.trim());
+      }
+      if (clientGov != null && clientGov.trim().isNotEmpty) {
+        governorates.add(clientGov.trim());
+      }
+
+      List<dynamic> deliveryAdmins = [];
+      if (cities.isNotEmpty || governorates.isNotEmpty) {
+        var query = _supabase.from('delivery_companies').select('admin_id');
+        final clauses = <String>[];
+        for (final c in cities) {
+          clauses.add('city.ilike.%$c%');
+        }
+        for (final g in governorates) {
+          clauses.add('governorate.ilike.%$g%');
+        }
+        if (clauses.isNotEmpty) {
+          query = query.or(clauses.join(','));
+          final matchedCompanies = await query;
+          if (matchedCompanies.isNotEmpty) {
+            deliveryAdmins = matchedCompanies
+                .map((c) => {'id': c['admin_id']})
+                .where((c) => c['id'] != null)
+                .toList();
+          }
+        }
+      }
+
+      // Fallback: إذا لم نجد أي مكتب للمدينة المحددة، نرسل لجميع المكاتب
+      if (deliveryAdmins.isEmpty) {
+        final allAdmins = await _supabase
+            .from('profiles')
+            .select('id')
+            .eq('role', 'delivery_company_admin');
+        deliveryAdmins = allAdmins as List;
+      }
+
+      final label = orderNumber != null && orderNumber.trim().isNotEmpty
+          ? '#$orderNumber'
+          : '#${orderId.substring(0, 8)}';
+      final messageBody = 'تم إلغاء الطلب $label من متجر $storeName';
+
+      bool anySent = false;
+      for (final admin in deliveryAdmins) {
+        final adminId = admin['id'] as String?;
+        if (adminId == null) continue;
+
+        final sent = await sendSmartNotification(
+          clientId: adminId,
+          title: '❌ تم إلغاء طلب',
+          message: messageBody,
+          type: NotificationType.order,
+          priority: NotificationPriority.high,
+          targetRole: 'delivery_company_admin',
+          sourceLabel: storeName,
+          data: {
+            'type': 'order_cancelled',
+            'target_role': 'delivery_company_admin',
+            'order_id': orderId,
+            'store_name': storeName,
+            'order_number': orderNumber,
+          },
+        );
+        if (sent) anySent = true;
+      }
+
+      return anySent;
+    } catch (e) {
+      AppLogger.error('❌ Failed to send order cancellation notification to delivery office', e);
+      return false;
+    }
+  }
+
   /// إرسال إشعار لكابتن معين عند تعيين طلب له
   Future<bool> notifyCaptainOfOrderAssignment({
     required String captainId,
     required String orderId,
     required String storeName,
+    double? totalAmount,
+    double? deliveryFee,
   }) async {
+    final totalProducts = totalAmount ?? 0.0;
+    final totalDelivery = deliveryFee ?? 0.0;
+    final totalOverall = totalProducts + totalDelivery;
+
+    final messageBody = 'تم تعيين طلب جديد لك من $storeName.\n'
+        'قيمة المنتجات: ${totalProducts.toStringAsFixed(0)} ج.م | التوصيل: ${totalDelivery.toStringAsFixed(0)} ج.م\n'
+        'الإجمالي الكلي: ${totalOverall.toStringAsFixed(0)} ج.م. يرجى استلام الطلب.';
+
     return await sendSmartNotification(
       clientId: captainId,
       title: '📦 تم تعيين طلب لك',
-      message: 'تم تعيين طلب جديد لك من متجر $storeName. يرجى استلام الطلب.',
+      message: messageBody,
       type: NotificationType.order,
       priority: NotificationPriority.high,
       targetRole: 'captain',
-      sourceLabel: 'متجر $storeName',
+      sourceLabel: storeName,
       data: {
         'type': 'order_assigned',
         'target_role': 'captain',
         'order_id': orderId,
         'store_name': storeName,
+        'total_amount': totalProducts,
+        'delivery_fee': totalDelivery,
       },
     );
   }
@@ -2484,7 +2733,7 @@ class NotificationServiceEnhanced {
       }
 
       final sourceLabel = (storeName != null && storeName.trim().isNotEmpty)
-          ? 'متجر ${storeName.trim()}'
+          ? _formatStoreSourceName(storeName)
           : 'النظام';
 
       return await sendSmartNotification(
@@ -2529,6 +2778,14 @@ class NotificationServiceEnhanced {
     }
 
     return false;
+  }
+
+  String _formatStoreSourceName(String storeName) {
+    final trimmed = storeName.trim();
+    if (trimmed.startsWith('متجر')) {
+      return trimmed;
+    }
+    return 'متجر $trimmed';
   }
 
   /// Cleanup resources

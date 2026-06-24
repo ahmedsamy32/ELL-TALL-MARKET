@@ -39,6 +39,7 @@ class CaptainOrderHelpers {
 
   // ===== مراحل سيناريو التوصيل الكاملة (State Machine) =====
   static const List<OrderStatus> deliveryStages = [
+    OrderStatus.pending,   // في الانتظار
     OrderStatus.confirmed, // الكابتن قَبِل — في الطريق للمتجر
     OrderStatus.preparing, // وصل للمتجر — ينتظر الطلب
     OrderStatus.pickedUp, // استلم الطلب — في الطريق للعميل
@@ -123,6 +124,8 @@ class CaptainOrderHelpers {
   // ===== الحالة التالية للكابتن =====
   static OrderStatus getNextStatus(OrderStatus currentStatus) {
     switch (currentStatus) {
+      case OrderStatus.pending:
+        return OrderStatus.confirmed;
       case OrderStatus.confirmed:
         return OrderStatus.preparing;
       case OrderStatus.preparing:
@@ -141,6 +144,8 @@ class CaptainOrderHelpers {
   // ===== نص زر الإجراء الوحيد Single CTA (شاشة التوصيل) =====
   static String getDeliveryActionText(OrderStatus status) {
     switch (status) {
+      case OrderStatus.pending:
+        return 'توجه للمتجر 🚴';
       case OrderStatus.confirmed:
         return 'وصلت للمتجر 🏪';
       case OrderStatus.preparing:
@@ -161,6 +166,8 @@ class CaptainOrderHelpers {
   // ===== نص الإجراء في لوحة التحكم =====
   static String getDashboardActionText(OrderStatus status) {
     switch (status) {
+      case OrderStatus.pending:
+        return 'توجه للمتجر';
       case OrderStatus.confirmed:
         return 'توجه للمتجر';
       case OrderStatus.preparing:
@@ -181,6 +188,8 @@ class CaptainOrderHelpers {
   // ===== نص الإجراء في قائمة الطلبات =====
   static String getOrdersActionText(OrderStatus status) {
     switch (status) {
+      case OrderStatus.pending:
+        return 'توجه للمتجر';
       case OrderStatus.confirmed:
         return 'في الطريق للمتجر';
       case OrderStatus.preparing:
@@ -199,6 +208,8 @@ class CaptainOrderHelpers {
   // ===== أيقونة الإجراء =====
   static IconData getActionIcon(OrderStatus status) {
     switch (status) {
+      case OrderStatus.pending:
+        return Icons.directions_bike_rounded;
       case OrderStatus.confirmed:
         return Icons.directions_bike_rounded;
       case OrderStatus.preparing:

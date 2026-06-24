@@ -12,6 +12,7 @@ class ProductProvider with ChangeNotifier {
   List<ProductModel> _products = [];
   List<ProductModel> _filteredProducts = [];
   List<ProductModel> _featuredProducts = [];
+  bool _isFiltered = false;
   bool _isLoading = false;
   String? _error;
   final bool _hasMore = true;
@@ -20,7 +21,7 @@ class ProductProvider with ChangeNotifier {
 
   // Getters
   List<ProductModel> get products =>
-      _filteredProducts.isNotEmpty ? _filteredProducts : _products;
+      _isFiltered ? _filteredProducts : _products;
   List<ProductModel> get featuredProducts => _featuredProducts;
   bool get isLoading => _isLoading;
   String? get error => _error;
@@ -199,6 +200,7 @@ class ProductProvider with ChangeNotifier {
       _products = [];
       _filteredProducts = [];
       _featuredProducts = [];
+      _isFiltered = false;
       notifyListeners();
 
       if (allowedStoreIds != null && allowedStoreIds.isEmpty) {
@@ -231,36 +233,65 @@ class ProductProvider with ChangeNotifier {
     }
   }
 
-  /// جلب منتجات متجر محدد
-  Future<void> fetchProductsByStore(String storeId) async {
-    _setLoading(true);
+  // --- Pagination State for Store Products ---
+  bool _hasMoreStoreProducts = true;
+  bool get hasMoreStoreProducts => _hasMoreStoreProducts;
+  int _currentStorePage = 1;
+  static const int _storePageSize = 20;
+
+  /// جلب منتجات متجر محدد (مع دعم التحميل التدريجي)
+  Future<void> fetchProductsByStore(String storeId, {bool refresh = false}) async {
+    if (refresh) {
+      _currentStorePage = 1;
+      _hasMoreStoreProducts = true;
+      _products = [];
+      _filteredProducts = [];
+      _isFiltered = false;
+      notifyListeners();
+    }
+
+    if (!_hasMoreStoreProducts) return;
+
+    if (_currentStorePage == 1) {
+      _setLoading(true);
+    }
     _setError(null);
 
     try {
-      _products = [];
-      _filteredProducts = [];
-      notifyListeners();
+      final startIndex = (_currentStorePage - 1) * _storePageSize;
 
       final response = await _supabase
           .from('products')
           .select()
           .eq('store_id', storeId)
-          .eq('is_active', true)
-          .order('created_at', ascending: false);
+          .order('created_at', ascending: false)
+          .range(startIndex, startIndex + _storePageSize - 1);
 
-      _products = (response as List)
+      final newProducts = (response as List)
           .map((data) => ProductModel.fromMap(data))
           .toList();
+
+      if (newProducts.length < _storePageSize) {
+        _hasMoreStoreProducts = false;
+      }
+
+      if (refresh) {
+        _products = newProducts;
+      } else {
+        _products.addAll(newProducts);
+      }
+
+      _currentStorePage++;
       _filteredProducts = [];
 
-      AppLogger.info('🏪 منتجات المتجر "$storeId": ${_products.length} منتج');
+      AppLogger.info('🏪 منتجات المتجر "$storeId": تم جلب ${newProducts.length} (الإجمالي: ${_products.length})');
 
       notifyListeners();
     } catch (e) {
       AppLogger.error('❌ خطأ في جلب منتجات المتجر', e);
       _setError(e.toString());
     } finally {
-      _setLoading(false);
+      if (_isLoading) _setLoading(false);
     }
   }
 
@@ -284,6 +315,7 @@ class ProductProvider with ChangeNotifier {
           .map((data) => ProductModel.fromMap(data))
           .toList();
       _filteredProducts = [];
+      _isFiltered = false;
 
       AppLogger.info(
         '🏪 منتجات التاجر "$merchantId": ${_products.length} منتج',
@@ -341,6 +373,7 @@ class ProductProvider with ChangeNotifier {
   }) async {
     if (query.trim().isEmpty) {
       _filteredProducts = [];
+      _isFiltered = false;
       notifyListeners();
       return;
     }
@@ -371,6 +404,7 @@ class ProductProvider with ChangeNotifier {
       _filteredProducts = (response as List)
           .map((data) => ProductModel.fromMap(data))
           .toList();
+      _isFiltered = true;
 
       AppLogger.info(
         '🔍 نتائج البحث لـ "$query": ${_filteredProducts.length} منتج',
@@ -393,6 +427,7 @@ class ProductProvider with ChangeNotifier {
 
     try {
       _filteredProducts = [];
+      _isFiltered = true;
       notifyListeners();
 
       if (allowedStoreIds != null && allowedStoreIds.isEmpty) {
@@ -434,6 +469,7 @@ class ProductProvider with ChangeNotifier {
 
     try {
       _filteredProducts = [];
+      _isFiltered = true;
       notifyListeners();
 
       final response = await _supabase
@@ -464,6 +500,7 @@ class ProductProvider with ChangeNotifier {
 
     try {
       _filteredProducts = [];
+      _isFiltered = true;
       notifyListeners();
 
       final response = await _supabase
@@ -491,7 +528,7 @@ class ProductProvider with ChangeNotifier {
 
   /// ترتيب المنتجات
   void sortProducts(String sortBy) {
-    final productsToSort = _filteredProducts.isNotEmpty
+    final productsToSort = _isFiltered
         ? _filteredProducts
         : _products;
 
@@ -603,6 +640,7 @@ class ProductProvider with ChangeNotifier {
   /// إزالة الفلاتر
   void clearFilters() {
     _filteredProducts = [];
+    _isFiltered = false;
     _setError(null);
     notifyListeners();
 
@@ -614,6 +652,7 @@ class ProductProvider with ChangeNotifier {
     _products = [];
     _filteredProducts = [];
     _featuredProducts = [];
+    _isFiltered = false;
     _setError(null);
     if (resetCount) {
       preloadStoreProductCount(0, silent: true);

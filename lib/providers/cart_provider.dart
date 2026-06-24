@@ -203,10 +203,14 @@ class CartProvider with ChangeNotifier {
 
     // ====== Optimistic Update: تحديث الواجهة فوراً ======
     int? oldQuantity;
+    double? oldTotalPrice;
     for (final item in _cartItems) {
       if (item['id'] == cartItemId) {
         oldQuantity = item['quantity'] as int?;
+        oldTotalPrice = (item['total_price'] as num?)?.toDouble();
+        final double price = (item['product_price'] as num?)?.toDouble() ?? 0.0;
         item['quantity'] = newQuantity;
+        item['total_price'] = price * newQuantity;
         break;
       }
     }
@@ -227,6 +231,9 @@ class CartProvider with ChangeNotifier {
         for (final item in _cartItems) {
           if (item['id'] == cartItemId) {
             item['quantity'] = oldQuantity;
+            if (oldTotalPrice != null) {
+              item['total_price'] = oldTotalPrice;
+            }
             break;
           }
         }
@@ -478,7 +485,9 @@ class CartProvider with ChangeNotifier {
       if (product == null) continue;
 
       final quantity = (item['quantity'] as int?) ?? 0;
-      final price = (product['price'] as num?)?.toDouble() ?? 0.0;
+      final price = (item['product_price'] as num?)?.toDouble() ??
+          (product['price'] as num?)?.toDouble() ??
+          0.0;
       final lineTotal = price * quantity;
       subtotal += lineTotal;
 

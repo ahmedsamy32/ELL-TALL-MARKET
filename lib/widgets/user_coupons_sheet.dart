@@ -8,6 +8,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/coupon_model.dart';
 import 'package:ell_tall_market/services/coupon_service.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/models/product_model.dart';
+import 'package:ell_tall_market/services/product_service.dart';
+import 'package:ell_tall_market/screens/user/product_detail_screen.dart';
+
 
 /// بوتوم شيت القسائم — المسجلة والمستخدمة
 class UserCouponsSheet extends StatefulWidget {
@@ -193,8 +197,9 @@ class _UserCouponsSheetState extends State<UserCouponsSheet>
             color: colorScheme.surface,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           ),
-          child: Column(
-            children: [
+          child: SafeArea(
+            child: Column(
+              children: [
               // ── Handle Bar ──
               Container(
                 margin: const EdgeInsets.only(top: 12),
@@ -358,9 +363,10 @@ class _UserCouponsSheetState extends State<UserCouponsSheet>
               ),
             ],
           ),
-        );
-      },
-    );
+        ),
+      );
+    },
+  );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -623,14 +629,7 @@ class _UserCouponsSheetState extends State<UserCouponsSheet>
                 Row(
                   children: [
                     // الحد الأدنى
-                    if (coupon.minimumOrderAmount > 0)
-                      _buildDetailChip(
-                        icon: Icons.shopping_cart_outlined,
-                        label:
-                            'حد أدنى ${coupon.minimumOrderAmount.toStringAsFixed(0)} ج.م',
-                        colorScheme: colorScheme,
-                      ),
-                    if (coupon.minimumOrderAmount > 0) const SizedBox(width: 8),
+
 
                     // تاريخ الانتهاء
                     if (coupon.validUntil != null)
@@ -656,10 +655,125 @@ class _UserCouponsSheetState extends State<UserCouponsSheet>
                 if (coupon.couponType == CouponType.productSpecific &&
                     coupon.productIds.isNotEmpty) ...[
                   const SizedBox(height: 8),
-                  _buildDetailChip(
-                    icon: Icons.inventory_2_outlined,
-                    label: 'على ${coupon.productIds.length} منتج محدد',
-                    colorScheme: colorScheme,
+                  FutureBuilder<List<ProductModel>>(
+                    future: ProductService.getProductsByIds(coupon.productIds),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 8.0),
+                          child: LinearProgressIndicator(
+                            color: accentColor,
+                            backgroundColor: accentColor.withValues(alpha: 0.1),
+                          ),
+                        );
+                      }
+                      if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
+                        return _buildDetailChip(
+                          icon: Icons.inventory_2_outlined,
+                          label: 'على ${coupon.productIds.length} منتج محدد',
+                          colorScheme: colorScheme,
+                        );
+                      }
+                      final products = snapshot.data!;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildDetailChip(
+                            icon: Icons.inventory_2_outlined,
+                            label: 'على ${products.length} منتج محدد (اضغط لفتح المنتج):',
+                            colorScheme: colorScheme,
+                          ),
+                          const SizedBox(height: 6),
+                          ...products.map((product) {
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 6),
+                              decoration: BoxDecoration(
+                                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: accentColor.withValues(alpha: 0.15),
+                                ),
+                              ),
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () {
+                                    Navigator.pop(context); // close sheet
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => ProductDetailScreen(product: product),
+                                      ),
+                                    );
+                                  },
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    child: Row(
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(6),
+                                          child: product.imageUrl != null && product.imageUrl!.isNotEmpty
+                                              ? Image.network(
+                                                  product.imageUrl!,
+                                                  width: 36,
+                                                  height: 36,
+                                                  fit: BoxFit.cover,
+                                                  errorBuilder: (context, error, stackTrace) => Container(
+                                                    width: 36,
+                                                    height: 36,
+                                                    color: Colors.grey[200],
+                                                    child: const Icon(Icons.shopping_bag_outlined, size: 18, color: Colors.grey),
+                                                  ),
+                                                )
+                                              : Container(
+                                                  width: 36,
+                                                  height: 36,
+                                                  color: Colors.grey[200],
+                                                  child: const Icon(Icons.shopping_bag_outlined, size: 18, color: Colors.grey),
+                                                ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                product.name,
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: colorScheme.onSurface,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              Text(
+                                                '${product.price.toStringAsFixed(0)} ج.م',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: accentColor,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Icon(
+                                          Icons.arrow_forward_ios_rounded,
+                                          size: 12,
+                                          color: colorScheme.onSurfaceVariant,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      );
+                    },
                   ),
                 ],
                 if (coupon.couponType == CouponType.tieredQuantity &&

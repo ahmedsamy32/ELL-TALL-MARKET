@@ -879,45 +879,18 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
         Consumer<CartProvider>(
           builder: (context, cartProvider, child) {
             final itemCount = cartProvider.cartItems.length;
-            return Stack(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.shopping_cart_rounded),
-                  onPressed: () {
-                    HapticFeedback.lightImpact();
-                    Navigator.pushNamed(context, AppRoutes.cart);
-                  },
-                ),
-                if (itemCount > 0)
-                  Positioned(
-                    right: 6,
-                    top: 6,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        color: colorScheme.error,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: colorScheme.primary,
-                          width: 2,
-                        ),
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 18,
-                        minHeight: 18,
-                      ),
-                      child: Text(
-                        itemCount > 99 ? '99+' : itemCount.toString(),
-                        style: TextStyle(
-                          color: colorScheme.onError,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-              ],
+            return IconButton(
+              icon: Badge(
+                isLabelVisible: itemCount > 0,
+                backgroundColor: colorScheme.error,
+                textColor: colorScheme.onError,
+                label: Text(itemCount > 99 ? '99+' : itemCount.toString()),
+                child: const Icon(Icons.shopping_cart_rounded),
+              ),
+              onPressed: () {
+                HapticFeedback.lightImpact();
+                Navigator.pushNamed(context, AppRoutes.cart);
+              },
             );
           },
         ),
@@ -927,45 +900,18 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
             final unreadCount = notificationProvider.getUnreadCountForRole(
               'client',
             );
-            return Stack(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.notifications_rounded),
-                  onPressed: () {
-                    HapticFeedback.lightImpact();
-                    _showNotificationsBottomSheet(context);
-                  },
-                ),
-                if (unreadCount > 0)
-                  Positioned(
-                    right: 8,
-                    top: 8,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: colorScheme.error,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: colorScheme.primary,
-                          width: 1.5,
-                        ),
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 16,
-                        minHeight: 16,
-                      ),
-                      child: Text(
-                        unreadCount > 99 ? '99+' : unreadCount.toString(),
-                        style: TextStyle(
-                          color: colorScheme.onError,
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-              ],
+            return IconButton(
+              icon: Badge(
+                isLabelVisible: unreadCount > 0,
+                backgroundColor: colorScheme.error,
+                textColor: colorScheme.onError,
+                label: Text(unreadCount > 99 ? '99+' : unreadCount.toString()),
+                child: const Icon(Icons.notifications_rounded),
+              ),
+              onPressed: () {
+                HapticFeedback.lightImpact();
+                _showNotificationsBottomSheet(context);
+              },
             );
           },
         ),

@@ -332,7 +332,8 @@ class _CartScreenState extends State<CartScreen> {
 
                   final product = item['product'] as Map<String, dynamic>;
                   final quantity = item['quantity'] as int;
-                  final price = (product['price'] as num?)?.toDouble() ?? 0.0;
+                  final price = (item['product_price'] as num?)?.toDouble() ??
+                      (product['price'] as num?)?.toDouble() ?? 0.0;
                   final itemTotal = price * quantity;
                   final stockQuantity =
                       (product['stock_quantity'] as int?) ?? 0;
@@ -516,49 +517,108 @@ class _CartScreenState extends State<CartScreen> {
                       ),
                       const SizedBox(height: 4),
 
+                      // اسم المتجر
+                      if (store != null && store['name'] != null) ...[
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.storefront_outlined,
+                              size: 14,
+                              color: colorScheme.secondary,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              store['name'],
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.secondary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                      ],
+
                       // عرض الخصائص المختارة
                       if (item['selected_options'] != null &&
-                          (item['selected_options'] as Map).isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Wrap(
-                            spacing: 6,
-                            runSpacing: 2,
-                            children:
-                                (item['selected_options']
-                                        as Map<String, dynamic>)
-                                    .entries
-                                    .map((entry) {
+                          (item['selected_options'] as Map).isNotEmpty) ...[
+                        Builder(
+                          builder: (context) {
+                            final selectedOpts = Map<String, dynamic>.from(item['selected_options'] ?? {});
+                            final addonsList = selectedOpts['addons'] as List<dynamic>?;
+                            final filteredOpts = selectedOpts.entries.where((e) => e.key != 'addons').toList();
+
+                            if (filteredOpts.isEmpty && (addonsList == null || addonsList.isEmpty)) {
+                              return const SizedBox.shrink();
+                            }
+
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Wrap(
+                                spacing: 6,
+                                runSpacing: 4,
+                                children: [
+                                  // الخصائص (Size, Color, etc.)
+                                  ...filteredOpts.map((entry) {
+                                    return Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 6,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: colorScheme
+                                            .surfaceContainerHighest
+                                            .withValues(alpha: 0.5),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: colorScheme.outlineVariant
+                                              .withValues(alpha: 0.3),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        '${entry.key}: ${entry.value}',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                          color: colorScheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    );
+                                  }),
+
+                                  // الإضافات
+                                  if (addonsList != null)
+                                    ...addonsList.map((addon) {
+                                      final addonName = addon['name'] ?? 'إضافة';
+                                      final addonPrice = addon['price'] ?? 0;
                                       return Container(
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 6,
                                           vertical: 2,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: colorScheme
-                                              .surfaceContainerHighest
-                                              .withValues(alpha: 0.5),
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
+                                          color: Colors.green.shade50,
+                                          borderRadius: BorderRadius.circular(4),
                                           border: Border.all(
-                                            color: colorScheme.outlineVariant
-                                                .withValues(alpha: 0.3),
+                                            color: Colors.green.shade200,
                                           ),
                                         ),
                                         child: Text(
-                                          '${entry.key}: ${entry.value}',
+                                          '$addonName (+${addonPrice.toStringAsFixed(0)} ج.م)',
                                           style: TextStyle(
                                             fontSize: 10,
                                             fontWeight: FontWeight.w600,
-                                            color: colorScheme.onSurfaceVariant,
+                                            color: Colors.green.shade700,
                                           ),
                                         ),
                                       );
-                                    })
-                                    .toList(),
-                          ),
+                                    }),
+                                ],
+                              ),
+                            );
+                          }
                         ),
+                      ],
                       const SizedBox(height: 6),
 
                       // badge نظام التوصيل فقط
@@ -1278,77 +1338,86 @@ class _CartScreenState extends State<CartScreen> {
 
                         final name = product['name'] as String? ?? 'منتج';
                         final quantity = item['quantity'] as int;
-                        final price =
+                        final price = (item['product_price'] as num?)?.toDouble() ??
                             (product['price'] as num?)?.toDouble() ?? 0.0;
-                        final total = price * quantity;
+                        final Map<String, dynamic> selectedOpts = Map<String, dynamic>.from(item['selected_options'] ?? {});
+                        final attributes = selectedOpts.entries
+                            .where((e) => e.key != 'addons')
+                            .map((e) => '${e.key}: ${e.value}')
+                            .join(' | ');
+                        final addonsList = selectedOpts['addons'] as List<dynamic>?;
+                        final addonsText = addonsList != null && addonsList.isNotEmpty
+                            ? 'إضافات: ${addonsList.map((a) => a['name']).join(', ')}'
+                            : '';
 
                         return Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.only(bottom: 12),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // اسم المنتج والكمية
+                              // اسم المنتج والخصائص والإضافات
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
                                       name,
-                                      style: theme.textTheme.bodyMedium
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w600,
-                                            color: colorScheme.onSurface,
-                                          ),
+                                      style: theme.textTheme.bodyLarge?.copyWith(
+                                        fontWeight: FontWeight.bold,
+                                        color: colorScheme.onSurface,
+                                      ),
                                       maxLines: 2,
                                       overflow: TextOverflow.ellipsis,
                                     ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      'الكمية: $quantity × ${price.toStringAsFixed(2)} ج.م',
-                                      style: theme.textTheme.bodySmall
-                                          ?.copyWith(
-                                            color: colorScheme.onSurface
-                                                .withValues(alpha: 0.7),
-                                          ),
-                                    ),
+                                    if (attributes.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        attributes,
+                                        style: theme.textTheme.bodySmall?.copyWith(
+                                          color: colorScheme.primary,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                    if (addonsText.isNotEmpty) ...[
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        addonsText,
+                                        style: theme.textTheme.bodyMedium?.copyWith(
+                                          color: Colors.green,
+                                        ),
+                                      ),
+                                    ],
                                   ],
                                 ),
                               ),
-                              const SizedBox(width: 8),
-                              // السعر الإجمالي للمنتج
+                              const SizedBox(width: 16),
+                              // الكمية والسعر بجانب المنتج
                               Text(
-                                '${total.toStringAsFixed(2)} ج.م',
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  color: colorScheme.primary,
+                                '$quantity × ${price.toStringAsFixed(2)} ج.م',
+                                style: theme.textTheme.bodyLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: colorScheme.onSurface,
                                 ),
                               ),
                             ],
                           ),
                         );
                       }),
-
-                      const SizedBox(height: 8),
-                      Divider(
-                        color: colorScheme.outline.withValues(alpha: 0.3),
-                        thickness: 1,
-                      ),
-                      const SizedBox(height: 8),
-
-                      // الإجمالي النهائي
+                      const Divider(height: 24),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            'الإجمالي',
-                            style: theme.textTheme.titleLarge?.copyWith(
+                            'الإجمالي:',
+                            style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.bold,
-                              color: colorScheme.onSurface,
+                              color: colorScheme.primary,
                             ),
                           ),
                           Text(
-                            '${(cartProvider.subtotal - discount).toStringAsFixed(2)} ج.م',
-                            style: theme.textTheme.headlineSmall?.copyWith(
+                            '${cartProvider.subtotal.toStringAsFixed(2)} ج.م',
+                            style: theme.textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.bold,
                               color: colorScheme.primary,
                             ),
@@ -1447,11 +1516,13 @@ class _CartScreenState extends State<CartScreen> {
             children: [
               Icon(Icons.info_outline, color: colorScheme.error),
               const SizedBox(width: 8),
-              Text(
-                'يجب الوصول للحد الأدنى للطلب قبل الإكمال',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: colorScheme.error,
+              Expanded(
+                child: Text(
+                  'يجب الوصول للحد الأدنى للطلب قبل الإكمال',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.error,
+                  ),
                 ),
               ),
             ],

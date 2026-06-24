@@ -37,6 +37,10 @@ class OrderTrackingProvider with ChangeNotifier {
         'updated_at': DateTime.now().toIso8601String(),
       };
 
+      if (newStatus == 'delivered') {
+        updateData['payment_status'] = 'paid';
+      }
+
       if (note != null) {
         updateData['notes'] = note;
       }

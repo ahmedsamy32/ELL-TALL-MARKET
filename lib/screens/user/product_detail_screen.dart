@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:ui' as ui;
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/cart_provider.dart';
@@ -20,6 +22,10 @@ import 'package:ell_tall_market/services/rating_service.dart';
 import 'package:ell_tall_market/models/store_model.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:ell_tall_market/utils/helpers.dart';
+import 'package:ell_tall_market/models/coupon_model.dart';
+import 'package:ell_tall_market/services/coupon_service.dart';
+
 
 class ProductDetailScreen extends StatefulWidget {
   final ProductModel product;
@@ -40,6 +46,9 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   List<String> _allProductImages = [];
   bool _isLoadingImages = true;
   BuildContext? _addToCartSheetContext;
+  List<CouponModel> _applicableCoupons = [];
+  bool _isLoadingCoupons = true;
+
 
   // Attributes State
   List<ProductVariantGroup> _variantGroups = [];
@@ -47,6 +56,49 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   bool _isLoadingVariants = true;
   bool _showVariantValidationError = false;
   String? _variantErrorMessage;
+
+  // Addons State
+  final List<ProductAddon> _selectedAddons = [];
+
+  /// حساب إجمالي سعر الإضافات المحددة
+  double get _addonsTotal =>
+      _selectedAddons.fold(0.0, (sum, addon) => sum + addon.price);
+
+  /// البحث عن المتغير المحدد
+  ProductVariant? _getSelectedVariant() {
+    if (widget.product.variants == null || widget.product.variants!.isEmpty) {
+      return null;
+    }
+    for (final variant in widget.product.variants!) {
+      if (!variant.isActive) continue;
+      bool matches = true;
+      if (variant.selectedOptions.length != _variantGroups.length) {
+        continue;
+      }
+      for (final option in variant.selectedOptions) {
+        if (_selectedOptions[option.name] != option.value) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) {
+        return variant;
+      }
+    }
+    return null;
+  }
+
+  /// السعر الأساسي للمنتج (مع مراعاة المتغير المختار)
+  double get _baseProductPrice {
+    final selectedVariant = _getSelectedVariant();
+    if (selectedVariant != null && selectedVariant.price != null) {
+      return selectedVariant.price!;
+    }
+    return widget.product.price;
+  }
+
+  /// السعر الإجمالي (سعر المنتج + الإضافات)
+  double get _totalPrice => _baseProductPrice + _addonsTotal;
 
   // Store State
   StoreModel? _store;
@@ -85,6 +137,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
     _loadStoreInfo();
     _loadReviews();
+    _loadApplicableCoupons();
   }
 
   // ===========================================================================
@@ -312,6 +365,31 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       }
     }
   }
+
+  Future<void> _loadApplicableCoupons() async {
+    try {
+      final coupons = await CouponService.fetchCouponsByStore(widget.product.storeId);
+      final productCoupons = coupons.where((coupon) {
+        if (!coupon.isActive || !coupon.canBeUsed) return false;
+        if (coupon.couponType == CouponType.productSpecific) {
+          return coupon.productIds.contains(widget.product.id);
+        }
+        return coupon.couponType == CouponType.percentage || coupon.couponType == CouponType.fixedAmount;
+      }).toList();
+      if (mounted) {
+        setState(() {
+          _applicableCoupons = productCoupons;
+          _isLoadingCoupons = false;
+        });
+      }
+    } catch (e) {
+      AppLogger.warning('⚠️ فشل تحميل الكوبونات المتاحة للمنتج: $e');
+      if (mounted) {
+        setState(() => _isLoadingCoupons = false);
+      }
+    }
+  }
+
 
   // ===========================================================================
   // 9. Helper Methods
@@ -882,6 +960,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       future: ProductService.getRelatedProducts(
         productId: widget.product.id,
         categoryId: widget.product.categoryId,
+        storeId: widget.product.storeId,
         limit: 4,
       ),
       builder: (context, snapshot) {
@@ -1060,7 +1139,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                       ),
                     ),
                     _buildMainInfo(hasDiscount, discountPercentage),
+                    _buildApplicableCouponsSection(),
+
                     _buildEnhancedAttributesSection(),
+                    _buildAddonsSection(),
                     _buildRelatedProductsSection(),
                   ],
                 ),
@@ -1115,7 +1197,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             slivers: [
               // Immersive AppBar & Product Images
               SliverAppBar(
-                expandedHeight: 450,
+                expandedHeight: 220,
                 pinned: true,
                 stretch: true,
                 backgroundColor: theme.scaffoldBackgroundColor,
@@ -1197,8 +1279,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     // Title & Description Card
                     _buildMainInfo(hasDiscount, discountPercentage),
 
+                    // Applicable Coupons Section
+                    _buildApplicableCouponsSection(),
+
+
                     // Attributes Selection
                     _buildEnhancedAttributesSection(),
+
+                    // Addons Selection
+                    _buildAddonsSection(),
 
                     // Reviews Section
                     _buildReviewsSection(),
@@ -1215,6 +1304,145 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
           // Floating Bottom Navigation
           Positioned(left: 0, right: 0, bottom: 0, child: _buildBottomBar()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildApplicableCouponsSection() {
+    if (_isLoadingCoupons || _applicableCoupons.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF6A5AE0).withValues(alpha: 0.1),
+            const Color(0xFF5C6BC0).withValues(alpha: 0.05),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFF6A5AE0).withValues(alpha: 0.2),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.local_offer_rounded,
+                color: Color(0xFF6A5AE0),
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'عروض وكوبونات متاحة لهذا المنتج',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: const Color(0xFF1A1A1A),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ..._applicableCoupons.map((coupon) {
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.03),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'خصم ${coupon.discountValueFormatted}',
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF6A5AE0),
+                          ),
+                        ),
+                        if (coupon.description != null && coupon.description!.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            coupon.description!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: coupon.code));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('تم نسخ الكود بنجاح'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF6A5AE0).withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: const Color(0xFF6A5AE0).withValues(alpha: 0.2),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            coupon.code,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF6A5AE0),
+                              letterSpacing: 1.2,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          const Icon(
+                            Icons.copy_rounded,
+                            size: 14,
+                            color: Color(0xFF6A5AE0),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
         ],
       ),
     );
@@ -1310,13 +1538,28 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                widget.product.priceFormatted,
+                (_addonsTotal > 0 || _baseProductPrice != widget.product.price)
+                    ? Helpers.formatCurrency(_totalPrice, currencyCode: 'EGP')
+                    : widget.product.priceFormatted,
                 style: theme.textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.w900,
                   color: theme.colorScheme.primary,
                 ),
               ),
-              if (hasDiscount) ...[
+              if (_addonsTotal > 0) ...[
+                const SizedBox(width: 8),
+                Text(
+                  Helpers.formatCurrency(
+                    _baseProductPrice,
+                    currencyCode: 'EGP',
+                  ),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: theme.hintColor,
+                    decoration: TextDecoration.lineThrough,
+                  ),
+                ),
+              ],
+              if (hasDiscount && _addonsTotal == 0) ...[
                 const SizedBox(width: 12),
                 Text(
                   '${widget.product.comparePrice!.toStringAsFixed(0)} ج.م',
@@ -1402,15 +1645,47 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           onPageChanged: (i) => setState(() => _currentPage = i),
           itemCount: _allProductImages.length,
           itemBuilder: (context, index) {
+            final theme = Theme.of(context);
+            final imageUrl = _allProductImages[index];
             return Hero(
               tag: index == 0
                   ? 'product_${widget.product.id}'
                   : 'product_${widget.product.id}_$index',
-              child: Image.network(
-                _allProductImages[index],
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) =>
-                    const Icon(Icons.broken_image, size: 50),
+              child: Container(
+                color: theme.scaffoldBackgroundColor,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    // Blurred background to fill aspect ratio gaps elegantly
+                    ClipRect(
+                      child: Transform.scale(
+                        scale: 1.15, // Scale up slightly so background bleeds into margins
+                        child: ImageFiltered(
+                          imageFilter: ui.ImageFilter.blur(
+                            sigmaX: 12, // Reduced blur to make product replica ("خيال") more visible
+                            sigmaY: 12,
+                          ),
+                          child: CachedNetworkImage(
+                            imageUrl: imageUrl,
+                            fit: BoxFit.cover,
+                            errorWidget: (_, _, _) => const SizedBox.shrink(),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // Semi-transparent overlay to enhance contrast and readability
+                    Container(color: Colors.black.withValues(alpha: 0.15)),
+                    // Foreground uncropped image
+                    Center(
+                      child: CachedNetworkImage(
+                        imageUrl: imageUrl,
+                        fit: BoxFit.contain,
+                        errorWidget: (context, url, error) =>
+                            const Icon(Icons.broken_image, size: 50),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -1549,7 +1824,6 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: colorScheme.outlineVariant.withValues(alpha: 0.5),
@@ -1562,129 +1836,137 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           ),
         ],
       ),
-      child: Theme(
-        data: theme.copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: true,
-          tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-          iconColor: theme.primaryColor,
-          collapsedIconColor: theme.hintColor,
-          title: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: theme.primaryColor.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  Icons.tune_rounded,
-                  color: theme.primaryColor,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Text(
-                'خصائص المنتج',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.3,
-                ),
-              ),
-              if (_selectedOptions.isNotEmpty) ...[
-                const Spacer(),
+      child: Material(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(20),
+        clipBehavior: Clip.antiAlias,
+        child: Theme(
+          data: theme.copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            initiallyExpanded: true,
+            tilePadding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 8,
+            ),
+            iconColor: theme.primaryColor,
+            collapsedIconColor: theme.hintColor,
+            title: Row(
+              children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
+                  padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
                     color: theme.primaryColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Text(
-                    '${_selectedOptions.length} اختيار',
-                    style: TextStyle(
-                      color: theme.primaryColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  child: Icon(
+                    Icons.tune_rounded,
+                    color: theme.primaryColor,
+                    size: 20,
                   ),
                 ),
-              ],
-            ],
-          ),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ..._variantGroups.map((group) {
-                    final isMissingRequired =
-                        _showVariantValidationError &&
-                        !_selectedOptions.containsKey(group.name);
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const SizedBox(height: 20),
-                        Row(
-                          children: [
-                            Text(
-                              group.name,
-                              style: theme.textTheme.bodyLarge?.copyWith(
-                                fontWeight: FontWeight.bold,
-                                color: isMissingRequired
-                                    ? colorScheme.error
-                                    : colorScheme.onSurface.withValues(
-                                        alpha: 0.8,
-                                      ),
-                              ),
-                            ),
-                            if (group.isRequired) ...[
-                              const SizedBox(width: 4),
-                              Text(
-                                '*',
-                                style: TextStyle(
-                                  color: colorScheme.error,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            'مطلوب',
-                            style: TextStyle(
-                              color: isMissingRequired
-                                  ? colorScheme.error
-                                  : colorScheme.onSurfaceVariant,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        _buildEnhancedChipOptions(group),
-                      ],
-                    );
-                  }),
-                  if (_variantErrorMessage != null) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      _variantErrorMessage!,
+                const SizedBox(width: 16),
+                Text(
+                  'خصائص المنتج',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                if (_selectedOptions.isNotEmpty) ...[
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: theme.primaryColor.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${_selectedOptions.length} اختيار',
                       style: TextStyle(
-                        color: colorScheme.error,
-                        fontWeight: FontWeight.w600,
+                        color: theme.primaryColor,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                  ],
+                  ),
                 ],
-              ),
+              ],
             ),
-          ],
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ..._variantGroups.map((group) {
+                      final isMissingRequired =
+                          _showVariantValidationError &&
+                          !_selectedOptions.containsKey(group.name);
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 20),
+                          Row(
+                            children: [
+                              Text(
+                                group.name,
+                                style: theme.textTheme.bodyLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                  color: isMissingRequired
+                                      ? colorScheme.error
+                                      : colorScheme.onSurface.withValues(
+                                          alpha: 0.8,
+                                        ),
+                                ),
+                              ),
+                              if (group.isRequired) ...[
+                                const SizedBox(width: 4),
+                                Text(
+                                  '*',
+                                  style: TextStyle(
+                                    color: colorScheme.error,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text(
+                              'مطلوب',
+                              style: TextStyle(
+                                color: isMissingRequired
+                                    ? colorScheme.error
+                                    : colorScheme.onSurfaceVariant,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          _buildEnhancedChipOptions(group),
+                        ],
+                      );
+                    }),
+                    if (_variantErrorMessage != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _variantErrorMessage!,
+                        style: TextStyle(
+                          color: colorScheme.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1757,6 +2039,257 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           ),
         );
       }).toList(),
+    );
+  }
+
+  // ===========================================================================
+  // Addons Section (Customer Side)
+  // ===========================================================================
+
+  Widget _buildAddonItem(ProductAddon addon) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isSelected = _selectedAddons.any((a) => a.id == addon.id);
+
+    return GestureDetector(
+      onTap: () {
+        HapticFeedback.lightImpact();
+        setState(() {
+          if (isSelected) {
+            _selectedAddons.removeWhere((a) => a.id == addon.id);
+          } else {
+            _selectedAddons.add(addon);
+          }
+        });
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? Colors.deepPurple.withValues(alpha: 0.06)
+              : colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected
+                ? Colors.deepPurple.withValues(alpha: 0.5)
+                : colorScheme.outlineVariant.withValues(alpha: 0.3),
+            width: isSelected ? 1.5 : 1.0,
+          ),
+        ),
+        child: Row(
+          children: [
+            // صورة الإضافة
+            if (addon.imageUrl != null && addon.imageUrl!.isNotEmpty)
+              Container(
+                width: 40,
+                height: 40,
+                margin: const EdgeInsets.only(left: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.grey[100],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    addon.imageUrl!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => Icon(
+                      Icons.fastfood_rounded,
+                      color: Colors.grey[400],
+                      size: 18,
+                    ),
+                  ),
+                ),
+              )
+            else
+              Container(
+                width: 40,
+                height: 40,
+                margin: const EdgeInsets.only(left: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: Colors.deepPurple.withValues(alpha: 0.08),
+                ),
+                child: Icon(
+                  Icons.add_box_rounded,
+                  color: Colors.deepPurple.withValues(alpha: 0.5),
+                  size: 18,
+                ),
+              ),
+
+            // اسم الإضافة والسعر
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    addon.name,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: isSelected
+                          ? FontWeight.bold
+                          : FontWeight.w500,
+                      color: isSelected
+                          ? Colors.deepPurple
+                          : colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '+${addon.price.toStringAsFixed(0)} ج.م',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: isSelected
+                          ? Colors.deepPurple
+                          : colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 4),
+
+            // علامة الاختيار
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              width: 20,
+              height: 20,
+              decoration: BoxDecoration(
+                color: isSelected ? Colors.deepPurple : Colors.transparent,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: isSelected
+                      ? Colors.deepPurple
+                      : colorScheme.outlineVariant,
+                  width: 1.5,
+                ),
+              ),
+              child: isSelected
+                  ? const Icon(
+                      Icons.check_rounded,
+                      color: Colors.white,
+                      size: 14,
+                    )
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAddonsSection() {
+    final addons = widget.product.addons;
+    if (addons == null || addons.isEmpty) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 15,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Material(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(20),
+        clipBehavior: Clip.antiAlias,
+        child: Theme(
+          data: theme.copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            initiallyExpanded: true,
+            tilePadding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 8,
+            ),
+            iconColor: theme.primaryColor,
+            collapsedIconColor: theme.hintColor,
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.deepPurple.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(
+                    Icons.add_circle_outline_rounded,
+                    color: Colors.deepPurple,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Text(
+                  'إضافات',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                if (_selectedAddons.isNotEmpty) ...[
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.deepPurple.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '+${_addonsTotal.toStringAsFixed(0)} ج.م',
+                      style: TextStyle(
+                        color: Colors.deepPurple,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  children: [
+                    for (int i = 0; i < addons.length; i += 2) ...[
+                      if (i > 0) const SizedBox(height: 10),
+                      IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(child: _buildAddonItem(addons[i])),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: i + 1 < addons.length
+                                  ? _buildAddonItem(addons[i + 1])
+                                  : const SizedBox.shrink(),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -1960,10 +2493,18 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       final cartProvider = Provider.of<CartProvider>(context, listen: false);
       _showAddedToCartBottomSheet();
 
+      // تجهيز الخيارات مع الإضافات المختارة
+      final Map<String, dynamic> cartOptions = Map<String, dynamic>.from(
+        _selectedOptions,
+      );
+      if (_selectedAddons.isNotEmpty) {
+        cartOptions['addons'] = _selectedAddons.map((e) => e.toMap()).toList();
+      }
+
       final success = await cartProvider.addToCart(
         productId: widget.product.id,
         quantity: _quantity,
-        selectedOptions: _selectedOptions,
+        selectedOptions: cartOptions,
       );
 
       if (!success) {

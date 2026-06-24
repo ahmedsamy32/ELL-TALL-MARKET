@@ -702,6 +702,52 @@ class PromotionalDiscount {
   }
 }
 
+class ProductAddon {
+  final String id;
+  final String name;
+  final double price;
+  final String? imageUrl;
+
+  const ProductAddon({
+    required this.id,
+    required this.name,
+    required this.price,
+    this.imageUrl,
+  });
+
+  factory ProductAddon.fromMap(Map<String, dynamic> map) {
+    return ProductAddon(
+      id: map['id'] as String? ?? '',
+      name: map['name'] as String? ?? '',
+      price: double.tryParse(map['price'].toString()) ?? 0.0,
+      imageUrl: map['image_url'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'price': price,
+      'image_url': imageUrl,
+    };
+  }
+
+  ProductAddon copyWith({
+    String? id,
+    String? name,
+    double? price,
+    String? imageUrl,
+  }) {
+    return ProductAddon(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      price: price ?? this.price,
+      imageUrl: imageUrl ?? this.imageUrl,
+    );
+  }
+}
+
 /// Product model that matches the Supabase products table
 class ProductModel with BaseModelMixin {
   static const String tableName = 'products';
@@ -732,6 +778,7 @@ class ProductModel with BaseModelMixin {
   promotionalDiscounts; // Promotional discounts
   final List<ProductVariantGroup>? variantGroups; // Product variant groups
   final List<ProductVariant>? variants; // Product variants
+  final List<ProductAddon>? addons; // Product addons
   final Map<String, dynamic>?
   customFields; // JSONB - Category-specific dynamic fields
   @override
@@ -763,6 +810,7 @@ class ProductModel with BaseModelMixin {
     this.promotionalDiscounts,
     this.variantGroups,
     this.variants,
+    this.addons,
     this.customFields,
     required this.createdAt,
     this.updatedAt,
@@ -818,6 +866,17 @@ class ProductModel with BaseModelMixin {
       customFields: map['custom_fields'] != null
           ? Map<String, dynamic>.from(map['custom_fields'] as Map)
           : null,
+      addons: map['addons'] != null
+          ? (map['addons'] as List)
+              .map((e) => ProductAddon.fromMap(Map<String, dynamic>.from(e as Map)))
+              .toList()
+          : (map['custom_fields'] != null &&
+                  map['custom_fields'] is Map &&
+                  (map['custom_fields'] as Map)['addons'] != null)
+              ? ((map['custom_fields'] as Map)['addons'] as List)
+                  .map((e) => ProductAddon.fromMap(Map<String, dynamic>.from(e as Map)))
+                  .toList()
+              : null,
       quantityBasedPrices: null, // Will be loaded separately
       seasonalOffers: null, // Will be loaded separately
       vipPrices: null, // Will be loaded separately
@@ -877,6 +936,7 @@ class ProductModel with BaseModelMixin {
       'tags': tags,
       'image_url': imageUrl,
       'custom_fields': customFields,
+      'addons': addons?.map((e) => e.toMap()).toList(),
       'is_active': isActive,
       'rating': rating,
       'review_count': reviewCount,
@@ -903,6 +963,7 @@ class ProductModel with BaseModelMixin {
       'image_url': imageUrl,
       'image_urls': imageUrls,
       'custom_fields': customFields,
+      'addons': addons?.map((e) => e.toMap()).toList(),
       'is_active': isActive,
       'rating': rating,
       'review_count': reviewCount,
@@ -943,6 +1004,7 @@ class ProductModel with BaseModelMixin {
     List<PromotionalDiscount>? promotionalDiscounts,
     List<ProductVariantGroup>? variantGroups,
     List<ProductVariant>? variants,
+    List<ProductAddon>? addons,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -971,6 +1033,7 @@ class ProductModel with BaseModelMixin {
       promotionalDiscounts: promotionalDiscounts ?? this.promotionalDiscounts,
       variantGroups: variantGroups ?? this.variantGroups,
       variants: variants ?? this.variants,
+      addons: addons ?? this.addons,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

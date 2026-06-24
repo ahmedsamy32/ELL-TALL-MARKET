@@ -10,8 +10,11 @@ import 'package:ell_tall_market/services/store_service.dart';
 import 'package:ell_tall_market/widgets/order_card.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ell_tall_market/utils/app_colors.dart';
+import 'package:ell_tall_market/widgets/custom_button.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
-import 'dart:async';
+import 'package:ell_tall_market/core/logger.dart';
+
 
 class MerchantOrdersScreen extends StatefulWidget {
   const MerchantOrdersScreen({super.key});
@@ -98,12 +101,6 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
   bool _isLoadingData = false;
   StoreModel? _store; // بيانات المتجر لتحديد وضع التوصيل
 
-  static const Duration _merchantAutoAcceptDuration = Duration(seconds: 60);
-  static const Duration _autoAcceptRetryDelay = Duration(seconds: 10);
-  Timer? _autoAcceptTimer;
-  final Set<String> _autoAcceptInFlight = {};
-  final Map<String, DateTime> _autoAcceptAttempts = {};
-
   /// هل التوصيل عبر التطبيق (كابتن) أم المتجر نفسه؟
   bool get _isAppDelivery => _store?.deliveryMode == 'app';
 
@@ -122,7 +119,7 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
 
   /// فلترة ديناميكية حسب وضع التوصيل:
   /// - store: كما هي من `MerchantOrderFilter.statuses`
-  /// - app: الطلبات الجاهزة/المؤكدة تعتبر ضمن مرحلة الدليفري
+  /// - app: الطلبات تذهب مباشرة للدليفري (ready) بدون قبول التاجر
   bool _matchesFilterForCurrentDeliveryMode(
     MerchantOrderFilter filter,
     OrderStatus status,
@@ -131,12 +128,12 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
 
     switch (filter) {
       case MerchantOrderFilter.newOrders:
-        return status == OrderStatus.pending;
+        return status == OrderStatus.pending ||
+            status == OrderStatus.confirmed;
       case MerchantOrderFilter.inProgress:
         return status == OrderStatus.preparing;
       case MerchantOrderFilter.delivery:
         return status == OrderStatus.ready ||
-            status == OrderStatus.confirmed ||
             status == OrderStatus.pickedUp ||
             status == OrderStatus.inTransit;
       case MerchantOrderFilter.completed:
@@ -149,7 +146,6 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
   @override
   void initState() {
     super.initState();
-    _startAutoAcceptTimer();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadMerchantOrders();
     });
@@ -157,61 +153,10 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
 
   @override
   void dispose() {
-    _autoAcceptTimer?.cancel();
     super.dispose();
   }
 
-  void _startAutoAcceptTimer() {
-    _autoAcceptTimer?.cancel();
-    _autoAcceptTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      _processAutoAccept();
-    });
-  }
 
-  Future<void> _processAutoAccept() async {
-    if (!mounted || _store == null) return;
-
-    final orderProvider = Provider.of<OrderProvider>(context, listen: false);
-    final now = DateTime.now();
-    final pendingOrders = orderProvider.orders
-        .where((order) => order.status == OrderStatus.pending)
-        .toList();
-
-    if (pendingOrders.isEmpty) return;
-
-    final nextStatus = _isAppDelivery ? OrderStatus.ready : OrderStatus.preparing;
-
-    for (final order in pendingOrders) {
-      if (_autoAcceptInFlight.contains(order.id)) continue;
-
-      final elapsed = now.difference(order.createdAt);
-      if (elapsed < _merchantAutoAcceptDuration) continue;
-
-      final lastAttempt = _autoAcceptAttempts[order.id];
-      if (lastAttempt != null &&
-          now.difference(lastAttempt) < _autoAcceptRetryDelay) {
-        continue;
-      }
-
-      _autoAcceptInFlight.add(order.id);
-      _autoAcceptAttempts[order.id] = now;
-
-      try {
-        final ok = await orderProvider.updateOrderStatus(
-          order.id,
-          nextStatus.dbValue,
-        );
-        if (ok) {
-          _autoAcceptAttempts.remove(order.id);
-        }
-      } finally {
-        _autoAcceptInFlight.remove(order.id);
-      }
-    }
-
-    final pendingIds = pendingOrders.map((o) => o.id).toSet();
-    _autoAcceptAttempts.removeWhere((id, _) => !pendingIds.contains(id));
-  }
 
   @override
   void didChangeDependencies() {
@@ -506,8 +451,6 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
         final order = filteredOrders[index];
         return OrderCard(
           order: order,
-          showAutoAcceptCountdown: true,
-          autoAcceptDuration: _merchantAutoAcceptDuration,
           onTap: () {
             _showOrderActions(order);
           },
@@ -600,6 +543,11 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
                   _buildClientInfoSection(order, colorScheme),
                   const SizedBox(height: 16),
                   _buildAddressSection(order, colorScheme),
+                  _buildPrescriptionPreviewSection(order, colorScheme),
+                  if (order.discountAmount > 0) ...[
+                    const SizedBox(height: 16),
+                    _buildCouponInfoSection(order, colorScheme),
+                  ],
                   const SizedBox(height: 16),
                   Align(
                     alignment: Alignment.centerRight,
@@ -649,6 +597,31 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
                                 .map(
                                   (item) => ListTile(
                                     dense: true,
+                                    leading: ClipRRect(
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Container(
+                                        width: 40,
+                                        height: 40,
+                                        color: colorScheme.surfaceContainerHighest,
+                                        child: item.productImage != null && item.productImage!.isNotEmpty
+                                            ? Image.network(
+                                                item.productImage!,
+                                                fit: BoxFit.cover,
+                                                errorBuilder: (context, error, stackTrace) {
+                                                  return Icon(
+                                                    Icons.image_not_supported,
+                                                    size: 20,
+                                                    color: colorScheme.outline,
+                                                  );
+                                                },
+                                              )
+                                            : Icon(
+                                                Icons.image,
+                                                size: 20,
+                                                color: colorScheme.outline,
+                                              ),
+                                      ),
+                                    ),
                                     title: Text(
                                       item.productName,
                                       maxLines: 2,
@@ -663,23 +636,48 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
                                         ),
                                         if (item.selectedOptions != null &&
                                             item.selectedOptions!.isNotEmpty)
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              top: 2,
-                                            ),
-                                            child: Text(
-                                              item.selectedOptions!.entries
-                                                  .map(
-                                                    (e) =>
-                                                        '${e.key}: ${e.value}',
-                                                  )
-                                                  .join(' | '),
-                                              style: const TextStyle(
-                                                color: Colors.blue,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
+                                          Builder(
+                                            builder: (context) {
+                                              final Map<String, dynamic> selectedOpts = Map<String, dynamic>.from(item.selectedOptions ?? {});
+                                              final attributes = selectedOpts.entries
+                                                  .where((e) => e.key != 'addons')
+                                                  .map((e) => '${e.key}: ${e.value}')
+                                                  .join(' | ');
+                                              final addonsList = selectedOpts['addons'] as List<dynamic>?;
+                                              final addonsText = addonsList != null && addonsList.isNotEmpty
+                                                  ? 'إضافات: ${addonsList.map((a) => a['name']).join(', ')}'
+                                                  : '';
+
+                                              return Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  if (attributes.isNotEmpty)
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(top: 2),
+                                                      child: Text(
+                                                        attributes,
+                                                        style: const TextStyle(
+                                                          color: Colors.blue,
+                                                          fontSize: 11,
+                                                          fontWeight: FontWeight.bold,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                  if (addonsText.isNotEmpty)
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(top: 2),
+                                                      child: Text(
+                                                        addonsText,
+                                                        style: const TextStyle(
+                                                          fontSize: 11,
+                                                          color: Colors.green,
+                                                          fontWeight: FontWeight.bold,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                ],
+                                              );
+                                            },
                                           ),
                                         if (item.specialInstructions != null &&
                                             item
@@ -736,29 +734,61 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
     OrderModel order,
     OrderStatus orderStatus,
   ) {
-    // الأزرار المشتركة لكل الطلبات
-    if (orderStatus == OrderStatus.pending) {
-      final acceptText = _isAppDelivery
-          ? 'قبول وتحويل للدليفري 🚚'
-          : 'قبول وبدء التحضير';
-      final acceptStatus = _isAppDelivery
-          ? OrderStatus.ready
-          : OrderStatus.preparing;
-
+    final isPrescription = _isPrescriptionOrder(order);
+    if (isPrescription && orderStatus == OrderStatus.pending) {
       return [
         _buildActionButton(
-          acceptText,
-          Icons.check,
-          Colors.green,
-          () => _updateOrderStatus(order, acceptStatus),
-        ),
-        _buildActionButton(
-          'رفض الطلب',
-          Icons.close,
-          Colors.red,
-          () => _updateOrderStatus(order, OrderStatus.cancelled),
+          'تسعير وتأكيد منتجات الروشتة ✏️',
+          Icons.edit_note_rounded,
+          Colors.teal,
+          () {
+            Navigator.pop(context);
+            _showPricingSheet(order);
+          },
         ),
       ];
+    }
+
+    // الأزرار المشتركة لكل الطلبات
+    if (orderStatus == OrderStatus.pending || orderStatus == OrderStatus.ready) {
+      if (_isAppDelivery) {
+        // الطلبات تذهب مباشرة لمكتب التوصيل — التاجر للاطلاع فقط
+        return [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Card(
+              color: Colors.blue[50],
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Icon(Icons.local_shipping_rounded, color: Colors.blue[700]),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'تم تحويل الطلب لمكتب التوصيل تلقائياً وهو بانتظار تعيين كابتن',
+                        style: TextStyle(color: Colors.blue[700], fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ];
+      }
+
+      // للمتجر الذي يوصل بنفسه: يبدأ التحضير مباشرة
+      if (orderStatus == OrderStatus.pending) {
+        return [
+          _buildActionButton(
+            'بدء التحضير',
+            Icons.inventory,
+            Colors.blue,
+            () => _updateOrderStatus(order, OrderStatus.preparing),
+          ),
+        ];
+      }
     }
 
     if (orderStatus == OrderStatus.confirmed) {
@@ -805,43 +835,7 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
       }
     }
 
-    // إذا كان الطلب جاهز
-    if (orderStatus == OrderStatus.ready) {
-      if (_isAppDelivery) {
-        return [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Card(
-              color: Colors.blue[50],
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    Icon(Icons.local_shipping_rounded, color: Colors.blue[700]),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'تم تحويل الطلب للدليفري وهو بانتظار قبول شركة التوصيل',
-                        style: TextStyle(color: Colors.blue[700], fontSize: 13),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ];
-      } else {
-        return [
-          _buildActionButton(
-            'خروج للتوصيل 🚗',
-            Icons.local_shipping,
-            Colors.orange,
-            () => _updateOrderStatus(order, OrderStatus.inTransit),
-          ),
-        ];
-      }
-    }
+
 
     // إذا كان الطلب في الطريق
     if (orderStatus == OrderStatus.inTransit ||
@@ -1048,7 +1042,7 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
 
   Widget _buildAddressSection(OrderModel order, ColorScheme colorScheme) {
     final address = order.deliveryAddress.trim();
-    final notes = (order.deliveryNotes ?? '').trim();
+    final cleanNotesText = _cleanNotes(order);
     return _buildInfoCard(
       colorScheme: colorScheme,
       icon: Icons.location_on_rounded,
@@ -1059,12 +1053,173 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
           label: 'العنوان',
           value: address.isEmpty ? 'غير متاح' : address,
         ),
-        if (notes.isNotEmpty)
+        if (cleanNotesText.isNotEmpty)
           _buildInfoRow(
             icon: Icons.notes_rounded,
             label: 'ملاحظات',
-            value: notes,
+            value: cleanNotesText,
           ),
+      ],
+    );
+  }
+
+  bool _isPrescriptionOrder(OrderModel order) {
+    return order.prescriptionUrl != null && order.prescriptionUrl!.isNotEmpty;
+  }
+
+  String? _getPrescriptionUrl(OrderModel order) {
+    return order.prescriptionUrl;
+  }
+
+  String _cleanNotes(OrderModel order) {
+    return order.deliveryNotes ?? '';
+  }
+
+  Widget _buildPrescriptionPreviewSection(OrderModel order, ColorScheme colorScheme) {
+    final isPrescription = _isPrescriptionOrder(order);
+    if (!isPrescription) return const SizedBox.shrink();
+
+    final url = _getPrescriptionUrl(order);
+    if (url == null || url.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 16),
+        const Align(
+          alignment: Alignment.centerRight,
+          child: Text(
+            'روشتة العميل 📄',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        GestureDetector(
+          onTap: () => _showZoomableImageDialog(url),
+          child: Container(
+            height: 180,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: colorScheme.outline.withValues(alpha: 0.3)),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  Image.network(
+                    url,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return const Center(child: CircularProgressIndicator());
+                    },
+                    errorBuilder: (context, error, stackTrace) => const Icon(
+                      Icons.broken_image_rounded,
+                      size: 40,
+                      color: Colors.red,
+                    ),
+                  ),
+                  Container(
+                    color: Colors.black.withValues(alpha: 0.3),
+                  ),
+                  const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.zoom_in_rounded, color: Colors.white, size: 36),
+                      SizedBox(height: 4),
+                      Text(
+                        'اضغط للمعاينة وتكبير الصورة 🔍',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _showZoomableImageDialog(String url) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(10),
+          backgroundColor: Colors.transparent,
+          child: Stack(
+            alignment: Alignment.topRight,
+            children: [
+              InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Image.network(
+                  url,
+                  fit: BoxFit.contain,
+                  width: double.infinity,
+                  height: double.infinity,
+                ),
+              ),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: CircleAvatar(
+                  backgroundColor: Colors.black.withValues(alpha: 0.6),
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showPricingSheet(OrderModel order) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return _PricingSheetWidget(
+          order: order,
+          onSuccess: () {
+            _loadMerchantOrders(forceRefresh: true);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildCouponInfoSection(OrderModel order, ColorScheme colorScheme) {
+    return _buildInfoCard(
+      colorScheme: colorScheme,
+      icon: Icons.card_giftcard_rounded,
+      title: 'معلومات الكوبون والخصم',
+      children: [
+        _buildInfoRow(
+          icon: Icons.qr_code_rounded,
+          label: 'كود الكوبون',
+          value: order.couponCode ?? 'خصم تلقائي / عرض',
+        ),
+        _buildInfoRow(
+          icon: Icons.monetization_on_rounded,
+          label: 'قيمة الخصم',
+          value: '${order.discountAmount.toStringAsFixed(2)} ج.م',
+        ),
       ],
     );
   }
@@ -1140,4 +1295,337 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
       ),
     );
   }
+}
+
+class _PricingSheetWidget extends StatefulWidget {
+  final OrderModel order;
+  final VoidCallback onSuccess;
+
+  const _PricingSheetWidget({
+    required this.order,
+    required this.onSuccess,
+  });
+
+  @override
+  State<_PricingSheetWidget> createState() => _PricingSheetWidgetState();
+}
+
+class _PricingSheetWidgetState extends State<_PricingSheetWidget> {
+  final _supabase = Supabase.instance.client;
+  final _formKey = GlobalKey<FormState>();
+  
+  final List<Map<String, dynamic>> _items = [];
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _addRow();
+  }
+
+  @override
+  void dispose() {
+    for (final item in _items) {
+      item['nameController']?.dispose();
+      item['priceController']?.dispose();
+      item['quantityController']?.dispose();
+    }
+    super.dispose();
+  }
+
+  void _addRow() {
+    setState(() {
+      _items.add({
+        'nameController': TextEditingController(),
+        'priceController': TextEditingController(),
+        'quantityController': TextEditingController(text: '1'),
+      });
+    });
+  }
+
+  void _removeRow(int index) {
+    if (_items.length <= 1) return;
+    setState(() {
+      final removed = _items.removeAt(index);
+      removed['nameController']?.dispose();
+      removed['priceController']?.dispose();
+      removed['quantityController']?.dispose();
+    });
+  }
+
+  double _calculateSubtotal() {
+    double total = 0.0;
+    for (final item in _items) {
+      final price = double.tryParse(item['priceController']?.text ?? '0') ?? 0.0;
+      final qty = int.tryParse(item['quantityController']?.text ?? '1') ?? 1;
+      total += price * qty;
+    }
+    return total;
+  }
+
+  Future<void> _savePrice() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isSaving = true);
+
+    try {
+      final subtotal = _calculateSubtotal();
+      final totalAmount = subtotal + widget.order.deliveryFee;
+
+      await _supabase
+          .from('order_items')
+          .delete()
+          .eq('order_id', widget.order.id);
+
+      final List<Map<String, dynamic>> insertData = [];
+      for (final item in _items) {
+        final name = item['nameController']!.text.trim();
+        final price = double.parse(item['priceController']!.text);
+        final qty = int.parse(item['quantityController']!.text);
+        final totalPrice = price * qty;
+
+        insertData.add({
+          'order_id': widget.order.id,
+          'product_id': null,
+          'product_name': name,
+          'product_price': price,
+          'quantity': qty,
+          'total_price': totalPrice,
+          'order_number': widget.order.orderNumber,
+        });
+      }
+
+      await _supabase.from('order_items').insert(insertData);
+
+      await _supabase.from('orders').update({
+        'total_amount': totalAmount,
+        'status': OrderStatus.confirmed.value,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', widget.order.id);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم تسعير وتأكيد الطلب بنجاح'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        widget.onSuccess();
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      AppLogger.error('Failed to price prescription order', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في التسعير: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final subtotal = _calculateSubtotal();
+    final total = subtotal + widget.order.deliveryFee;
+
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: FractionallySizedBox(
+        heightFactor: 0.85,
+        child: SafeArea(
+          child: Column(
+            children: [
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'تسعير وتحديد منتجات الروشتة ✏️',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: Form(
+                key: _formKey,
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _items.length,
+                  itemBuilder: (context, index) {
+                    final item = _items[index];
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: BorderSide(color: Colors.grey.shade200),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          children: [
+                            Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 12,
+                                  backgroundColor: Colors.grey.shade200,
+                                  child: Text(
+                                    '${index + 1}',
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                                const Spacer(),
+                                if (_items.length > 1)
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                                    onPressed: () => _removeRow(index),
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            TextFormField(
+                              controller: item['nameController'],
+                              decoration: const InputDecoration(
+                                labelText: 'اسم الدواء / المنتج',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return 'يرجى إدخال اسم الدواء';
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: TextFormField(
+                                    controller: item['priceController'],
+                                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                    decoration: const InputDecoration(
+                                      labelText: 'سعر الوحدة (ج.م)',
+                                      border: OutlineInputBorder(),
+                                      isDense: true,
+                                    ),
+                                    onChanged: (_) => setState(() {}),
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) {
+                                        return 'مطلوب';
+                                      }
+                                      final price = double.tryParse(value);
+                                      if (price == null || price <= 0) {
+                                        return 'غير صالح';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  flex: 1,
+                                  child: TextFormField(
+                                    controller: item['quantityController'],
+                                    keyboardType: TextInputType.number,
+                                    decoration: const InputDecoration(
+                                      labelText: 'الكمية',
+                                      border: OutlineInputBorder(),
+                                      isDense: true,
+                                    ),
+                                    onChanged: (_) => setState(() {}),
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) {
+                                        return 'مطلوب';
+                                      }
+                                      final qty = int.tryParse(value);
+                                      if (qty == null || qty <= 0) {
+                                        return 'غير صالح';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                border: Border(top: BorderSide(color: Colors.grey.shade200)),
+              ),
+              child: Column(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _addRow,
+                    icon: const Icon(Icons.add),
+                    label: const Text('إضافة دواء آخر'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey.shade200,
+                      foregroundColor: Colors.black87,
+                      elevation: 0,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('إجمالي المنتجات:', style: TextStyle(color: Colors.grey)),
+                      Text('${subtotal.toStringAsFixed(2)} ج.م', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('رسوم التوصيل:', style: TextStyle(color: Colors.grey)),
+                      Text('${widget.order.deliveryFee.toStringAsFixed(2)} ج.م', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const Divider(),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('الإجمالي الكلي:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      Text('${total.toStringAsFixed(2)} ج.م', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.primary)),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  CustomButton(
+                    text: 'تأكيد وحفظ التسعيرة',
+                    isLoading: _isSaving,
+                    onPressed: _savePrice,
+                    backgroundColor: AppColors.primary,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
 }

@@ -59,6 +59,7 @@ class StoreModel with BaseModelMixin {
   final String? imageUrl; // TEXT
   final String? coverUrl; // TEXT - رابط صورة الغلاف
   final bool isActive; // BOOLEAN DEFAULT TRUE
+  final bool autoAcceptOrders; // BOOLEAN DEFAULT FALSE
   @override
   final DateTime createdAt;
   @override
@@ -82,7 +83,7 @@ class StoreModel with BaseModelMixin {
     this.isOpen = true,
     this.deliveryFee = 0.0,
     this.minOrder = 0.0,
-    this.deliveryMode = 'store',
+    this.deliveryMode = 'app',
     this.deliveryRadiusKm = 7.0,
     this.rating = 0.0,
     this.reviewCount = 0,
@@ -91,6 +92,7 @@ class StoreModel with BaseModelMixin {
     this.imageUrl,
     this.coverUrl,
     this.isActive = true,
+    this.autoAcceptOrders = false,
     required this.createdAt,
     this.updatedAt,
   });
@@ -133,6 +135,7 @@ class StoreModel with BaseModelMixin {
           ? double.parse(map['longitude'].toString())
           : null,
       isActive: map['is_active'] as bool? ?? true,
+      autoAcceptOrders: map['auto_accept_orders'] as bool? ?? false,
       createdAt: BaseModelMixin.parseDateTime(map['created_at']),
       updatedAt: map['updated_at'] != null
           ? BaseModelMixin.parseDateTime(map['updated_at'])
@@ -145,7 +148,7 @@ class StoreModel with BaseModelMixin {
       minOrder: map['min_order'] != null
           ? double.parse(map['min_order'].toString())
           : 0.0,
-      deliveryMode: map['delivery_mode'] as String? ?? 'store',
+      deliveryMode: map['delivery_mode'] as String? ?? 'app',
       deliveryRadiusKm: map['delivery_radius_km'] != null
           ? double.parse(map['delivery_radius_km'].toString())
           : 7.0,
@@ -176,6 +179,7 @@ class StoreModel with BaseModelMixin {
       name: '',
       address: '',
       isActive: true,
+      autoAcceptOrders: false,
       createdAt: DateTime.now(),
     );
   }
@@ -196,6 +200,7 @@ class StoreModel with BaseModelMixin {
       'latitude': latitude,
       'longitude': longitude,
       'is_active': isActive,
+      'auto_accept_orders': autoAcceptOrders,
       'created_at': createdAt.toIso8601String(),
       'delivery_time': deliveryTime,
       'is_open': isOpen,
@@ -241,6 +246,7 @@ class StoreModel with BaseModelMixin {
       'image_url': imageUrl,
       'cover_url': coverUrl,
       'is_active': isActive,
+      'auto_accept_orders': autoAcceptOrders,
     };
   }
 
@@ -271,6 +277,7 @@ class StoreModel with BaseModelMixin {
     String? imageUrl,
     String? coverUrl,
     bool? isActive,
+    bool? autoAcceptOrders,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -301,6 +308,7 @@ class StoreModel with BaseModelMixin {
       imageUrl: imageUrl ?? this.imageUrl,
       coverUrl: coverUrl ?? this.coverUrl,
       isActive: isActive ?? this.isActive,
+      autoAcceptOrders: autoAcceptOrders ?? this.autoAcceptOrders,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );

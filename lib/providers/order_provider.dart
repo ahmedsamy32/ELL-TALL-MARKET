@@ -315,7 +315,7 @@ class OrderProvider with ChangeNotifier {
       final response = await _supabase
           .from('orders')
           .select(
-            '*, store:stores!store_id(name, address, phone, latitude, longitude), client:profiles!client_id(full_name, phone)',
+            '*, store:stores!store_id(name, address, phone, latitude, longitude, city, governorate, category), client:profiles!client_id(full_name, phone), order_items(*, products(image_url))',
           )
           .order('created_at', ascending: false);
 
@@ -360,7 +360,7 @@ class OrderProvider with ChangeNotifier {
       final response = await _supabase
           .from('orders')
           .select(
-            '*, client:profiles!client_id(full_name, phone), store:stores!store_id(name, address, phone, latitude, longitude)',
+            '*, client:profiles!client_id(full_name, phone), store:stores!store_id(name, address, phone, latitude, longitude, city, governorate, category)',
           )
           .eq('captain_id', captainId)
           .order('created_at', ascending: false);
@@ -420,10 +420,14 @@ class OrderProvider with ChangeNotifier {
         'total_amount': order.totalAmount,
         'delivery_fee': order.deliveryFee,
         'tax_amount': order.taxAmount,
+        'coupon_code': order.couponCode,
+        'discount_amount': order.discountAmount,
         'delivery_address': order.deliveryAddress,
         'delivery_latitude': order.deliveryLatitude,
         'delivery_longitude': order.deliveryLongitude,
         'delivery_notes': order.deliveryNotes,
+        'prescription_url': order.prescriptionUrl,
+        'client_phone': order.clientPhone,
         'status': order.status.value,
         'payment_method': order.paymentMethod.value,
         'payment_status': order.paymentStatus.value,
@@ -467,6 +471,14 @@ class OrderProvider with ChangeNotifier {
         orderId: newOrder.id,
         storeName: storeName,
         totalAmount: order.totalAmount,
+      );
+
+      // إرسال إشعار لمكتب التوصيل بالطلب الجديد (يرسل فوراً مع التاجر)
+      NotificationServiceEnhanced.instance.notifyCaptainsOfAvailableOrder(
+        orderId: newOrder.id,
+        storeName: storeName,
+        totalAmount: order.totalAmount,
+        deliveryFee: order.deliveryFee,
       );
 
       return newOrder.id;
@@ -568,6 +580,37 @@ class OrderProvider with ChangeNotifier {
           }
         }
 
+        // إذا تم إلغاء الطلب، نعيد الكابتن لحالة "متصل" إن وجد ونلغي المؤقت
+        if (statusString == OrderStatus.cancelled.value &&
+            updatedOrder.captainId != null) {
+          final otherActiveOrders = await _supabase
+              .from('orders')
+              .select('id')
+              .eq('captain_id', updatedOrder.captainId!)
+              .neq('id', orderId)
+              .or(
+                'status.eq.${OrderStatus.pending.value},status.eq.${OrderStatus.confirmed.value},status.eq.${OrderStatus.preparing.value},status.eq.${OrderStatus.ready.value},status.eq.${OrderStatus.pickedUp.value},status.eq.${OrderStatus.inTransit.value}',
+              )
+              .limit(1);
+
+          if ((otherActiveOrders as List).isEmpty) {
+            await SupabaseService.updateCaptainStatus(
+              updatedOrder.captainId!,
+              'online',
+            );
+          }
+          _cancelCaptainTimeout(orderId);
+        }
+
+        // إرسال إشعار لمكتب التوصيل في حال إلغاء الطلب
+        if (statusString == OrderStatus.cancelled.value) {
+          NotificationServiceEnhanced.instance.notifyDeliveryOfficeOfOrderCancellation(
+            orderId: orderId,
+            storeName: updatedOrder.storeName ?? 'المتجر',
+            orderNumber: updatedOrder.orderNumber,
+          );
+        }
+
         // 🚚 عندما يصبح الطلب جاهزاً، ينتقل إلى طابور شركة التوصيل
         // تعيين الكابتن يتم يدوياً من لوحة شركة التوصيل أو تلقائياً من هناك فقط.
         if (statusString == OrderStatus.ready.value &&
@@ -581,15 +624,37 @@ class OrderProvider with ChangeNotifier {
               .notifyCaptainsOfAvailableOrder(
                 orderId: updatedOrder.id,
                 storeName: updatedOrder.storeName ?? 'المتجر',
+                totalAmount: updatedOrder.totalAmount,
+                deliveryFee: updatedOrder.deliveryFee,
               );
         }
 
-        // إذا تم تعيين كابتن يدوياً، نرسل له إشعار
-        if (updatedOrder.captainId != null && captainId != null) {
+        // إذا أصبح الطلب جاهزاً وكان الكابتن معيناً مسبقاً (أثناء الانتظار)، نبدأ المؤقت ونرسل الإشعار للكابتن
+        if (statusString == OrderStatus.ready.value &&
+            updatedOrder.captainId != null) {
+          _startCaptainTimeout(
+            orderId,
+            updatedOrder.captainId!,
+            updatedOrder.storeId,
+            updatedOrder.storeName ?? 'المتجر',
+          );
           NotificationServiceEnhanced.instance.notifyCaptainOfOrderAssignment(
             captainId: updatedOrder.captainId!,
             orderId: orderId,
             storeName: updatedOrder.storeName ?? 'المتجر',
+            totalAmount: updatedOrder.totalAmount,
+            deliveryFee: updatedOrder.deliveryFee,
+          );
+        }
+
+        // إذا تم تعيين كابتن يدوياً، نرسل له إشعار
+        if (updatedOrder.captainId != null && captainId != null && statusString != OrderStatus.ready.value) {
+          NotificationServiceEnhanced.instance.notifyCaptainOfOrderAssignment(
+            captainId: updatedOrder.captainId!,
+            orderId: orderId,
+            storeName: updatedOrder.storeName ?? 'المتجر',
+            totalAmount: updatedOrder.totalAmount,
+            deliveryFee: updatedOrder.deliveryFee,
           );
         }
 
@@ -811,57 +876,176 @@ class OrderProvider with ChangeNotifier {
     try {
       AppLogger.info('🚫 بدء إلغاء الطلب: $orderId');
 
-      // التحقق من حالة الطلب الحالية
-      OrderModel? order;
+      // التحقق من حالة الطلب الحالية ومجموعته
+      OrderModel? targetOrder;
       try {
-        order = _orders.firstWhere((o) => o.id == orderId);
+        targetOrder = _orders.firstWhere((o) => o.id == orderId);
       } catch (_) {
-        order = _selectedOrder;
+        targetOrder = _selectedOrder;
+      }
+      targetOrder ??= await OrderService.getOrderById(orderId);
+
+      if (targetOrder == null) {
+        _setError('لم يتم العثور على الطلب');
+        return false;
       }
 
-      if (order != null) {
-        // السماح بالإلغاء فقط للطلبات في حالة pending أو confirmed
-        final statusValue = order.status.value.toLowerCase();
+      final groupId = targetOrder.orderGroupId;
+      List<OrderModel> ordersToCancel = [];
+      if (groupId != null && groupId.isNotEmpty) {
+        ordersToCancel = await OrderService.getOrdersByGroupId(groupId);
+      } else {
+        ordersToCancel = [targetOrder];
+      }
+
+      // السماح بالإلغاء فقط إذا كانت جميع الطلبات في المجموعة في حالة pending أو confirmed، ولم يتم إسناد كابتن لأي منها
+      for (final o in ordersToCancel) {
+        final statusValue = o.status.value.toLowerCase();
         if (statusValue != 'pending' && statusValue != 'confirmed') {
           _setError('لا يمكن إلغاء الطلب في هذه المرحلة');
           return false;
         }
+        if (o.captainId != null && o.captainId!.isNotEmpty) {
+          _setError('لا يمكن إلغاء الطلب بعد إسناده لكابتن');
+          return false;
+        }
       }
 
-      final updatedOrder = await OrderService.updateOrderStatus(
-        orderId,
-        'cancelled',
-      );
+      bool anySuccess = false;
+      for (final o in ordersToCancel) {
+        final updatedOrder = await OrderService.updateOrderStatus(
+          o.id,
+          'cancelled',
+        );
 
-      if (updatedOrder != null) {
+        if (updatedOrder != null) {
+          anySuccess = true;
+          final index = _orders.indexWhere((item) => item.id == o.id);
+          if (index != -1) {
+            _orders[index] = updatedOrder;
+          }
+          if (_selectedOrder?.id == o.id) {
+            _selectedOrder = updatedOrder;
+          }
+
+          // إرسال إشعار للعميل
+          NotificationServiceEnhanced.instance.notifyClientOfOrderStatusChange(
+            clientId: updatedOrder.clientId,
+            orderId: o.id,
+            newStatus: 'cancelled',
+            storeName: updatedOrder.storeName,
+          );
+
+          // إرسال إشعار للتاجر
+          NotificationServiceEnhanced.instance.notifyMerchantOfOrderStatusChange(
+            storeId: updatedOrder.storeId,
+            orderId: o.id,
+            newStatus: 'cancelled',
+            clientName: updatedOrder.clientName,
+          );
+
+          // إرسال إشعار لمكتب التوصيل بالالغاء
+          NotificationServiceEnhanced.instance.notifyDeliveryOfficeOfOrderCancellation(
+            orderId: o.id,
+            storeName: updatedOrder.storeName ?? 'المتجر',
+            orderNumber: updatedOrder.orderNumber,
+          );
+
+          // تحرير الكابتن إن وجد
+          if (updatedOrder.captainId != null) {
+            final otherActiveOrders = await _supabase
+                .from('orders')
+                .select('id')
+                .eq('captain_id', updatedOrder.captainId!)
+                .neq('id', o.id)
+                .or(
+                  'status.eq.${OrderStatus.pending.value},status.eq.${OrderStatus.confirmed.value},status.eq.${OrderStatus.preparing.value},status.eq.${OrderStatus.ready.value},status.eq.${OrderStatus.pickedUp.value},status.eq.${OrderStatus.inTransit.value}',
+                )
+                .limit(1);
+
+            if ((otherActiveOrders as List).isEmpty) {
+              await SupabaseService.updateCaptainStatus(
+                updatedOrder.captainId!,
+                'online',
+              );
+            }
+            _cancelCaptainTimeout(o.id);
+          }
+        } else {
+          // محاولة تحديث عبر RPC
+          final rpcResult = await _tryUpdateViaRpc(
+            o.id,
+            'cancelled',
+            cancelReason: cancelReason,
+          );
+          if (rpcResult != null) {
+            anySuccess = true;
+            final index = _orders.indexWhere((item) => item.id == o.id);
+            if (index != -1) {
+              _orders[index] = _orders[index].copyWith(
+                status: OrderStatus.cancelled,
+                updatedAt: DateTime.now(),
+              );
+            }
+            if (_selectedOrder?.id == o.id) {
+              _selectedOrder = _selectedOrder!.copyWith(
+                status: OrderStatus.cancelled,
+                updatedAt: DateTime.now(),
+              );
+            }
+
+            // إرسال إشعار للعميل
+            NotificationServiceEnhanced.instance.notifyClientOfOrderStatusChange(
+              clientId: o.clientId,
+              orderId: o.id,
+              newStatus: 'cancelled',
+              storeName: o.storeName,
+            );
+
+            // إرسال إشعار للتاجر
+            NotificationServiceEnhanced.instance.notifyMerchantOfOrderStatusChange(
+              storeId: o.storeId,
+              orderId: o.id,
+              newStatus: 'cancelled',
+              clientName: o.clientName,
+            );
+
+            // إرسال إشعار لمكتب التوصيل بالالغاء
+            NotificationServiceEnhanced.instance.notifyDeliveryOfficeOfOrderCancellation(
+              orderId: o.id,
+              storeName: o.storeName ?? 'المتجر',
+              orderNumber: o.orderNumber,
+            );
+
+            // تحرير الكابتن إن وجد
+            if (o.captainId != null) {
+              final otherActiveOrders = await _supabase
+                  .from('orders')
+                  .select('id')
+                  .eq('captain_id', o.captainId!)
+                  .neq('id', o.id)
+                  .or(
+                    'status.eq.${OrderStatus.pending.value},status.eq.${OrderStatus.confirmed.value},status.eq.${OrderStatus.preparing.value},status.eq.${OrderStatus.ready.value},status.eq.${OrderStatus.pickedUp.value},status.eq.${OrderStatus.inTransit.value}',
+                  )
+                  .limit(1);
+
+              if ((otherActiveOrders as List).isEmpty) {
+                await SupabaseService.updateCaptainStatus(
+                  o.captainId!,
+                  'online',
+                );
+              }
+              _cancelCaptainTimeout(o.id);
+            }
+          }
+        }
+      }
+
+      if (anySuccess) {
+        _categorizeOrders();
         _setError(null);
-        final index = _orders.indexWhere((o) => o.id == orderId);
-        if (index != -1) {
-          _orders[index] = updatedOrder;
-          _categorizeOrders();
-        }
-        if (_selectedOrder?.id == orderId) {
-          _selectedOrder = updatedOrder;
-          notifyListeners();
-        }
+        notifyListeners();
         AppLogger.info('✅ تم إلغاء الطلب بنجاح');
-
-        // إرسال إشعار للعميل
-        NotificationServiceEnhanced.instance.notifyClientOfOrderStatusChange(
-          clientId: updatedOrder.clientId,
-          orderId: orderId,
-          newStatus: 'cancelled',
-          storeName: updatedOrder.storeName,
-        );
-
-        // إرسال إشعار للتاجر
-        NotificationServiceEnhanced.instance.notifyMerchantOfOrderStatusChange(
-          storeId: updatedOrder.storeId,
-          orderId: orderId,
-          newStatus: 'cancelled',
-          clientName: updatedOrder.clientName,
-        );
-
         return true;
       }
       return false;
@@ -919,35 +1103,45 @@ class OrderProvider with ChangeNotifier {
     }
   }
 
-  /// تعيين كابتن لطلب جاهز مع منع تعيين كابتن مشغول أو غير متصل
+  /// تعيين كابتن لطلب جاهز مع منع تعيين كابتن مشغول أو غير متصل (يدعم الطلبات متعددة المتاجر)
   Future<bool> assignCaptainToOrder({
     required String orderId,
     required String captainId,
   }) async {
     _setLoading(true);
     try {
-      OrderModel? currentOrder;
+      OrderModel? targetOrder;
       for (final order in _orders) {
         if (order.id == orderId) {
-          currentOrder = order;
+          targetOrder = order;
           break;
         }
       }
-      currentOrder ??= await OrderService.getOrderById(orderId);
+      targetOrder ??= await OrderService.getOrderById(orderId);
 
-      if (currentOrder == null) {
+      if (targetOrder == null) {
         _setError('لم يتم العثور على الطلب');
         return false;
       }
 
-      if (currentOrder.status != OrderStatus.ready) {
-        _setError('لا يمكن تعيين كابتن إلا للطلبات الجاهزة للتسليم');
-        return false;
+      final groupId = targetOrder.orderGroupId;
+      List<OrderModel> ordersToAssign = [];
+      if (groupId != null && groupId.isNotEmpty) {
+        ordersToAssign = await OrderService.getOrdersByGroupId(groupId);
+      } else {
+        ordersToAssign = [targetOrder];
       }
 
-      if (currentOrder.captainId != null) {
-        _setError('الطلب مُعين بالفعل لكابتن آخر');
-        return false;
+      // التحقق من الحالات
+      for (final order in ordersToAssign) {
+        if (order.status != OrderStatus.ready && order.status != OrderStatus.pending) {
+          _setError('لا يمكن تعيين كابتن إلا للطلبات الجاهزة أو قيد الانتظار');
+          return false;
+        }
+        if (order.captainId != null) {
+          _setError('الطلب مُعين بالفعل لكابتن آخر');
+          return false;
+        }
       }
 
       final captainRecord = await _supabase
@@ -970,81 +1164,107 @@ class OrderProvider with ChangeNotifier {
         return false;
       }
 
-      // Rule: الكابتن لا يحمل أكثر من طلب نشط
+      // Rule: الكابتن لا يحمل أكثر من طلب نشط (باستثناء الطلبات من نفس المجموعة)
       final captainActiveOrders = await _supabase
           .from('orders')
-          .select('id')
+          .select('id, order_group_id')
           .eq('captain_id', captainId)
           .or(
             'status.eq.${OrderStatus.pending.value},status.eq.${OrderStatus.confirmed.value},status.eq.${OrderStatus.preparing.value},status.eq.${OrderStatus.ready.value},status.eq.${OrderStatus.pickedUp.value},status.eq.${OrderStatus.inTransit.value}',
-          )
-          .limit(1);
+          );
 
-      if ((captainActiveOrders as List).isNotEmpty) {
+      final activeList = captainActiveOrders as List;
+      final hasActiveOrdersFromOtherGroup = activeList.any((o) {
+        final gId = o['order_group_id'] as String?;
+        return gId != groupId;
+      });
+
+      if (hasActiveOrdersFromOtherGroup) {
         _setError('لا يمكن تعيين الطلب: الكابتن لديه طلب نشط بالفعل');
         return false;
       }
 
-      final updatedOrder = await OrderService.updateOrderStatus(
-        orderId,
-        currentOrder.status.value,
-        captainId: captainId,
-      );
+      bool anySuccess = false;
+      List<OrderModel> updatedOrders = [];
 
-      if (updatedOrder == null) {
-        _setError('فشل تعيين الكابتن للطلب');
-        return false;
+      for (final order in ordersToAssign) {
+        final updatedOrder = await OrderService.updateOrderStatus(
+          order.id,
+          order.status.value,
+          captainId: captainId,
+        );
+
+        if (updatedOrder != null) {
+          anySuccess = true;
+          updatedOrders.add(updatedOrder);
+          
+          final index = _orders.indexWhere((o) => o.id == order.id);
+          if (index != -1) {
+            _orders[index] = updatedOrder;
+          }
+          if (_selectedOrder?.id == order.id) {
+            _selectedOrder = updatedOrder;
+          }
+          _syncCaptainOrderCache(updatedOrder);
+
+          NotificationServiceEnhanced.instance.notifyClientOfOrderStatusChange(
+            clientId: updatedOrder.clientId,
+            orderId: order.id,
+            newStatus: 'captain_assigned',
+            storeName: updatedOrder.storeName,
+          );
+
+          if (order.status == OrderStatus.ready) {
+            _startCaptainTimeout(
+              order.id,
+              captainId,
+              updatedOrder.storeId,
+              updatedOrder.storeName ?? 'المتجر',
+            );
+          }
+        }
       }
 
-      final captainMarkedBusy = await SupabaseService.updateCaptainStatus(
-        captainId,
-        'busy',
-      );
-      if (!captainMarkedBusy) {
-        // Rollback لتجنب طلب معلّق بكابتن غير مشغول في النظام
-        await _supabase
-            .from('orders')
-            .update({'captain_id': null})
-            .eq('id', orderId);
-        _setError('فشل تحديث حالة الكابتن، تم إلغاء التعيين تلقائياً');
-        return false;
-      }
+      if (anySuccess) {
+        final captainMarkedBusy = await SupabaseService.updateCaptainStatus(
+          captainId,
+          'busy',
+        );
+        if (!captainMarkedBusy) {
+          // Rollback
+          for (final order in ordersToAssign) {
+            await _supabase
+                .from('orders')
+                .update({'captain_id': null})
+                .eq('id', order.id);
+          }
+          _setError('فشل تحديث حالة الكابتن، تم إلغاء التعيين تلقائياً');
+          return false;
+        }
 
-      final index = _orders.indexWhere((o) => o.id == orderId);
-      if (index != -1) {
-        _orders[index] = updatedOrder;
         _categorizeOrders();
+
+        // إرسال إشعار واحد مجمع للكابتن إذا كان الطلب جاهزاً أو في الانتظار
+        final shouldNotify = ordersToAssign.any((o) => o.status == OrderStatus.ready || o.status == OrderStatus.pending);
+        if (shouldNotify) {
+          final storeNamesList = ordersToAssign.map((o) => o.storeName ?? 'المتجر').toSet().join(' & ');
+          final totalAmountSum = ordersToAssign.fold(0.0, (sum, o) => sum + o.totalAmount);
+          final totalDeliveryFeeSum = ordersToAssign.fold(0.0, (sum, o) => sum + o.deliveryFee);
+          NotificationServiceEnhanced.instance.notifyCaptainOfOrderAssignment(
+            captainId: captainId,
+            orderId: orderId,
+            storeName: storeNamesList,
+            totalAmount: totalAmountSum,
+            deliveryFee: totalDeliveryFeeSum,
+          );
+        }
+
+        _setError(null);
+        return true;
       }
 
-      if (_selectedOrder?.id == orderId) {
-        _selectedOrder = updatedOrder;
-        notifyListeners();
-      }
-
-      _syncCaptainOrderCache(updatedOrder);
-
-      NotificationServiceEnhanced.instance.notifyCaptainOfOrderAssignment(
-        captainId: captainId,
-        orderId: orderId,
-        storeName: updatedOrder.storeName ?? 'المتجر',
-      );
-
-      NotificationServiceEnhanced.instance.notifyClientOfOrderStatusChange(
-        clientId: updatedOrder.clientId,
-        orderId: orderId,
-        newStatus: 'captain_assigned',
-        storeName: updatedOrder.storeName,
-      );
-
-      _startCaptainTimeout(
-        orderId,
-        captainId,
-        updatedOrder.storeId,
-        updatedOrder.storeName ?? 'المتجر',
-      );
-
-      _setError(null);
-      return true;
+      _setError('فشل تعيين الكابتن للطلب');
+      return false;
     } catch (e) {
       AppLogger.error('❌ خطأ في تعيين الكابتن للطلب', e);
       _setError(_friendlyMessageFromException(e));
@@ -1107,12 +1327,8 @@ class OrderProvider with ChangeNotifier {
   Future<void> getOrderById(String orderId) async {
     _setLoading(true);
     try {
-      final response = await _supabase
-          .from('orders')
-          .select('*, client:profiles!client_id(full_name, phone)')
-          .eq('id', orderId)
-          .single();
-      _selectedOrder = OrderModel.fromMap(response);
+      final currentOrder = await OrderService.getOrderById(orderId);
+      _selectedOrder = currentOrder;
       notifyListeners();
     } catch (e) {
       AppLogger.error('خطأ في جلب الطلب بالمعرف', e);
@@ -1127,13 +1343,8 @@ class OrderProvider with ChangeNotifier {
   Future<void> getOrderByNumber(String orderNumber) async {
     _setLoading(true);
     try {
-      final response = await _supabase
-          .from('orders')
-          .select('*, client:profiles!client_id(full_name, phone)')
-          .eq('order_number', orderNumber)
-          .maybeSingle();
-
-      if (response == null) {
+      final currentOrder = await OrderService.getOrderByNumber(orderNumber);
+      if (currentOrder == null) {
         // إذا لم نجد رقم طلب مطابق، نحاول البحث في المعرف (UUID)
         if (orderNumber.length >= 32) {
           await getOrderById(orderNumber);
@@ -1142,7 +1353,7 @@ class OrderProvider with ChangeNotifier {
         _selectedOrder = null;
         _setError('لم يتم العثور على الطلب رقم $orderNumber');
       } else {
-        _selectedOrder = OrderModel.fromMap(response);
+        _selectedOrder = currentOrder;
         _setError(null);
       }
       notifyListeners();

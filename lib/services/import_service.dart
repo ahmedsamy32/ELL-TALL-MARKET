@@ -2,9 +2,11 @@
 import 'dart:typed_data';
 import 'package:excel/excel.dart';
 import 'package:uuid/uuid.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/product_model.dart';
 import '../services/product_service.dart';
 import '../core/logger.dart';
+
 
 class ImportRow {
   final int index;
@@ -38,18 +40,33 @@ class ImportService {
         final sheet = excel.tables[table]!;
         if (sheet.maxRows <= 1) continue;
 
-        final headerRow = sheet.rows[0];
-        final headers = headerRow
-            .map((cell) => cell?.value?.toString().trim() ?? '')
-            .toList();
+        final headerRow = sheet.rows.isNotEmpty ? sheet.rows[0] : <Data?>[];
+        final headers = <String>[];
+
+        // Determine max columns by checking header length and longest row
+        var maxCols = headerRow.length;
+        for (final r in sheet.rows) {
+          if (r.length > maxCols) maxCols = r.length;
+        }
+        for (var c = 0; c < maxCols; c++) {
+          final cell = c < headerRow.length ? headerRow[c] : null;
+          final h = cell?.value?.toString().trim() ?? '';
+          headers.add(h);
+        }
+
+        AppLogger.info(
+          'Found sheet "$table" with headers: ${headers.join(', ')}',
+        );
 
         for (var i = 1; i < sheet.maxRows; i++) {
-          final rowData = sheet.rows[i];
+          final rowData = i < sheet.rows.length ? sheet.rows[i] : <Data?>[];
           final rowMap = <String, dynamic>{};
           for (var j = 0; j < headers.length; j++) {
-            if (headers[j].isNotEmpty) {
-              rowMap[headers[j]] = rowData[j]?.value;
-            }
+            final headerName = headers[j];
+            if (headerName.isEmpty) continue;
+
+            final cellValue = j < rowData.length ? rowData[j]?.value : null;
+            rowMap[headerName] = cellValue;
           }
           rows.add(rowMap);
         }
@@ -114,11 +131,29 @@ class ImportService {
       mappedData['stock_quantity'] = 0;
     }
 
-    mappedData['category_id'] = getValue('category_id')?.toString().trim();
-    mappedData['imageUrl'] = getValue('image_url')?.toString().trim();
+    // Extract section name
+    mappedData['section_name'] = getValue('section_name')?.toString().trim();
 
     // Custom Fields (Specifications)
     final customFields = <String, String>{};
+    
+    // Parse from single custom_fields column (e.g. "الخامة: قطن 100%, بلد المنشأ: مصر")
+    final specsStr = getValue('custom_fields')?.toString().trim();
+    if (specsStr != null && specsStr.isNotEmpty) {
+      final parts = specsStr.split(RegExp(r'[,،;\n]'));
+      for (var part in parts) {
+        final pair = part.split(':');
+        if (pair.length >= 2) {
+          final key = pair[0].trim();
+          final value = pair.sublist(1).join(':').trim();
+          if (key.isNotEmpty && value.isNotEmpty) {
+            customFields[key] = value;
+          }
+        }
+      }
+    }
+
+    // Also check for any dynamic columns that start with 'مواصفة:' (legacy support)
     for (var entry in rawData.entries) {
       if (entry.key.startsWith('مواصفة:')) {
         final key = entry.key.replaceFirst('مواصفة:', '').trim();
@@ -130,45 +165,140 @@ class ImportService {
     }
     mappedData['customFields'] = customFields;
 
-    // Attributes (Variants)
-    // Format: "خاصية:اللون" value: "أحمر, أزرق, أخضر"
+    // Parse Variants from Single 'variants_column' (الخصائص)
     final variantGroups = <Map<String, dynamic>>[];
-    for (var entry in rawData.entries) {
-      if (entry.key.startsWith('خاصية:')) {
-        final groupName = entry.key.replaceFirst('خاصية:', '').trim();
-        final valuesStr = entry.value?.toString().trim();
-        if (valuesStr != null && valuesStr.isNotEmpty) {
-          final values = valuesStr
-              .split(',')
-              .map((v) => v.trim())
-              .where((v) => v.isNotEmpty)
-              .toList();
-          if (values.isNotEmpty) {
-            final now = DateTime.now().toIso8601String();
-            variantGroups.add({
+    final variantsList = <Map<String, dynamic>>[];
+
+    final variantsStr = getValue('variants_column')?.toString().trim();
+    if (variantsStr != null && variantsStr.isNotEmpty) {
+      final now = DateTime.now().toIso8601String();
+      final Map<String, Map<String, dynamic>> groupsMap = {};
+
+      final parts = variantsStr.split(RegExp(r'[,،;\n]'));
+      for (var part in parts) {
+        part = part.trim();
+        if (part.isEmpty) continue;
+
+        final pair = part.split(':');
+        final optionsStr = pair[0].trim();
+        final detailsStr = pair.length > 1 ? pair.sublist(1).join(':').trim() : '';
+
+        double? price;
+        int? stock;
+        if (detailsStr.isNotEmpty) {
+          if (detailsStr.contains('/')) {
+            final subParts = detailsStr.split('/');
+            price = double.tryParse(subParts[0].trim());
+            if (subParts.length > 1) {
+              stock = int.tryParse(subParts[1].trim());
+            }
+          } else {
+            price = double.tryParse(detailsStr);
+          }
+        }
+
+        final optionValues = optionsStr
+            .split(RegExp(r'[-/+]'))
+            .map((v) => v.trim())
+            .where((v) => v.isNotEmpty)
+            .toList();
+
+        if (optionValues.isEmpty) continue;
+
+        final List<Map<String, dynamic>> selectedOptionsForVariant = [];
+
+        for (final val in optionValues) {
+          String groupName = 'النوع';
+          String groupType = 'custom';
+
+          final valLower = val.toLowerCase();
+          
+          final colorKeywords = ['أحمر', 'أحمر', 'أزرق', 'أخضر', 'أسود', 'أبيض', 'أصفر', 'بني', 'رمادي', 'وردي', 'برتقالي', 'بنفسجي', 'ذهبي', 'فضي', 'كحلي', 'بيج', 'red', 'blue', 'green', 'black', 'white', 'yellow', 'brown', 'grey', 'pink', 'orange', 'purple'];
+          final sizeKeywords = ['كبير', 'وسط', 'صغير', 'ضخم', 's', 'm', 'l', 'xl', 'xxl', 'xxxl', 'xs', '3xl', '4xl', '5xl', 'مقاس', 'حجم', 'سعة', 'size', 'volume', 'large', 'medium', 'small'];
+
+          if (colorKeywords.any((k) => valLower.contains(k))) {
+            groupName = 'اللون';
+            groupType = 'color';
+          } else if (sizeKeywords.any((k) => valLower.contains(k))) {
+            groupName = 'الحجم';
+            groupType = 'volume';
+          }
+
+          if (!groupsMap.containsKey(groupName)) {
+            groupsMap[groupName] = {
               'id': _uuid.v4(),
               'name': groupName,
-              'type': _inferAttributeType(groupName),
+              'type': groupType,
               'is_required': false,
-              'options': values
-                  .map(
-                    (v) => {
-                      'id': _uuid.v4(),
-                      'name': groupName,
-                      'value': v,
-                      'sort_order': 0,
-                      'is_active': true,
-                      'created_at': now,
-                    },
-                  )
-                  .toList(),
+              'options': <Map<String, dynamic>>[],
               'created_at': now,
+            };
+          }
+
+          final group = groupsMap[groupName]!;
+          final optionsList = group['options'] as List<Map<String, dynamic>>;
+
+          Map<String, dynamic>? optionObj = optionsList.firstWhere(
+            (o) => o['value'] == val,
+            orElse: () => <String, dynamic>{},
+          );
+
+          if (optionObj.isEmpty) {
+            optionObj = {
+              'id': _uuid.v4(),
+              'name': groupName,
+              'value': val,
+              'sort_order': optionsList.length,
+              'is_active': true,
+              'created_at': now,
+            };
+            optionsList.add(optionObj);
+          }
+
+          selectedOptionsForVariant.add(optionObj);
+        }
+
+        variantsList.add({
+          'id': _uuid.v4(),
+          'product_id': '',
+          'selected_options': selectedOptionsForVariant,
+          'sku': '',
+          'price': price,
+          'stock_quantity': stock,
+          'is_active': true,
+          'created_at': now,
+        });
+      }
+
+      variantGroups.addAll(groupsMap.values);
+    }
+    mappedData['variantGroups'] = variantGroups;
+    mappedData['variants'] = variantsList;
+
+    // Parse Addons
+    // Format: "الاضافات" value: "جبنة: 5, كاتشب: 2" or "cheese: 5, ketchup: 2"
+    final addonsList = <Map<String, dynamic>>[];
+    final addonsStr = getValue('addons')?.toString().trim();
+    if (addonsStr != null && addonsStr.isNotEmpty) {
+      final parts = addonsStr.split(RegExp(r'[,،;]'));
+      for (var part in parts) {
+        final pair = part.split(':');
+        if (pair.length >= 2) {
+          final addonName = pair[0].trim();
+          final addonPriceStr = pair[1].trim();
+          final addonPrice = double.tryParse(addonPriceStr) ?? 0.0;
+          if (addonName.isNotEmpty) {
+            addonsList.add({
+              'id': _uuid.v4(),
+              'name': addonName,
+              'price': addonPrice,
+              'image_url': null,
             });
           }
         }
       }
     }
-    mappedData['variantGroups'] = variantGroups;
+    mappedData['addons'] = addonsList;
 
     return ImportRow(
       index: rowIndex,
@@ -178,23 +308,37 @@ class ImportService {
     );
   }
 
-  static String _inferAttributeType(String name) {
-    name = name.toLowerCase();
-    if (name.contains('لون') || name.contains('color')) return 'color';
-    if (name.contains('مقاس') || name.contains('size')) return 'size';
-    if (name.contains('خام') || name.contains('material')) return 'material';
-    if (name.contains('مارك') || name.contains('brand')) return 'brand';
-    if (name.contains('وزن') || name.contains('weight')) return 'weight';
-    return 'custom';
-  }
-
   /// Bulk imports validated products.
-  static Future<int> importProducts({
+  static Future<Map<String, dynamic>> importProducts({
     required List<ImportRow> validatedRows,
     required String storeId,
     String? sectionId,
+    String? categoryId,
   }) async {
     int importedCount = 0;
+    List<String> failedReasons = [];
+
+    // Resolve categoryId if it is passed as a category name instead of a UUID
+    String? resolvedCategoryId = categoryId;
+    if (categoryId != null &&
+        categoryId.isNotEmpty &&
+        !RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+                caseSensitive: false)
+            .hasMatch(categoryId)) {
+      try {
+        final response = await Supabase.instance.client
+            .from('categories')
+            .select('id')
+            .ilike('name', categoryId)
+            .maybeSingle();
+        if (response != null) {
+          resolvedCategoryId = response['id'] as String?;
+          AppLogger.info('Resolved category name "$categoryId" to UUID "$resolvedCategoryId"');
+        }
+      } catch (e) {
+        AppLogger.warning('⚠️ فشل جلب معرف الفئة من الاسم "$categoryId": $e');
+      }
+    }
 
     for (var row in validatedRows) {
       if (!row.isValid) continue;
@@ -202,27 +346,67 @@ class ImportService {
       try {
         final data = row.data;
 
-        // Ensure category_id is null if it's empty string
-        final categoryId = data['category_id']?.toString().trim();
-        final effectiveCategoryId = (categoryId == null || categoryId.isEmpty)
-            ? null
-            : categoryId;
+        // Use the categoryId passed from the screen (store's default category)
+        // This ensures all imported products get the store's category
+        if (resolvedCategoryId == null || resolvedCategoryId.isEmpty) {
+          failedReasons.add('الصف ${row.index}: لم يتم تحديد فئة للمنتج');
+          continue;
+        }
+
+        // Resolve or automatically create section by name
+        String? rowSectionId = sectionId;
+        final sectionName = data['section_name']?.toString().trim();
+        if (sectionName != null && sectionName.isNotEmpty) {
+          try {
+            final secResponse = await Supabase.instance.client
+                .from('store_sections')
+                .select('id')
+                .eq('store_id', storeId)
+                .ilike('name', sectionName)
+                .maybeSingle();
+
+            if (secResponse != null) {
+              rowSectionId = secResponse['id'] as String?;
+            } else {
+              final newSec = await Supabase.instance.client
+                  .from('store_sections')
+                  .insert({
+                    'store_id': storeId,
+                    'name': sectionName,
+                    'is_active': true,
+                    'display_order': 0,
+                  })
+                  .select('id')
+                  .single();
+              rowSectionId = newSec['id'] as String?;
+              AppLogger.info('Automatically created store section "$sectionName" with ID "$rowSectionId"');
+            }
+          } catch (e) {
+            AppLogger.warning('⚠️ فشل جلب أو إنشاء القسم من الاسم "$sectionName": $e');
+          }
+        }
 
         final product = ProductModel(
           id: '', // Generated by service
           storeId: storeId,
-          categoryId: effectiveCategoryId,
-          sectionId: sectionId,
+          categoryId: resolvedCategoryId,
+          sectionId: rowSectionId,
           name: data['name'],
           description: data['description'],
           price: data['price'],
           stockQuantity: data['stock_quantity'],
-          imageUrl: data['imageUrl'],
+          imageUrl: null, // No image from Excel
           customFields: Map<String, String>.from(data['customFields'] ?? {}),
           variantGroups: (data['variantGroups'] as List)
               .map(
                 (e) => ProductVariantGroup.fromJson(e as Map<String, dynamic>),
               )
+              .toList(),
+          variants: (data['variants'] as List?)
+              ?.map((e) => ProductVariant.fromJson(e as Map<String, dynamic>))
+              .toList(),
+          addons: (data['addons'] as List?)
+              ?.map((e) => ProductAddon.fromMap(e as Map<String, dynamic>))
               .toList(),
           isActive: false, // Set to false by default as requested
           createdAt: DateTime.now(),
@@ -232,17 +416,21 @@ class ImportService {
         if (result != null) {
           importedCount++;
         } else {
+          failedReasons.add(
+            'الصف ${row.index}: فشل الإضافة في قاعدة البيانات، النتيجة فارغة',
+          );
           AppLogger.error(
             'فشل إضافة المنتج في الصف ${row.index}: النتيجة فارغة',
             null,
           );
         }
       } catch (e) {
+        failedReasons.add('الصف ${row.index}: $e');
         AppLogger.error('فشل استيراد الصف ${row.index}', e);
         // Continue with next row
       }
     }
-    return importedCount;
+    return {'count': importedCount, 'errors': failedReasons};
   }
 
   /// Generates a sample Excel template for product import.
@@ -255,12 +443,12 @@ class ImportService {
       final headers = [
         'الاسم',
         'السعر',
-        'الوصف',
         'المخزون',
-        'مواصفة:الخامة أو المكونات',
-        'مواصفة:بلد المنشأ',
-        'خاصية:اللون أو النوع',
-        'خاصية:الحجم أو المقاس',
+        'الوصف',
+        'القسم',
+        'المواصفات الفنية',
+        'الخصائص',
+        'الاضافات',
       ];
 
       for (var i = 0; i < headers.length; i++) {
@@ -275,12 +463,12 @@ class ImportService {
       final sample1 = [
         'تيشيرت قطن عصري',
         '250.0',
-        'تيشيرت عالي الجودة متوفر بألوان ومقاسات مختلفة',
         '50',
-        'قطن 100%',
-        'مصر',
-        'أحمر, أزرق, أسود',
-        'S, M, L, XL',
+        'تيشيرت عالي الجودة متوفر بألوان ومقاسات مختلفة',
+        'ملابس رجالي',
+        'الخامة: قطن 100%, بلد المنشأ: مصر',
+        'أحمر-S: 250/10, أحمر-M: 260/15, أزرق-S: 270/8, أسود-XL: 290/5', // الخصائص
+        'علبة هدايا: 15', // الاضافات
       ];
       for (var i = 0; i < sample1.length; i++) {
         var cell = sheet.cell(
@@ -293,12 +481,12 @@ class ImportService {
       final sample2 = [
         'وجبة برجر عائلي',
         '180.0',
-        'برجر مشوي على الفحم مع خضروات طازجة وصوص خاص',
         '100',
-        'لحم بقري بلدي, خس, طماطم, صوص',
-        'مطبخنا الرئيسي',
-        'عادي, حار',
-        'وجبة فردية, وجبة كبيرة',
+        'برجر مشوي على الفحم مع خضروات طازجة وصوص خاص',
+        'وجبات سريعة',
+        'المكونات: لحم بقري بلدي, المصنع: مطبخنا الرئيسي',
+        'صغير: 150/20, وسط: 180/30, كبير: 210/50', // الخصائص
+        'بطاطس: 15, كولا: 10', // الاضافات
       ];
       for (var i = 0; i < sample2.length; i++) {
         var cell = sheet.cell(

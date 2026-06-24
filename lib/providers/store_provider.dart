@@ -99,7 +99,7 @@ class StoreProvider with ChangeNotifier {
           .order('created_at', ascending: false);
 
       final fetchedStores = (response as List)
-          .map((data) => StoreModel.fromSupabaseMap(data))
+          .map((data) => StoreModel.fromSupabaseMap(Map<String, dynamic>.from(data)))
           .toList();
 
       // لا نعرض متاجر بدون عنوان (العنوان مشتق من الحقول التفصيلية أيضاً).
@@ -118,8 +118,8 @@ class StoreProvider with ChangeNotifier {
 
       AppLogger.info("تم جلب ${_stores.length} متجر بنجاح");
       _setError(null);
-    } catch (e) {
-      AppLogger.error("خطأ في جلب المتاجر", e);
+    } catch (e, stack) {
+      AppLogger.error("خطأ في جلب المتاجر: $e", stack);
       _stores = [];
       _filteredStores = [];
       _setError('فشل في تحميل المتاجر من قاعدة البيانات');
@@ -180,11 +180,7 @@ class StoreProvider with ChangeNotifier {
 
       final fullRows = await _supabase
           .from('stores')
-          .select(
-            'id, merchant_id, name, description, phone, governorate, city, area, street, landmark, address, '
-            'latitude, longitude, delivery_time, is_open, delivery_fee, min_order, delivery_mode, delivery_radius_km, '
-            'rating, review_count, category, opening_hours, image_url, cover_url, is_active, created_at, updated_at',
-          )
+          .select('*')
           .inFilter('id', nearbyIds);
 
       final fullById = <String, StoreModel>{
@@ -263,8 +259,8 @@ class StoreProvider with ChangeNotifier {
 
       AppLogger.info("تم جلب ${_nearbyStores.length} متجر قريب");
       notifyListeners();
-    } catch (e) {
-      AppLogger.error("خطأ في جلب المتاجر القريبة", e);
+    } catch (e, stack) {
+      AppLogger.error("خطأ في جلب المتاجر القريبة", e, stack);
       // في حالة الخطأ لا نعرض كل المتاجر (لمنع ظهورها ثم اختفائها عند تطبيق الموقع)
       _nearbyStores = [];
       _featuredStores = [];
@@ -609,27 +605,22 @@ class StoreProvider with ChangeNotifier {
     });
   }
 
-  /// ترتيب المتاجر
+  /// ترتيب المتاجر بناءً على القيم الحقيقية المتوفرة في الـ StoreModel
   void sortStores(String sortBy) {
     switch (sortBy) {
       case 'الأعلى تقييماً':
-        // Since rating doesn't exist, sort by name as fallback
-        _filteredStores.sort((a, b) => a.name.compareTo(b.name));
+        _filteredStores.sort((a, b) => b.rating.compareTo(a.rating));
         break;
       case 'الأكثر طلباً':
-        // Since ratingCount doesn't exist, sort by name as fallback
-        _filteredStores.sort((a, b) => a.name.compareTo(b.name));
+        _filteredStores.sort((a, b) => b.reviewCount.compareTo(a.reviewCount));
         break;
       case 'الأقل رسوم توصيل':
-        // Since deliveryFee doesn't exist, sort by name as fallback
-        _filteredStores.sort((a, b) => a.name.compareTo(b.name));
+        _filteredStores.sort((a, b) => a.deliveryFee.compareTo(b.deliveryFee));
         break;
       case 'الأسرع توصيل':
-        // Since deliveryTime doesn't exist, sort by name as fallback
-        _filteredStores.sort((a, b) => a.name.compareTo(b.name));
+        _filteredStores.sort((a, b) => a.deliveryTime.compareTo(b.deliveryTime));
         break;
       default:
-        // الافتراضي - حسب التاريخ
         _filteredStores.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     }
     // تأجيل notifyListeners إلى ما بعد انتهاء مرحلة البناء

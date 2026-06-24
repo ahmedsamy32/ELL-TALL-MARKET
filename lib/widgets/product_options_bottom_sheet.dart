@@ -213,14 +213,7 @@ class _ProductOptionsBottomSheetState extends State<ProductOptionsBottomSheet> {
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        if (_matchedVariant != null &&
-                            _matchedVariant!.stockQuantity != null)
-                          Text(
-                            'المتاح: ${_matchedVariant!.stockQuantity}',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.grey,
-                            ),
-                          ),
+
                       ],
                     ),
                   ),

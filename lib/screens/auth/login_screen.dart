@@ -727,7 +727,7 @@ class _LoginScreenState extends State<LoginScreen> {
           child: IconButton(
             icon: const Icon(
               Icons.arrow_back_ios_new_rounded,
-              color: Color(0xFF1A237E),
+              color: Color.fromARGB(255, 46, 44, 121),
               size: 20,
             ),
             onPressed: () =>
@@ -774,21 +774,12 @@ class _LoginScreenState extends State<LoginScreen> {
                             width: logoSize,
                             height: logoSize,
                             decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [
-                                  theme.colorScheme.primary,
-                                  theme.colorScheme.primary.withValues(
-                                    alpha: 0.7,
-                                  ),
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
+                              color: Colors.white,
                               shape: BoxShape.circle,
                               boxShadow: [
                                 BoxShadow(
-                                  color: theme.colorScheme.primary.withValues(
-                                    alpha: 0.3,
+                                  color: Colors.black.withValues(
+                                    alpha: 0.1,
                                   ),
                                   blurRadius: 20,
                                   offset: const Offset(0, 8),
@@ -1562,11 +1553,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       height: 110,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Colors.white.withValues(alpha: 0.15),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.4),
-                          width: 2.5,
-                        ),
+                        color: Colors.white,
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withValues(alpha: 0.2),

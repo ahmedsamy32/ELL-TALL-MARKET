@@ -10,6 +10,8 @@ import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/services/notification_service.dart';
 import 'package:ell_tall_market/services/store_wallet_service.dart';
 import 'package:ell_tall_market/models/order_model.dart';
+import 'package:ell_tall_market/models/store_model.dart';
+import 'package:ell_tall_market/services/store_service.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_products_screen.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_orders_screen.dart';
@@ -36,6 +38,8 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
   bool _isInitialized = false; // لمنع التحديث المستمر
   bool _isLoadingData = false;
   String? _storeId; // تخزين معرف المتجر الحالي لتجنب الاستعلام المتكرر
+  StoreModel? _store; // تخزين بيانات المتجر بالكامل لتتبع حالته
+  bool _isLoadingStatus = false; // لتجنب النقرات المتكررة أثناء تغيير حالة المتجر
 
   String? _currentUserId; // لتتبع المستخدم الحالي
   double? _walletBalance;
@@ -86,6 +90,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
         productProvider.clearProducts();
       }
       _storeId = null;
+      _store = null;
       _currentUserId = currentUserId;
       _isInitialized = false;
 
@@ -159,15 +164,26 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
 
             await _loadWalletBalance(storeId);
 
-            // تحميل عداد المنتجات
+            // جلب تفاصيل المتجر بالكامل لحالة الفتح/الإغلاق
+            try {
+              final store = await StoreService.getStoreByMerchantIdV2(merchant.id);
+              if (mounted) {
+                setState(() {
+                  _store = store;
+                });
+              }
+            } catch (e) {
+              AppLogger.warning('⚠️ فشل تحميل تفاصيل المتجر: $e');
+            }
+
+            // تحميل عداد المنتجات فقط (للإحصائيات في الداشبورد)
+            // تحميل القائمة الكاملة للمنتجات يتم في MerchantProductsScreen
             AppLogger.info('📊 جاري جلب عدد المنتجات...');
             await productProvider.fetchStoreProductCount(storeId);
-            await productProvider.subscribeToStoreProducts(storeId);
             AppLogger.info(
               '✅ عدد المنتجات: ${productProvider.storeProductCount}',
             );
 
-            // جلب الطلبات
             if (!orderProvider.isLoading) {
               AppLogger.info('📦 جاري جلب الطلبات...');
               await orderProvider.fetchStoreOrders(storeId);
@@ -580,37 +596,9 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
           bottomNavigationBar: !isWide
               ? NavigationBar(
                   selectedIndex: _selectedIndex,
-                  onDestinationSelected: (index) async {
+                  onDestinationSelected: (index) {
                     setState(() => _selectedIndex = index);
-                    if (index == 1) {
-                      // عند فتح تبويب المنتجات، نجلب القائمة الكاملة عند الحاجة فقط
-                      final merchantProvider = Provider.of<MerchantProvider>(
-                        context,
-                        listen: false,
-                      );
-                      final productProvider = Provider.of<ProductProvider>(
-                        context,
-                        listen: false,
-                      );
-
-                      if (merchantProvider.selectedMerchant != null &&
-                          productProvider.products.isEmpty &&
-                          !productProvider.isLoading) {
-                        try {
-                          final storeId = await _ensureStoreId(
-                            merchantProvider,
-                          );
-                          if (storeId != null) {
-                            await productProvider.fetchProductsByStore(storeId);
-                          }
-                        } catch (e) {
-                          AppLogger.error(
-                            '❌ خطأ في جلب منتجات المتجر عند فتح التبويب',
-                            e,
-                          );
-                        }
-                      }
-                    }
+                    // كل صفحة تحمّل بياناتها بشكل مستقل في initState/didChangeDependencies
                   },
                   destinations: const [
                     NavigationDestination(
@@ -956,6 +944,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                   merchantProvider.clearData();
                   productProvider.clearProducts(resetCount: false);
                   _storeId = null;
+                  _store = null;
                   if (mounted) {
                     setState(() {
                       _isInitialized = false;
@@ -1042,6 +1031,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
             merchantProvider.clearData();
             productProvider.clearProducts(resetCount: false);
             _storeId = null;
+            _store = null;
             setState(() {
               _isInitialized = false;
             });
@@ -1178,19 +1168,32 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          greeting,
-          style: textTheme.titleMedium?.copyWith(
-            color: colorScheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          merchantProvider.selectedMerchant?.storeName ?? 'المتجر',
-          style: textTheme.headlineMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-            color: colorScheme.onSurface,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    greeting,
+                    style: textTheme.titleMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    merchantProvider.selectedMerchant?.storeName ?? 'المتجر',
+                    style: textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            _buildStoreStatusToggle(),
+          ],
         ),
         if (showNegativeWalletWarning) ...[
           const SizedBox(height: 12),
@@ -1811,10 +1814,117 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
         .where((order) => order.status == OrderStatus.delivered)
         .fold<double>(0.0, (total, order) => total + order.totalAmount);
   }
+
+  // بناء زر حالة المتجر (مفتوح / مغلق) بشكل مرن وجميل
+  Widget _buildStoreStatusToggle() {
+    if (_store == null) return const SizedBox.shrink();
+    final textTheme = Theme.of(context).textTheme;
+    final isOpen = _store!.isOpen;
+
+    return Card(
+      elevation: 0,
+      color: isOpen
+          ? Colors.green.shade50
+          : Colors.red.shade50,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: isOpen ? Colors.green.shade200 : Colors.red.shade200,
+          width: 1.5,
+        ),
+      ),
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: isOpen ? Colors.green : Colors.red,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              isOpen ? 'مفتوح' : 'مغلق',
+              style: textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: isOpen ? Colors.green.shade800 : Colors.red.shade800,
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(width: 4),
+            _isLoadingStatus
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.grey),
+                    ),
+                  )
+                : Transform.scale(
+                    scale: 0.8,
+                    child: Switch.adaptive(
+                      value: isOpen,
+                      activeThumbColor: Colors.green,
+                      activeTrackColor: Colors.green.shade300,
+                      onChanged: _isLoadingStatus
+                          ? null
+                          : (val) => _toggleStoreStatus(val),
+                    ),
+                  ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // تحديث حالة فتح/إغلاق المتجر فورياً في السيرفر وتحديث الواجهة
+  Future<void> _toggleStoreStatus(bool value) async {
+    if (_store == null) return;
+    setState(() => _isLoadingStatus = true);
+    try {
+      final updated = await StoreService.updateStoreFieldsV2(
+        storeId: _store!.id,
+        isOpen: value,
+      );
+      if (updated != null) {
+        setState(() {
+          _store = updated;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(value ? 'تم فتح المتجر بنجاح ✓' : 'تم إغلاق المتجر مؤقتاً ✓'),
+              backgroundColor: value ? Colors.green : Colors.red,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('فشل تغيير حالة المتجر: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingStatus = false);
+      }
+    }
+  }
 }
 
 // ===== Bottom Sheet Content Widget =====
-class _NotificationsBottomSheetContent extends StatelessWidget {
+class _NotificationsBottomSheetContent extends StatefulWidget {
   final String? targetRole;
   final ScrollController scrollController;
 
@@ -1822,6 +1932,67 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
     this.targetRole,
     required this.scrollController,
   });
+
+  @override
+  State<_NotificationsBottomSheetContent> createState() => _NotificationsBottomSheetContentState();
+}
+
+class _NotificationsBottomSheetContentState extends State<_NotificationsBottomSheetContent> {
+  bool _isSelectionMode = false;
+  final Set<String> _selectedIds = {};
+
+  void _toggleSelection(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+        if (_selectedIds.isEmpty) {
+          _isSelectionMode = false;
+        }
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  void _confirmDeleteSelected(BuildContext context, NotificationProvider provider) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الإشافات المحددة'),
+        content: Text('هل أنت متأكد من حذف ${_selectedIds.length} إشعار؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final idsToDelete = _selectedIds.toList();
+              setState(() {
+                _isSelectionMode = false;
+                _selectedIds.clear();
+              });
+              await provider.deleteNotifications(idsToDelete);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('تم حذف الإشعارات المحددة'),
+                    backgroundColor: Colors.red,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            child: const Text(
+              'حذف',
+              style: TextStyle(color: Colors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1838,7 +2009,7 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
     }
 
     final notifications = notificationProvider.getNotificationsForRole(
-      targetRole,
+      widget.targetRole,
     );
 
     if (notificationProvider.error != null) {
@@ -1849,18 +2020,85 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
       return _buildEmpty();
     }
 
-    return ListView.builder(
-      controller: scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      itemCount: notifications.length,
-      itemBuilder: (context, index) {
-        final notification = notifications[index];
-        return _buildNotificationItem(
-          context,
-          notification,
-          notificationProvider,
-        );
-      },
+    return Column(
+      children: [
+        if (_isSelectionMode)
+          Container(
+            color: Theme.of(context).primaryColor.withValues(alpha: 0.08),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    setState(() {
+                      _isSelectionMode = false;
+                      _selectedIds.clear();
+                    });
+                  },
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'تم تحديد ${_selectedIds.length}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.select_all),
+                  tooltip: 'تحديد الكل',
+                  onPressed: () {
+                    setState(() {
+                      _selectedIds.addAll(notifications.map((n) => n.id));
+                    });
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.mark_email_read),
+                  tooltip: 'تحديد كمقروء',
+                  onPressed: () async {
+                    for (final id in _selectedIds) {
+                      await notificationProvider.markAsRead(id);
+                    }
+                    setState(() {
+                      _isSelectionMode = false;
+                      _selectedIds.clear();
+                    });
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('تم تحديد الإشعارات كمقروءة'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  tooltip: 'حذف المحدد',
+                  onPressed: () {
+                    _confirmDeleteSelected(context, notificationProvider);
+                  },
+                ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: ListView.builder(
+            controller: widget.scrollController,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            itemCount: notifications.length,
+            itemBuilder: (context, index) {
+              final notification = notifications[index];
+              return _buildNotificationItem(
+                context,
+                notification,
+                notificationProvider,
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -1947,7 +2185,7 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
   ) {
     return Dismissible(
       key: Key(notification.id),
-      direction: DismissDirection.endToStart,
+      direction: _isSelectionMode ? DismissDirection.none : DismissDirection.endToStart,
       background: Container(
         margin: const EdgeInsets.symmetric(vertical: 4),
         decoration: BoxDecoration(
@@ -1980,9 +2218,16 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
             horizontal: 16,
             vertical: 8,
           ),
-          leading: _getNotificationIcon(
-            notification.type ?? NotificationType.system,
-          ),
+          leading: _isSelectionMode
+              ? Checkbox(
+                  value: _selectedIds.contains(notification.id),
+                  onChanged: (val) {
+                    _toggleSelection(notification.id);
+                  },
+                )
+              : _getNotificationIcon(
+                  notification.type ?? NotificationType.system,
+                ),
           title: Text(
             notification.title,
             style: TextStyle(
@@ -2020,11 +2265,23 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
                   ),
                 ),
           onTap: () {
-            if (!notification.isRead) {
-              provider.markAsRead(notification.id);
+            if (_isSelectionMode) {
+              _toggleSelection(notification.id);
+            } else {
+              if (!notification.isRead) {
+                provider.markAsRead(notification.id);
+              }
+              Navigator.pop(context); // Close bottom sheet
+              _handleNotificationTap(context, notification);
             }
-            Navigator.pop(context); // Close bottom sheet
-            _handleNotificationTap(context, notification);
+          },
+          onLongPress: () {
+            if (!_isSelectionMode) {
+              setState(() {
+                _isSelectionMode = true;
+                _selectedIds.add(notification.id);
+              });
+            }
           },
         ),
       ),

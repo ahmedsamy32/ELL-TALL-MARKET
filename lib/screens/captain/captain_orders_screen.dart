@@ -46,14 +46,16 @@ class _CaptainOrdersScreenState extends State<CaptainOrdersScreen> {
         title: const Text('سجل الطلبات المكتملة'),
         centerTitle: true,
       ),
-      body: ResponsiveCenter(
-        maxWidth: 900,
-        child: RefreshIndicator(
-          onRefresh: () => Provider.of<OrderProvider>(
-            context,
-            listen: false,
-          ).fetchCaptainOrders(widget.captainId),
-          child: _buildOrdersList(orderProvider),
+      body: SafeArea(
+        child: ResponsiveCenter(
+          maxWidth: 900,
+          child: RefreshIndicator(
+            onRefresh: () => Provider.of<OrderProvider>(
+              context,
+              listen: false,
+            ).fetchCaptainOrders(widget.captainId),
+            child: _buildOrdersList(orderProvider),
+          ),
         ),
       ),
     );
@@ -553,17 +555,19 @@ class _OrderDetailsSheetState extends State<_OrderDetailsSheet> {
     final isUrgent = _remainingSeconds <= 20;
     final showCountdown = widget.orderStatus == OrderStatus.ready;
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 16),
+    return SafeArea(
+      child: SingleChildScrollView(
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
                 color: Colors.grey[300],
                 borderRadius: BorderRadius.circular(2),
@@ -706,10 +710,77 @@ class _OrderDetailsSheetState extends State<_OrderDetailsSheet> {
               ),
             ),
           const Divider(height: 16),
+          if (widget.order.clientName != null)
+            _buildDetailRow('العميل:', widget.order.clientName!),
+          if (widget.order.clientPhone != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(
+                    width: 80,
+                    child: Text(
+                      'هاتف العميل:',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(widget.order.clientPhone!),
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    onTap: () {
+                      CaptainContactUtils.callPhone(
+                        context,
+                        widget.order.clientPhone,
+                        unavailableMessage: 'رقم هاتف العميل غير متوفر',
+                      );
+                    },
+                    child: Icon(
+                      Icons.phone,
+                      size: 18,
+                      color: Colors.green[700],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           _buildDetailRow('العنوان:', widget.order.deliveryAddress),
           _buildDetailRow('الملاحظات:', widget.order.notes ?? 'لا توجد'),
+          const Divider(height: 8),
           _buildDetailRow(
-            'المجموع:',
+            'قيمة المنتجات:',
+            '${((widget.order.totalAmount - widget.order.deliveryFee - widget.order.taxAmount + widget.order.discountAmount).clamp(0.0, double.infinity)).toStringAsFixed(2)} ج.م',
+          ),
+          if (widget.order.discountAmount > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4.0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 80,
+                    child: Text(
+                      'خصم الكوبون ${widget.order.couponCode != null ? "(${widget.order.couponCode})" : ""}:',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red[700]),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '-${widget.order.discountAmount.toStringAsFixed(2)} ج.م',
+                      style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          _buildDetailRow(
+            'رسوم التوصيل:',
+            '${widget.order.deliveryFee.toStringAsFixed(2)} ج.م',
+          ),
+          _buildDetailRow(
+            'الإجمالي الكلي:',
             '${widget.order.totalAmount.toStringAsFixed(2)} ج.م',
           ),
           _buildDetailRow(
@@ -831,6 +902,8 @@ class _OrderDetailsSheetState extends State<_OrderDetailsSheet> {
           ),
         ],
       ),
-    );
+    ),
+  ),
+);
   }
 }

@@ -18,6 +18,21 @@ class SupabaseService {
     return 'client';
   }
 
+  static String _sanitizeProfileRole(String? role) {
+    final normalized = role?.trim().toLowerCase();
+    const validRoles = {
+      'client',
+      'merchant',
+      'captain',
+      'admin',
+      'delivery_company_admin',
+    };
+    if (validRoles.contains(normalized)) {
+      return normalized!;
+    }
+    return 'client';
+  }
+
   static Exception _networkException(String action, Object error) {
     if (error is TimeoutException) {
       return Exception(
@@ -77,7 +92,9 @@ class SupabaseService {
           .signUp(
             email: email,
             password: password,
-            emailRedirectTo: 'elltallmarket://auth/callback',
+            emailRedirectTo: kIsWeb
+                ? '${Uri.base.origin}/market/auth/callback'
+                : 'elltallmarket://auth/callback',
             data: {
               'full_name': name,
               'phone': phone,
@@ -126,7 +143,9 @@ class SupabaseService {
       await _client.auth
           .resetPasswordForEmail(
             email,
-            redirectTo: 'elltallmarket://auth/callback',
+            redirectTo: kIsWeb
+                ? '${Uri.base.origin}/market/auth/callback'
+                : 'elltallmarket://auth/callback',
           )
           .timeout(_defaultTimeout);
       AppLogger.info('Password reset email sent');
@@ -232,7 +251,7 @@ class SupabaseService {
           'email': current.email,
           'full_name': metadata['full_name'] ?? metadata['name'],
           'phone': metadata['phone'],
-          'role': _sanitizeSelfSignupRole(metadata['role']?.toString()),
+          'role': _sanitizeProfileRole(metadata['role']?.toString()),
           'is_active': true,
           'updated_at': DateTime.now().toIso8601String(),
         };

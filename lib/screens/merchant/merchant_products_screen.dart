@@ -2,7 +2,6 @@ import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
-import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/models/product_model.dart';
@@ -34,19 +33,31 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
   TabController? _tabController;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  String _selectedFilter = 'all'; // all, available, outOfStock
+
+
+  // أعداد المنتجات الكلية من قاعدة البيانات
+  int _totalActiveCount = 0;
+  int _totalInactiveCount = 0;
+  int _totalAvailableCount = 0;
+  int _totalOutOfStockCount = 0;
+  double _totalStockValue = 0.0;
+
+  // الحالات الخاصة بكل تبويب بشكل منفصل
+  final List<List<ProductModel>> _tabProducts = [[], [], [], []];
+  final List<bool> _tabLoading = [false, false, false, false];
+  final List<bool> _tabHasMore = [true, true, true, true];
+  final List<int> _tabPages = [1, 1, 1, 1];
+
+  // حالة التحديد المتعدد
+  bool _isSelectionMode = false;
+  final Set<String> _selectedIds = {};
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _tabController?.addListener(() {
-      if (_tabController?.indexIsChanging == true && mounted) {
-        setState(() {
-          _selectedFilter = _getFilterByIndex(_tabController!.index);
-        });
-      }
-    });
+    _tabController = TabController(length: 4, vsync: this);
+    _tabController!.addListener(_handleTabChange);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadMerchantProducts();
       _startAutoRefresh();
@@ -56,23 +67,28 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
   @override
   void dispose() {
     _autoRefreshTimer?.cancel();
+    _tabController?.removeListener(_handleTabChange);
     _tabController?.dispose();
     _searchController.dispose();
     super.dispose();
   }
 
-  String _getFilterByIndex(int index) {
-    switch (index) {
-      case 0:
-        return 'all';
-      case 1:
-        return 'available';
-      case 2:
-        return 'outOfStock';
-      default:
-        return 'all';
+  void _handleTabChange() {
+    if (_tabController!.indexIsChanging) return;
+    final index = _tabController!.index;
+    // مسح التحديد عند تغيير التبويب
+    if (_isSelectionMode) {
+      setState(() {
+        _isSelectionMode = false;
+        _selectedIds.clear();
+      });
+    }
+    if (_tabProducts[index].isEmpty && _tabHasMore[index]) {
+      _loadTabProducts(index);
     }
   }
+
+
 
   // تحديث تلقائي كل دقيقة
   void _startAutoRefresh() {
@@ -103,10 +119,6 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
         listen: false,
       );
       final merchantProvider = Provider.of<MerchantProvider>(
-        context,
-        listen: false,
-      );
-      final productProvider = Provider.of<ProductProvider>(
         context,
         listen: false,
       );
@@ -162,10 +174,19 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
           _storeId = storeResponse['id'] as String;
           AppLogger.info('🏪 معرف المتجر: $_storeId');
 
-          // جلب المنتجات لهذا المتجر فقط
-          AppLogger.info('📦 جلب المنتجات للمتجر...');
-          await productProvider.fetchProductsByStore(_storeId!);
-          AppLogger.info('✅ تم جلب ${productProvider.products.length} منتج');
+          // جلب الأعداد الكلية والأسعار للمنتجات من قاعدة البيانات
+          await _loadProductCounts(_storeId!);
+
+          // تهيئة/تحديث التبويب النشط فقط وإلغاء تهيئة التبويبات الأخرى
+          for (int i = 0; i < 4; i++) {
+            if (i != _tabController!.index) {
+              _tabProducts[i] = [];
+              _tabHasMore[i] = true;
+              _tabPages[i] = 1;
+            }
+          }
+
+          await _loadTabProducts(_tabController!.index, refresh: true, silent: silent);
 
           if (mounted) {
             setState(() {
@@ -202,6 +223,352 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
       }
     } finally {
       _isLoadingData = false;
+    }
+  }
+
+  Future<void> _loadProductCounts(String storeId) async {
+    try {
+      final supabase = Supabase.instance.client;
+      final results = await Future.wait<dynamic>([
+        supabase
+            .from('products')
+            .select('id')
+            .eq('store_id', storeId)
+            .eq('is_active', true)
+            .count(CountOption.exact),
+        supabase
+            .from('products')
+            .select('id')
+            .eq('store_id', storeId)
+            .eq('is_active', false)
+            .count(CountOption.exact),
+        supabase
+            .from('products')
+            .select('id')
+            .eq('store_id', storeId)
+            .eq('in_stock', true)
+            .gt('stock_quantity', 0)
+            .count(CountOption.exact),
+        supabase
+            .from('products')
+            .select('id')
+            .eq('store_id', storeId)
+            .or('in_stock.eq.false,stock_quantity.lte.0')
+            .count(CountOption.exact),
+        supabase
+            .from('products')
+            .select('price, stock_quantity')
+            .eq('store_id', storeId),
+      ]);
+
+      if (mounted) {
+        final rawData = results[4];
+        final valList = rawData is PostgrestResponse ? rawData.data as List : rawData as List;
+        double totalVal = 0.0;
+        for (var item in valList) {
+          final price = double.tryParse(item['price'].toString()) ?? 0.0;
+          final stock = int.tryParse(item['stock_quantity'].toString()) ?? 0;
+          totalVal += price * stock;
+        }
+
+        setState(() {
+          _totalActiveCount = results[0].count;
+          _totalInactiveCount = results[1].count;
+          _totalAvailableCount = results[2].count;
+          _totalOutOfStockCount = results[3].count;
+          _totalStockValue = totalVal;
+        });
+      }
+    } catch (e) {
+      AppLogger.error('❌ خطأ في تحميل أعداد المنتجات الكلية', e);
+    }
+  }
+
+  Future<void> _loadTabProducts(int tabIndex, {bool refresh = false, bool silent = false}) async {
+    if (_storeId == null) return;
+    if (_tabLoading[tabIndex] && !refresh) return;
+
+    setState(() {
+      _tabLoading[tabIndex] = true;
+      if (refresh) {
+        _tabPages[tabIndex] = 1;
+        _tabHasMore[tabIndex] = true;
+        if (!silent) {
+          _tabProducts[tabIndex] = [];
+        }
+      }
+    });
+
+    try {
+      final int page = _tabPages[tabIndex];
+      final int pageSize = 20;
+      final int startIndex = (page - 1) * pageSize;
+
+      var query = Supabase.instance.client
+          .from('products')
+          .select('*, categories(*), stores(*)')
+          .eq('store_id', _storeId!);
+
+      if (tabIndex == 0) {
+        query = query.eq('is_active', true);
+      } else if (tabIndex == 1) {
+        query = query.eq('is_active', false);
+      } else if (tabIndex == 2) {
+        query = query.eq('in_stock', true).gt('stock_quantity', 0);
+      } else if (tabIndex == 3) {
+        query = query.or('in_stock.eq.false,stock_quantity.lte.0');
+      }
+
+      if (_searchQuery.trim().isNotEmpty) {
+        query = query.or('name.ilike.%${_searchQuery.trim()}%,description.ilike.%${_searchQuery.trim()}%');
+      }
+
+      final response = await query
+          .order('created_at', ascending: false)
+          .range(startIndex, startIndex + pageSize - 1);
+
+      final List<ProductModel> fetchedProducts = (response as List)
+          .map((data) => ProductModel.fromMap(data))
+          .toList();
+
+      if (mounted) {
+        setState(() {
+          if (refresh) {
+            _tabProducts[tabIndex] = fetchedProducts;
+          } else {
+            _tabProducts[tabIndex].addAll(fetchedProducts);
+          }
+
+          if (fetchedProducts.length < pageSize) {
+            _tabHasMore[tabIndex] = false;
+          }
+          _tabPages[tabIndex] = page + 1;
+        });
+      }
+    } catch (e) {
+      AppLogger.error('❌ خطأ في تحميل منتجات التبويب $tabIndex', e);
+      if (mounted && !silent) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في تحميل البيانات: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _tabLoading[tabIndex] = false;
+        });
+      }
+    }
+  }
+
+  void _reloadAllTabs() {
+    setState(() {
+      _isSelectionMode = false;
+      _selectedIds.clear();
+      for (int i = 0; i < 4; i++) {
+        _tabProducts[i] = [];
+        _tabLoading[i] = false;
+        _tabHasMore[i] = true;
+        _tabPages[i] = 1;
+      }
+    });
+    if (_storeId != null) {
+      _loadProductCounts(_storeId!);
+      _loadTabProducts(_tabController!.index, refresh: true);
+    }
+  }
+
+  void _toggleSelectionMode() {
+    setState(() {
+      _isSelectionMode = !_isSelectionMode;
+      if (!_isSelectionMode) _selectedIds.clear();
+    });
+  }
+
+  void _toggleProductSelection(String productId) {
+    setState(() {
+      if (_selectedIds.contains(productId)) {
+        _selectedIds.remove(productId);
+        if (_selectedIds.isEmpty) {
+          _isSelectionMode = false;
+        }
+      } else {
+        _selectedIds.add(productId);
+      }
+    });
+  }
+
+  void _selectAllInCurrentTab() {
+    final tabIndex = _tabController!.index;
+    final products = _tabProducts[tabIndex];
+    setState(() {
+      if (_selectedIds.length == products.length) {
+        _selectedIds.clear();
+        _isSelectionMode = false;
+      } else {
+        _selectedIds.clear();
+        _selectedIds.addAll(products.map((p) => p.id));
+      }
+    });
+  }
+
+  List<ProductModel> get _selectedProducts {
+    final tabIndex = _tabController!.index;
+    return _tabProducts[tabIndex]
+        .where((p) => _selectedIds.contains(p.id))
+        .toList();
+  }
+
+  // ---- إجراءات التحديد المتعدد ----
+
+  Future<void> _bulkDeleteSelected() async {
+    if (_selectedIds.isEmpty) return;
+    final count = _selectedIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.delete_forever, color: Colors.red),
+            SizedBox(width: 8),
+            Text('حذف $count منتج'),
+          ],
+        ),
+        content: Text('هل أنت متأكد من حذف $count منتج؟ لا يمكن التراجع عن هذا الإجراء.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('إلغاء'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('حذف الكل'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isLoadingStore = true);
+    try {
+      final ids = List<String>.from(_selectedIds);
+      for (final id in ids) {
+        await ProductService.deleteProduct(id);
+      }
+      setState(() {
+        _isSelectionMode = false;
+        _selectedIds.clear();
+      });
+      _reloadAllTabs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم حذف $count منتج بنجاح'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('فشل الحذف: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingStore = false);
+    }
+  }
+
+  Future<void> _bulkSetActive(bool activate) async {
+    if (_selectedIds.isEmpty) return;
+    final count = _selectedIds.length;
+    final label = activate ? 'تفعيل' : 'إلغاء تفعيل';
+    setState(() => _isLoadingStore = true);
+    try {
+      await Supabase.instance.client
+          .from('products')
+          .update({'is_active': activate})
+          .inFilter('id', List<String>.from(_selectedIds));
+      setState(() {
+        _isSelectionMode = false;
+        _selectedIds.clear();
+      });
+      _reloadAllTabs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم $label $count منتج بنجاح'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('فشل الإجراء: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingStore = false);
+    }
+  }
+
+  Future<void> _bulkDuplicate() async {
+    if (_selectedIds.isEmpty) return;
+    final count = _selectedIds.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.content_copy, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('نسخ $count منتج'),
+          ],
+        ),
+        content: Text('هل تريد إنشاء نسخة من $count منتج؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text('نسخ الكل'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isLoadingStore = true);
+    try {
+      final selected = _selectedProducts;
+      for (final product in selected) {
+        await ProductService.duplicateProduct(product);
+      }
+      setState(() {
+        _isSelectionMode = false;
+        _selectedIds.clear();
+      });
+      _reloadAllTabs();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم نسخ $count منتج بنجاح'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('فشل النسخ: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingStore = false);
     }
   }
 
@@ -279,38 +646,7 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
     }
   }
 
-  // دوال مساعدة للإحصائيات
-  int _getAvailableCount(List<ProductModel> products) {
-    return products.where((p) => p.isAvailable).length;
-  }
 
-  int _getOutOfStockCount(List<ProductModel> products) {
-    return products.where((p) => !p.isAvailable).length;
-  }
-
-  List<ProductModel> _getFilteredProducts(List<ProductModel> products) {
-    var filtered = products;
-
-    // تطبيق فلتر البحث
-    if (_searchQuery.isNotEmpty) {
-      filtered = filtered.where((p) {
-        return p.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-            (p.description?.toLowerCase().contains(
-                  _searchQuery.toLowerCase(),
-                ) ??
-                false);
-      }).toList();
-    }
-
-    // تطبيق فلتر الحالة
-    if (_selectedFilter == 'available') {
-      filtered = filtered.where((p) => p.isAvailable).toList();
-    } else if (_selectedFilter == 'outOfStock') {
-      filtered = filtered.where((p) => !p.isAvailable).toList();
-    }
-
-    return filtered;
-  }
 
   void _showSearchDialog() {
     showDialog(
@@ -338,11 +674,15 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
                 _searchController.clear();
               });
               Navigator.pop(context);
+              _reloadAllTabs();
             },
             child: Text('مسح'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              Navigator.pop(context);
+              _reloadAllTabs();
+            },
             child: Text('بحث'),
           ),
         ],
@@ -351,19 +691,6 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
   }
 
   void _showStatsDialog() {
-    final productProvider = Provider.of<ProductProvider>(
-      context,
-      listen: false,
-    );
-    final products = productProvider.products;
-    final totalProducts = products.length;
-    final available = _getAvailableCount(products);
-    final outOfStock = _getOutOfStockCount(products);
-    final totalValue = products.fold<double>(
-      0,
-      (sum, product) => sum + (product.price * product.stock),
-    );
-
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -379,27 +706,27 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
           children: [
             _buildStatRow(
               'إجمالي المنتجات',
-              '$totalProducts',
+              '${_totalActiveCount + _totalInactiveCount}',
               Icons.inventory_2,
             ),
             Divider(),
             _buildStatRow(
               'منتجات متوفرة',
-              '$available',
+              '$_totalAvailableCount',
               Icons.check_circle,
               color: Colors.green,
             ),
             Divider(),
             _buildStatRow(
               'منتجات نفذت',
-              '$outOfStock',
+              '$_totalOutOfStockCount',
               Icons.warning,
               color: Colors.red,
             ),
             Divider(),
             _buildStatRow(
               'قيمة المخزون',
-              '${totalValue.toStringAsFixed(0)} ج.م',
+              '${_totalStockValue.toStringAsFixed(0)} ج.م',
               Icons.attach_money,
               color: Colors.blue,
             ),
@@ -440,14 +767,12 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final productProvider = Provider.of<ProductProvider>(context);
     final merchantProvider = Provider.of<MerchantProvider>(context);
     final theme = Theme.of(context);
 
     AppLogger.info(
       '🔍 Products Screen State: isLoading=$_isLoadingStore, isInitialized=$_isInitialized',
     );
-    AppLogger.info('🔍 Products count: ${productProvider.products.length}');
     AppLogger.info(
       '🔍 Merchant: ${merchantProvider.selectedMerchant?.storeName}',
     );
@@ -461,128 +786,189 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('منتجاتي', style: TextStyle(fontSize: 18)),
-            if (_isInitialized)
-              Text(
-                '${_getFilteredProducts(productProvider.products).length} منتج',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+      appBar: _isSelectionMode
+          ? AppBar(
+              leading: IconButton(
+                icon: Icon(Icons.close),
+                onPressed: _toggleSelectionMode,
+                tooltip: 'إلغاء التحديد',
               ),
-          ],
-        ),
-        centerTitle: false,
-        actions: [
-          // زر البحث
-          IconButton(
-            icon: Icon(Icons.search),
-            onPressed: _showSearchDialog,
-            tooltip: 'بحث',
-          ),
-          // زر الإحصائيات
-          IconButton(
-            icon: Badge(
-              label: Text('${_getOutOfStockCount(productProvider.products)}'),
-              isLabelVisible: _getOutOfStockCount(productProvider.products) > 0,
-              child: Icon(Icons.analytics_outlined),
-            ),
-            onPressed: _showStatsDialog,
-            tooltip: 'الإحصائيات',
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: Size.fromHeight(48),
-          child: Container(
-            height: 48,
-            color: theme.colorScheme.surface,
-            child: TabBar(
-              controller: _tabController!,
-              indicatorColor: theme.colorScheme.primary,
-              labelColor: theme.colorScheme.primary,
-              unselectedLabelColor: theme.colorScheme.onSurfaceVariant,
-              tabs: [
-                Tab(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('الكل'),
-                      SizedBox(width: 4),
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primaryContainer,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          '${productProvider.products.length}',
-                          style: TextStyle(fontSize: 11),
-                        ),
-                      ),
-                    ],
+              title: Text(
+                _selectedIds.isEmpty
+                    ? 'اختر المنتجات'
+                    : 'تم تحديد ${_selectedIds.length}',
+              ),
+              centerTitle: false,
+              backgroundColor: theme.colorScheme.primaryContainer,
+              actions: [
+                TextButton.icon(
+                  onPressed: _selectAllInCurrentTab,
+                  icon: Icon(
+                    _selectedIds.length ==
+                            _tabProducts[_tabController!.index].length
+                        ? Icons.deselect
+                        : Icons.select_all,
                   ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('متوفر'),
-                      SizedBox(width: 4),
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.green.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          '${_getAvailableCount(productProvider.products)}',
-                          style: TextStyle(fontSize: 11, color: Colors.green),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Tab(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('نفذ'),
-                      SizedBox(width: 4),
-                      Container(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.red.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          '${_getOutOfStockCount(productProvider.products)}',
-                          style: TextStyle(fontSize: 11, color: Colors.red),
-                        ),
-                      ),
-                    ],
+                  label: Text(
+                    _selectedIds.length ==
+                            _tabProducts[_tabController!.index].length
+                        ? 'إلغاء الكل'
+                        : 'تحديد الكل',
                   ),
                 ),
               ],
+            )
+          : AppBar(
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('منتجاتي', style: TextStyle(fontSize: 18)),
+                  if (_isInitialized)
+                    Text(
+                      '${_totalActiveCount + _totalInactiveCount} منتج',
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.normal),
+                    ),
+                ],
+              ),
+              centerTitle: false,
+              actions: [
+                // زر البحث
+                IconButton(
+                  icon: Icon(Icons.search),
+                  onPressed: _showSearchDialog,
+                  tooltip: 'بحث',
+                ),
+                // زر الإحصائيات
+                IconButton(
+                  icon: Badge(
+                    label: Text('$_totalOutOfStockCount'),
+                    isLabelVisible: _totalOutOfStockCount > 0,
+                    child: Icon(Icons.analytics_outlined),
+                  ),
+                  onPressed: _showStatsDialog,
+                  tooltip: 'الإحصائيات',
+                ),
+              ],
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(48),
+                child: Container(
+                  height: 48,
+                  color: theme.colorScheme.surface,
+                  child: TabBar(
+                    controller: _tabController!,
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.center,
+                    indicatorColor: theme.colorScheme.primary,
+                    labelColor: theme.colorScheme.primary,
+                    unselectedLabelColor: theme.colorScheme.onSurfaceVariant,
+                    tabs: [
+                      Tab(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text('فعال'),
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primaryContainer,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '$_totalActiveCount',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.colorScheme.onPrimaryContainer),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Tab(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text('غير فعال'),
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '$_totalInactiveCount',
+                                style: const TextStyle(
+                                    fontSize: 11, color: Colors.orange),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Tab(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text('متوفر'),
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '$_totalAvailableCount',
+                                style: const TextStyle(
+                                    fontSize: 11, color: Colors.green),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Tab(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Text('نفذ'),
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                '$_totalOutOfStockCount',
+                                style: const TextStyle(
+                                    fontSize: 11, color: Colors.red),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-          ),
-        ),
-      ),
       body: ResponsiveCenter(
         maxWidth: 900,
         child: RefreshIndicator(
           notificationPredicate: (notification) {
-            // TabBarView nests the vertical ListView(s), so the default
-            // depth==0 predicate can prevent refresh from triggering.
             return notification.metrics.axis == Axis.vertical;
           },
           onRefresh: _loadMerchantProducts,
@@ -593,76 +979,168 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
               : TabBarView(
                   controller: _tabController!,
                   children: [
-                    _buildProductsList(productProvider, 'all'),
-                    _buildProductsList(productProvider, 'available'),
-                    _buildProductsList(productProvider, 'outOfStock'),
+                    _buildProductsList(0),
+                    _buildProductsList(1),
+                    _buildProductsList(2),
+                    _buildProductsList(3),
                   ],
                 ),
         ),
       ),
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          // Manage Templates Button (Small FAB)
-          if (_isInitialized)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: FloatingActionButton.small(
-                heroTag: 'import_excel',
-                onPressed: () {
-                  if (_storeId != null) {
-                    Navigator.push(
+      // شريط الإجراءات السفلي عند التحديد المتعدد
+      bottomNavigationBar: _isSelectionMode && _selectedIds.isNotEmpty
+          ? _buildSelectionActionBar()
+          : null,
+      floatingActionButton: _isSelectionMode
+          ? null
+          : Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (_isInitialized)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: FloatingActionButton.small(
+                      heroTag: 'import_excel',
+                      onPressed: () {
+                        if (_storeId != null) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  ImportProductsScreen(storeId: _storeId!),
+                            ),
+                          ).then((result) {
+                            if (result == true) _loadMerchantProducts();
+                          });
+                        }
+                      },
+                      backgroundColor: Colors.green.shade600,
+                      foregroundColor: Colors.white,
+                      tooltip: 'استيراد من Excel',
+                      child: const Icon(Icons.table_view),
+                    ),
+                  ),
+                if (_isInitialized)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: FloatingActionButton.small(
+                      heroTag: 'manage_templates',
+                      onPressed: () {
+                        if (_storeId != null) {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  TemplateManagerScreen(storeId: _storeId!),
+                            ),
+                          ).then((_) => _loadMerchantProducts());
+                        }
+                      },
+                      tooltip: 'إدارة القوالب',
+                      child: const Icon(Icons.style),
+                    ),
+                  ),
+                FloatingActionButton.extended(
+                  heroTag: 'add_product',
+                  onPressed: () {
+                    Navigator.pushNamed(
                       context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            ImportProductsScreen(storeId: _storeId!),
-                      ),
-                    ).then((result) {
-                      if (result == true) _loadMerchantProducts();
-                    });
-                  }
-                },
-                backgroundColor: Colors.green.shade600,
-                foregroundColor: Colors.white,
-                tooltip: 'استيراد من Excel',
-                child: const Icon(Icons.table_view),
-              ),
-            ),
-          // Manage Templates Button (Small FAB)
-          if (_isInitialized)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: FloatingActionButton.small(
-                heroTag: 'manage_templates',
-                onPressed: () {
-                  if (_storeId != null) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            TemplateManagerScreen(storeId: _storeId!),
-                      ),
+                      AppRoutes.addEditProduct,
                     ).then((_) => _loadMerchantProducts());
-                  }
-                },
-                tooltip: 'إدارة القوالب',
-                child: const Icon(Icons.style),
+                  },
+                  icon: const Icon(Icons.add),
+                  label: const Text('إضافة منتج'),
+                ),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildSelectionActionBar() {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 12,
+              offset: Offset(0, -4),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            // حذف
+            _buildActionButton(
+              icon: Icons.delete_outline,
+              label: 'حذف',
+              color: Colors.red,
+              onTap: _bulkDeleteSelected,
+            ),
+            Container(width: 1, height: 40, color: theme.dividerColor),
+            // تفعيل — يظهر فقط في تبويب "غير فعال" و"متوفر" و"نفذ"
+            if (_tabController!.index != 0)
+              _buildActionButton(
+                icon: Icons.check_circle_outline,
+                label: 'تفعيل',
+                color: Colors.green,
+                onTap: () => _bulkSetActive(true),
+              ),
+            if (_tabController!.index != 0 && _tabController!.index != 1)
+              Container(width: 1, height: 40, color: theme.dividerColor),
+            // تعطيل — يظهر فقط في تبويب "فعال" و"متوفر" و"نفذ"
+            if (_tabController!.index != 1)
+              _buildActionButton(
+                icon: Icons.cancel_outlined,
+                label: 'تعطيل',
+                color: Colors.orange,
+                onTap: () => _bulkSetActive(false),
+              ),
+            Container(width: 1, height: 40, color: theme.dividerColor),
+            // نسخ
+            _buildActionButton(
+              icon: Icons.content_copy_outlined,
+              label: 'نسخ',
+              color: Colors.blue,
+              onTap: _bulkDuplicate,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 26),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: color,
+                fontWeight: FontWeight.w600,
               ),
             ),
-          // Main Add Product Button
-          FloatingActionButton.extended(
-            heroTag: 'add_product',
-            onPressed: () {
-              Navigator.pushNamed(
-                context,
-                AppRoutes.addEditProduct,
-              ).then((_) => _loadMerchantProducts());
-            },
-            icon: const Icon(Icons.add),
-            label: const Text('إضافة منتج'),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -727,65 +1205,59 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
     );
   }
 
-  Widget _buildProductsList(ProductProvider provider, String filter) {
-    if (provider.isLoading && !_isInitialized) {
+  Widget _buildProductsList(int tabIndex) {
+    final isLoading = _tabLoading[tabIndex];
+    final products = _tabProducts[tabIndex];
+    final hasMore = _tabHasMore[tabIndex];
+
+    if (isLoading && products.isEmpty) {
       return _buildShimmerList();
     }
 
-    // تطبيق الفلتر
-    final filteredProducts = _getFilteredProductsByFilter(
-      provider.products,
-      filter,
-    );
-
-    if (filteredProducts.isEmpty) {
-      return _buildEmptyStateForFilter(filter);
+    if (products.isEmpty) {
+      return _buildEmptyStateForTab(tabIndex);
     }
 
-    return ListView.builder(
-      physics: AlwaysScrollableScrollPhysics(),
-      padding: EdgeInsets.only(
-        left: 12,
-        right: 12,
-        top: 12,
-        bottom: 80, // مسافة إضافية لزر الإضافة
-      ),
-      itemCount: filteredProducts.length,
-      itemBuilder: (context, index) {
-        final product = filteredProducts[index];
-        return Padding(
-          padding: EdgeInsets.only(bottom: 12),
-          child: _buildEnhancedProductCard(product),
-        );
+    return NotificationListener<ScrollNotification>(
+      onNotification: (scrollInfo) {
+        if (scrollInfo.metrics.pixels >=
+            scrollInfo.metrics.maxScrollExtent - 200) {
+          if (!isLoading && hasMore) {
+            _loadTabProducts(tabIndex);
+          }
+        }
+        return true;
       },
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.only(
+          left: 12,
+          right: 12,
+          top: 12,
+          bottom: _isSelectionMode ? 16 : 80,
+        ),
+        itemCount: products.length + (isLoading ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index == products.length) {
+            return const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16.0),
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+          final product = products[index];
+          final isSelected = _selectedIds.contains(product.id);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: _buildEnhancedProductCard(product, isSelected: isSelected),
+          );
+        },
+      ),
     );
   }
 
-  List<ProductModel> _getFilteredProductsByFilter(
-    List<ProductModel> products,
-    String filter,
-  ) {
-    var filtered = products;
-
-    // تطبيق فلتر البحث
-    if (_searchQuery.isNotEmpty) {
-      filtered = filtered.where((p) {
-        return p.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-            (p.description?.toLowerCase().contains(
-                  _searchQuery.toLowerCase(),
-                ) ??
-                false);
-      }).toList();
-    }
-
-    // تطبيق فلتر الحالة
-    if (filter == 'available') {
-      filtered = filtered.where((p) => p.isAvailable).toList();
-    } else if (filter == 'outOfStock') {
-      filtered = filtered.where((p) => !p.isAvailable).toList();
-    }
-
-    return filtered;
+  Widget _buildEmptyStateForTab(int tabIndex) {
+    final filters = ['active', 'inactive', 'available', 'outOfStock'];
+    return _buildEmptyStateForFilter(filters[tabIndex]);
   }
 
   Widget _buildEmptyStateForFilter(String filter) {
@@ -793,6 +1265,16 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
     IconData icon;
 
     switch (filter) {
+      case 'active':
+        icon = Icons.check_circle_outline;
+        message = 'لا توجد منتجات مفعلة';
+        subMessage = 'قم بتفعيل بعض المنتجات لعرضها للعملاء';
+        break;
+      case 'inactive':
+        icon = Icons.block_outlined;
+        message = 'لا توجد منتجات غير مفعلة';
+        subMessage = 'جميع المنتجات مفعلة وتظهر للعملاء';
+        break;
       case 'available':
         icon = Icons.inventory_2_outlined;
         message = 'لا توجد منتجات متوفرة';
@@ -834,8 +1316,8 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
                 style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
                 textAlign: TextAlign.center,
               ),
-              if (filter == 'all') ...[
-                SizedBox(height: 20),
+              if (filter == 'active' || filter == 'all') ...[
+                const SizedBox(height: 20),
                 CustomButton(
                   text: 'إضافة منتج جديد',
                   onPressed: () {
@@ -853,204 +1335,263 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
     );
   }
 
-  Widget _buildEnhancedProductCard(ProductModel product) {
+  Widget _buildEnhancedProductCard(ProductModel product,
+      {bool isSelected = false}) {
     final theme = Theme.of(context);
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: InkWell(
-        onTap: () {
-          Navigator.pushNamed(
-            context,
-            AppRoutes.addEditProduct,
-            arguments: product,
-          ).then((_) => _loadMerchantProducts());
-        },
+    return AnimatedContainer(
+      duration: Duration(milliseconds: 200),
+      decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // صورة المنتج
-            SizedBox(
-              width: 120,
-              height: 120,
-              child: Stack(
-                children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.horizontal(
-                        right: Radius.circular(12),
-                      ),
-                      color: Colors.grey.shade200,
-                      image: product.hasImage
-                          ? DecorationImage(
-                              image: NetworkImage(product.imageUrl!),
-                              fit: BoxFit.cover,
-                            )
-                          : null,
-                    ),
-                    child: product.hasImage
-                        ? null
-                        : Center(
-                            child: Icon(
-                              Icons.image_not_supported,
-                              size: 40,
-                              color: Colors.grey.shade400,
-                            ),
-                          ),
-                  ),
-                  // شارة الحالة
-                  Positioned(
-                    top: 8,
-                    right: 8,
-                    child: Container(
-                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: product.isAvailable ? Colors.green : Colors.red,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        product.stockStatus,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // معلومات المنتج
-            Expanded(
-              child: Padding(
-                padding: EdgeInsets.all(12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+        border: isSelected
+            ? Border.all(color: theme.colorScheme.primary, width: 2)
+            : null,
+      ),
+      child: Card(
+        elevation: isSelected ? 0 : 2,
+        margin: EdgeInsets.zero,
+        color: isSelected
+            ? theme.colorScheme.primaryContainer.withValues(alpha: 0.3)
+            : null,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: InkWell(
+          onTap: () {
+            if (_isSelectionMode) {
+              _toggleProductSelection(product.id);
+            } else {
+              Navigator.pushNamed(
+                context,
+                AppRoutes.addEditProduct,
+                arguments: product,
+              ).then((_) => _loadMerchantProducts());
+            }
+          },
+          onLongPress: () {
+            if (!_isSelectionMode) {
+              setState(() {
+                _isSelectionMode = true;
+              });
+            }
+            _toggleProductSelection(product.id);
+          },
+          borderRadius: BorderRadius.circular(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // مربع التحديد أو صورة المنتج
+              SizedBox(
+                width: 120,
+                height: 120,
+                child: Stack(
                   children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            product.name,
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
+                    Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.horizontal(
+                          right: Radius.circular(12),
+                        ),
+                        color: Colors.grey.shade200,
+                        image: product.hasImage
+                            ? DecorationImage(
+                                image: NetworkImage(product.imageUrl!),
+                                fit: BoxFit.cover,
+                              )
+                            : null,
+                      ),
+                      child: product.hasImage
+                          ? null
+                          : Center(
+                              child: Icon(
+                                Icons.image_not_supported,
+                                size: 40,
+                                color: Colors.grey.shade400,
+                              ),
                             ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                    ),
+                    // شارة الحالة أو Checkbox عند التحديد
+                    if (_isSelectionMode)
+                      Positioned.fill(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.35),
+                            borderRadius: BorderRadius.horizontal(
+                              right: Radius.circular(12),
+                            ),
+                          ),
+                          child: Center(
+                            child: AnimatedSwitcher(
+                              duration: Duration(milliseconds: 200),
+                              child: isSelected
+                                  ? Icon(
+                                      Icons.check_circle,
+                                      color: theme.colorScheme.primary,
+                                      size: 36,
+                                      key: ValueKey('checked'),
+                                    )
+                                  : Icon(
+                                      Icons.radio_button_unchecked,
+                                      color: Colors.white,
+                                      size: 36,
+                                      key: ValueKey('unchecked'),
+                                    ),
+                            ),
                           ),
                         ),
-                        PopupMenuButton(
-                          padding: EdgeInsets.zero,
-                          icon: Icon(Icons.more_vert, size: 20),
-                          itemBuilder: (context) => [
-                            PopupMenuItem(
-                              child: Row(
-                                children: [
-                                  Icon(Icons.edit, size: 18),
-                                  SizedBox(width: 8),
-                                  Text('تعديل'),
-                                ],
-                              ),
-                              onTap: () {
-                                final navigator = Navigator.of(context);
-                                Future.delayed(Duration.zero, () {
-                                  navigator
-                                      .pushNamed(
-                                        AppRoutes.addEditProduct,
-                                        arguments: product,
-                                      )
-                                      .then((_) => _loadMerchantProducts());
-                                });
-                              },
+                      )
+                    else
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Container(
+                          padding:
+                              EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color:
+                                product.isAvailable ? Colors.green : Colors.red,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            product.stockStatus,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
                             ),
-                            PopupMenuItem(
-                              child: const Row(
-                                children: [
-                                  Icon(Icons.content_copy, size: 18),
-                                  SizedBox(width: 8),
-                                  Text('نسخ المنتج'),
-                                ],
-                              ),
-                              onTap: () {
-                                Future.delayed(Duration.zero, () {
-                                  _duplicateProduct(product);
-                                });
-                              },
-                            ),
-                            PopupMenuItem(
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.delete,
-                                    size: 18,
-                                    color: Colors.red,
-                                  ),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    'حذف',
-                                    style: TextStyle(color: Colors.red),
-                                  ),
-                                ],
-                              ),
-                              onTap: () {
-                                Future.delayed(Duration.zero, () {
-                                  _showDeleteDialog(product);
-                                });
-                              },
-                            ),
-                          ],
+                          ),
                         ),
-                      ],
-                    ),
-                    if (product.description != null &&
-                        product.description!.isNotEmpty) ...[
-                      SizedBox(height: 4),
-                      Text(
-                        product.description!,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: Colors.grey.shade600,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ],
-                    SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.inventory_2,
-                          size: 16,
-                          color: Colors.grey.shade600,
-                        ),
-                        SizedBox(width: 4),
+                  ],
+                ),
+              ),
+              // معلومات المنتج
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              product.name,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (!_isSelectionMode)
+                            PopupMenuButton(
+                              padding: EdgeInsets.zero,
+                              icon: Icon(Icons.more_vert, size: 20),
+                              itemBuilder: (context) => [
+                                PopupMenuItem(
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.edit, size: 18),
+                                      SizedBox(width: 8),
+                                      Text('تعديل'),
+                                    ],
+                                  ),
+                                  onTap: () {
+                                    final navigator = Navigator.of(context);
+                                    Future.delayed(Duration.zero, () {
+                                      navigator
+                                          .pushNamed(
+                                            AppRoutes.addEditProduct,
+                                            arguments: product,
+                                          )
+                                          .then((_) => _loadMerchantProducts());
+                                    });
+                                  },
+                                ),
+                                PopupMenuItem(
+                                  child: const Row(
+                                    children: [
+                                      Icon(Icons.content_copy, size: 18),
+                                      SizedBox(width: 8),
+                                      Text('نسخ المنتج'),
+                                    ],
+                                  ),
+                                  onTap: () {
+                                    Future.delayed(Duration.zero, () {
+                                      _duplicateProduct(product);
+                                    });
+                                  },
+                                ),
+                                PopupMenuItem(
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.delete,
+                                        size: 18,
+                                        color: Colors.red,
+                                      ),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'حذف',
+                                        style: TextStyle(color: Colors.red),
+                                      ),
+                                    ],
+                                  ),
+                                  onTap: () {
+                                    Future.delayed(Duration.zero, () {
+                                      _showDeleteDialog(product);
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
+                        ],
+                      ),
+                      if (product.description != null &&
+                          product.description!.isNotEmpty) ...[
+                        SizedBox(height: 4),
                         Text(
-                          'المخزون: ${product.stock}',
+                          product.description!,
                           style: TextStyle(
                             fontSize: 13,
                             color: Colors.grey.shade600,
                           ),
-                        ),
-                        Spacer(),
-                        Text(
-                          product.priceFormatted,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                            color: theme.colorScheme.primary,
-                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
-                    ),
-                  ],
+                      SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.inventory_2,
+                            size: 16,
+                            color: Colors.grey.shade600,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'المخزون: ${product.stock}',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                          Spacer(),
+                          Text(
+                            product.priceFormatted,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1080,10 +1621,6 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
   }
 
   void _deleteProduct(ProductModel product) async {
-    final productProvider = Provider.of<ProductProvider>(
-      context,
-      listen: false,
-    );
     try {
       // احذف من قاعدة البيانات مع تأكيد النجاح أو سبب الفشل
       await ProductService.deleteProduct(product.id);
@@ -1095,7 +1632,8 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
       );
 
       // أنعش قائمة المنتجات لهذا المتجر
-      await productProvider.fetchProductsByStore(product.storeId);
+      await _loadProductCounts(product.storeId);
+      await _loadTabProducts(_tabController!.index, refresh: true);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

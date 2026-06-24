@@ -80,15 +80,19 @@ class OrderService {
   // ===== إنشاء طلب جديد =====
   static Future<OrderModel?> createOrder({
     required String customerId,
+    required String storeId,
     required String deliveryAddress,
     required double deliveryLat,
     required double deliveryLng,
     required List<Map<String, dynamic>> items,
     String? notes,
     String? couponCode,
+    String? clientPhone,
     double? discountAmount = 0.0,
     double? deliveryFee = 0.0,
-    String paymentMethod = 'cash_on_delivery',
+    double? taxAmount = 0.0,
+    String paymentMethod = 'cash',
+    String? prescriptionUrl,
   }) async {
     try {
       // حساب إجمالي سعر المنتجات
@@ -100,26 +104,30 @@ class OrderService {
       }
 
       final totalAmount =
-          subtotal + (deliveryFee ?? 0.0) - (discountAmount ?? 0.0);
+          subtotal + (deliveryFee ?? 0.0) + (taxAmount ?? 0.0) - (discountAmount ?? 0.0);
 
-      // إنشاء الطلب
+      // إنشاء الطلب — يذهب مباشرة لمكتب التوصيل بحالة ready
+      final now = DateTime.now().toIso8601String();
       final orderData = {
         'client_id': customerId,
-        'status': 'pending',
-        'subtotal': subtotal,
+        'store_id': storeId,
+        'status': 'ready',
         'delivery_fee': deliveryFee,
+        'tax_amount': taxAmount,
         'discount_amount': discountAmount,
         'total_amount': totalAmount,
         'delivery_address': deliveryAddress,
-        'delivery_lat': deliveryLat,
-        'delivery_lng': deliveryLng,
-        'notes': notes,
+        'delivery_latitude': deliveryLat,
+        'delivery_longitude': deliveryLng,
+        'delivery_notes': notes,
+        'prescription_url': prescriptionUrl,
         'coupon_code': couponCode,
+        'client_phone': clientPhone,
         'payment_method': paymentMethod,
         'payment_status': 'pending',
+        'accepted_at': now,
+        'prepared_at': now,
         'order_group_id': const Uuid().v4(), // توليد معرف مجموعة جديد للتتبع
-        'created_at': DateTime.now().toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
       };
 
       final orderResponse = await _supabase
@@ -177,6 +185,7 @@ class OrderService {
             *,
             client:profiles!client_id(full_name, phone),
             captain:profiles!captain_id(full_name, phone),
+            store:stores!store_id(name, address, phone, latitude, longitude, city, governorate, category),
             order_items(
               *,
               products(*, stores(*))
@@ -200,12 +209,38 @@ class OrderService {
       );
       AppLogger.error('PostgreSQL خطأ في جلب الطلب: ${e.message}', e);
       return null;
-    } catch (e) {
-      AppLogger.error('❌ DEBUG: getOrderById - Exception: ${e.toString()}', e);
-      AppLogger.error('خطأ في جلب الطلب', e);
-      return null;
     }
   }
+
+  // ===== الحصول على طلبات مجموعة محددة =====
+  static Future<List<OrderModel>> getOrdersByGroupId(String orderGroupId) async {
+    try {
+      final response = await _supabase
+          .from('orders')
+          .select('''
+            *,
+            client:profiles!client_id(full_name, phone),
+            captain:profiles!captain_id(full_name, phone),
+            store:stores!store_id(name, address, phone, latitude, longitude, city, governorate, category),
+            order_items(
+              *,
+              products(*, stores(*))
+            )
+          ''')
+          .eq('order_group_id', orderGroupId);
+
+      return (response as List)
+          .map((data) => OrderModel.fromMap(data))
+          .toList();
+    } on PostgrestException catch (e) {
+      AppLogger.error('PostgreSQL خطأ في جلب طلبات المجموعة: ${e.message}', e);
+      return [];
+    } catch (e) {
+      AppLogger.error('خطأ في جلب طلبات المجموعة', e);
+      return [];
+    }
+  }
+
 
   // ===== الحصول على تفاصيل طلب محدد برقم الطلب =====
   static Future<OrderModel?> getOrderByNumber(String orderNumber) async {
@@ -216,6 +251,7 @@ class OrderService {
             *,
             client:profiles!client_id(full_name, phone),
             captain:profiles!captain_id(full_name, phone),
+            store:stores!store_id(name, address, phone, latitude, longitude, city, governorate, category),
             order_items(
               *,
               products(*, stores(*))
@@ -288,6 +324,10 @@ class OrderService {
         'status': newStatus,
         'updated_at': DateTime.now().toIso8601String(),
       };
+
+      if (newStatus == 'delivered') {
+        updateData['payment_status'] = 'paid';
+      }
 
       if (notes != null) {
         updateData['status_notes'] = notes;
@@ -551,6 +591,7 @@ class OrderService {
             *,
             client:profiles!client_id(full_name, phone),
             captain:profiles!captain_id(full_name, phone),
+            store:stores!store_id(name, address, phone, latitude, longitude, city, governorate, category),
             order_items(
               *,
               products(*, stores(*))
@@ -599,6 +640,7 @@ class OrderService {
             *,
             client:profiles!client_id(full_name, phone),
             captain:profiles!captain_id(full_name, phone),
+            store:stores!store_id(name, address, phone, latitude, longitude, city, governorate, category),
             order_items(
               *,
               products(*, stores(*))
@@ -649,6 +691,7 @@ class OrderService {
             *,
             client:profiles!client_id(full_name, phone),
             captain:profiles!captain_id(full_name, phone),
+            store:stores!store_id(name, address, phone, latitude, longitude, city, governorate, category),
             order_items(
               *,
               products!inner(*, stores!inner(*))
@@ -698,6 +741,7 @@ class OrderService {
             *,
             client:profiles!client_id(full_name, phone),
             captain:profiles!captain_id(full_name, phone),
+            store:stores!store_id(name, address, phone, latitude, longitude, city, governorate, category),
             order_items(
               *,
               products(*, stores(*))
@@ -754,6 +798,7 @@ class OrderService {
           .select('''
             *,
             client:profiles!client_id(full_name, phone),
+            store:stores!store_id(name, address, phone, latitude, longitude, city, governorate, category),
             order_items(
               *,
               products(*, stores(*))

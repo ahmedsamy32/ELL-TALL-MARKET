@@ -40,7 +40,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
   VoidCallback? _mpListenerRef;
   int _logoCacheBuster = DateTime.now().millisecondsSinceEpoch;
   int _coverCacheBuster = DateTime.now().millisecondsSinceEpoch;
-  String _deliveryMode = 'store';
+  String _deliveryMode = 'app';
   TabController? _tabController;
   int _currentTabIndex = 0;
 
@@ -921,7 +921,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
         children: [
           _profileHeader(color),
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 40, 16, 16),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1015,9 +1015,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
           const SizedBox(height: 16),
           _sectionTitle('مواعيد العمل'),
           _buildWorkingHoursCard(),
-          const SizedBox(height: 24),
-          _sectionTitle('حالة المتجر'),
-          _buildStoreStatusFooter(),
+
         ],
       ),
     );
@@ -3222,31 +3220,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     );
   }
 
-  Widget _buildStoreStatusTile() {
-    return SwitchListTile.adaptive(
-      contentPadding: EdgeInsets.zero,
-      title: const Text('المتجر مفتوح'),
-      subtitle: const Text(
-        'أغلق المتجر مؤقتاً لإيقاف استقبال الطلبات بالكامل.',
-      ),
-      value: _isOpen,
-      visualDensity: VisualDensity.compact,
-      onChanged: (value) => setState(() => _isOpen = value),
-    );
-  }
 
-  Widget _buildStoreStatusFooter() {
-    final color = Theme.of(context).colorScheme;
-    return Card(
-      margin: EdgeInsets.zero,
-      elevation: 2,
-      shadowColor: color.shadow,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        child: _buildStoreStatusTile(),
-      ),
-    );
-  }
 
   Widget _buildDeliveryModeSelector() {
     final theme = Theme.of(context).textTheme;
@@ -3383,14 +3357,19 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
     // احسب الارتفاع بناءً على نسبة 16:9
     final screenWidth = MediaQuery.of(context).size.width;
     final coverHeight = (screenWidth * 9) / 16; // نسبة 16:9
+    final totalHeight = coverHeight + 30; // زيادة الارتفاع ليشمل الشعار المتداخل بالكامل لحل مشكلة النقر
 
     return SizedBox(
-      height: coverHeight,
+      height: totalHeight,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
           // صورة الغلاف
-          Positioned.fill(
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: coverHeight,
             child: Container(
               color: color.surfaceContainerHighest,
               child: _pendingCoverBytes != null
@@ -3434,7 +3413,7 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
           ),
           // الشعار الدائري + زر كاميرا قابل للنقر فقط (داخل حدود الـ header)
           Positioned(
-            bottom: -30,
+            bottom: 0,
             right: 16,
             child: Stack(
               clipBehavior: Clip.none,

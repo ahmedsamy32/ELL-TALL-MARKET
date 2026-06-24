@@ -5,10 +5,13 @@ import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ell_tall_market/core/logger.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:ell_tall_market/utils/app_routes.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class OrderTrackingScreen extends StatefulWidget {
   final String? orderId;
@@ -27,7 +30,10 @@ class OrderTrackingScreen extends StatefulWidget {
 }
 
 class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
+  List<OrderModel>? _groupOrders;
   List<OrderItemModel>? _orderItems;
+  RealtimeChannel? _groupRealtimeChannel;
+
   bool _isLoadingItems = false;
   bool _isRefreshingOrder = false;
   String? _clientPhone;
@@ -35,6 +41,31 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   String? _effectiveOrderId;
   bool _isResolvingInitialOrder = false;
   String? _initialLoadError;
+
+  @override
+  void dispose() {
+    _groupRealtimeChannel?.unsubscribe();
+    super.dispose();
+  }
+
+  OrderStatus _getGroupStatus(List<OrderModel> orders) {
+    if (orders.isEmpty) return OrderStatus.pending;
+    if (orders.every((o) => o.status == OrderStatus.delivered)) {
+      return OrderStatus.delivered;
+    }
+    if (orders.every((o) => o.status == OrderStatus.cancelled)) {
+      return OrderStatus.cancelled;
+    }
+    if (orders.any((o) => o.status == OrderStatus.inTransit || o.status == OrderStatus.pickedUp)) {
+      return OrderStatus.inTransit;
+    }
+    if (orders.any((o) => o.status == OrderStatus.preparing || o.status == OrderStatus.confirmed || o.status == OrderStatus.pending)) {
+      if (orders.any((o) => o.status == OrderStatus.preparing)) return OrderStatus.preparing;
+      if (orders.any((o) => o.status == OrderStatus.confirmed)) return OrderStatus.confirmed;
+      return OrderStatus.pending;
+    }
+    return OrderStatus.ready;
+  }
 
   OrderStatus _simplifyStatusForClient(OrderStatus status) {
     switch (status) {
@@ -79,30 +110,16 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (widget.orderNumber != null) {
-        Provider.of<OrderProvider>(
-          context,
-          listen: false,
-        ).getOrderByNumber(widget.orderNumber!);
-        return;
-      }
-
-      if (widget.orderId != null) {
-        _effectiveOrderId = widget.orderId;
-        Provider.of<OrderProvider>(
-          context,
-          listen: false,
-        ).getOrderById(widget.orderId!);
-        return;
-      }
-
       if (widget.orderGroupId != null) {
-        _resolveGroupToSingleOrder();
+        _loadGroupOrders(widget.orderGroupId!);
+        return;
       }
+
+      _resolveInitialOrder();
     });
   }
 
-  Future<void> _resolveGroupToSingleOrder() async {
+  Future<void> _resolveInitialOrder() async {
     if (_isResolvingInitialOrder) return;
 
     setState(() {
@@ -112,35 +129,103 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
 
     try {
       final orderProvider = Provider.of<OrderProvider>(context, listen: false);
+      if (widget.orderNumber != null) {
+        await orderProvider.getOrderByNumber(widget.orderNumber!);
+      } else if (widget.orderId != null) {
+        await orderProvider.getOrderById(widget.orderId!);
+      }
 
-      final orders = await OrderService.getOrdersByGroupId(
-        widget.orderGroupId!,
-      );
+      final order = orderProvider.selectedOrder;
+      if (order == null) {
+        setState(() {
+          _initialLoadError = 'لم يتم العثور على بيانات الطلب';
+          _isResolvingInitialOrder = false;
+        });
+        return;
+      }
+
+      if (order.orderGroupId != null && order.orderGroupId!.isNotEmpty) {
+        _isResolvingInitialOrder = false;
+        _loadGroupOrders(order.orderGroupId!);
+      } else {
+        setState(() {
+          _groupOrders = [order];
+          _isResolvingInitialOrder = false;
+        });
+        _loadOrderDetails(order.clientId, order.id);
+      }
+    } catch (e) {
+      setState(() {
+        _initialLoadError = 'حدث خطأ أثناء تحميل الطلب';
+        _isResolvingInitialOrder = false;
+      });
+    }
+  }
+
+  Future<void> _loadGroupOrders(String orderGroupId) async {
+    if (_isLoadingItems) return;
+
+    setState(() {
+      _isLoadingItems = true;
+      _initialLoadError = null;
+    });
+
+    try {
+      final orders = await OrderService.getOrdersByGroupId(orderGroupId);
       if (orders.isEmpty) {
         if (mounted) {
           setState(() {
             _initialLoadError = 'لم يتم العثور على بيانات الطلب';
-            _isResolvingInitialOrder = false;
+            _isLoadingItems = false;
           });
         }
         return;
       }
 
-      final firstOrderId = orders.first.id;
-      _effectiveOrderId = firstOrderId;
+      final List<OrderItemModel> allItems = [];
+      for (final order in orders) {
+        final items = await OrderService.getOrderItems(order.id);
+        allItems.addAll(items);
+      }
 
-      if (!mounted) return;
-      await orderProvider.getOrderById(firstOrderId);
+      if (orders.isNotEmpty) {
+        await _loadClientInfo(orders.first.clientId);
+      }
 
       if (mounted) {
         setState(() {
+          _groupOrders = orders;
+          _orderItems = allItems;
+          _isLoadingItems = false;
+          _isRefreshingOrder = false;
           _isResolvingInitialOrder = false;
         });
       }
+
+      // Subscribe to group updates in real-time
+      _groupRealtimeChannel ??= Supabase.instance.client
+          .channel('order-group-tracking-$orderGroupId')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'orders',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'order_group_id',
+              value: orderGroupId,
+            ),
+            callback: (payload) {
+              AppLogger.info('Group order updated in realtime!');
+              _loadGroupOrders(orderGroupId);
+            },
+          )
+          .subscribe();
     } catch (e) {
       if (mounted) {
         setState(() {
           _initialLoadError = 'حدث خطأ أثناء تحميل الطلب';
+          _isLoadingItems = false;
+          _isRefreshingOrder = false;
           _isResolvingInitialOrder = false;
         });
       }
@@ -168,7 +253,6 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
     setState(() => _isLoadingItems = true);
 
     try {
-      // تحميل المنتجات
       final items = await OrderService.getOrderItems(orderId);
 
       await _loadClientInfo(clientId);
@@ -213,25 +297,43 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
 
     final provider = Provider.of<OrderProvider>(context, listen: false);
 
-    if (_effectiveOrderId == null) {
-      if (widget.orderNumber != null) {
-        await provider.getOrderByNumber(widget.orderNumber!);
-      } else if (widget.orderGroupId != null) {
-        await _resolveGroupToSingleOrder();
-      }
+    String? gId = widget.orderGroupId;
+    if (gId == null && _groupOrders != null && _groupOrders!.isNotEmpty) {
+      gId = _groupOrders!.first.orderGroupId;
+    }
+
+    if (gId != null && gId.isNotEmpty) {
+      await _loadGroupOrders(gId);
       if (mounted) {
         setState(() => _isRefreshingOrder = false);
       }
       return;
     }
 
-    await provider.getOrderById(_effectiveOrderId!);
+    final activeOrderId = _effectiveOrderId ?? widget.orderId;
+    if (activeOrderId != null) {
+      await provider.getOrderById(activeOrderId);
+      final order = provider.selectedOrder;
+      if (order != null) {
+        await _loadOrderDetails(order.clientId, order.id);
+      }
+    } else if (widget.orderNumber != null) {
+      await provider.getOrderByNumber(widget.orderNumber!);
+      final order = provider.selectedOrder;
+      if (order != null) {
+        await _loadOrderDetails(order.clientId, order.id);
+      }
+    }
 
-    final order = provider.selectedOrder;
-    if (order != null) {
-      await _loadOrderDetails(order.clientId, order.id);
-    } else if (mounted) {
+    if (mounted) {
       setState(() => _isRefreshingOrder = false);
+    }
+  }
+
+  Future<void> _launchPhoneCall(String phone) async {
+    final uri = Uri(scheme: 'tel', path: phone.trim());
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
     }
   }
 
@@ -284,16 +386,17 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
         final order = provider.selectedOrder;
         final isLoading = provider.isLoading;
 
+        final displayOrder = order ?? (_groupOrders != null && _groupOrders!.isNotEmpty ? _groupOrders!.first : null);
         final activeOrderId = _effectiveOrderId ?? widget.orderId;
-        final displayOrderNumber = order?.orderNumber ?? widget.orderNumber;
+        final displayOrderNumber = displayOrder?.orderNumber ?? widget.orderNumber;
         final titleId = displayOrderNumber ?? activeOrderId?.substring(0, 8);
         final titleText = titleId == null
             ? 'تتبع الطلب'
             : 'تتبع الطلب #$titleId';
 
         // تحميل تفاصيل الطلب عند توفره
-        if (order != null && _orderItems == null && !_isLoadingItems) {
-          Future.microtask(() => _loadOrderDetails(order.clientId, order.id));
+        if (displayOrder != null && _orderItems == null && !_isLoadingItems) {
+          Future.microtask(() => _loadOrderDetails(displayOrder.clientId, displayOrder.id));
         }
 
         return Scaffold(
@@ -314,7 +417,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
             maxWidth: 800,
             child: (isLoading || _isRefreshingOrder)
                 ? AppShimmer.centeredLines(context)
-                : order == null
+                : displayOrder == null
                 ? SafeArea(
                     child: RefreshIndicator(
                       onRefresh: _refreshSingleOrder,
@@ -323,7 +426,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                       ),
                     ),
                   )
-                : _buildTrackingContent(order, colorScheme),
+                : _buildTrackingContent(_groupOrders ?? [displayOrder], colorScheme),
           ),
         );
       },
@@ -374,28 +477,12 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
     );
   }
 
-  Widget _buildTrackingContent(OrderModel order, ColorScheme colorScheme) {
-    final status = OrderStatusExtension.fromDbValue(order.status.value);
+  Widget _buildTrackingContent(List<OrderModel> orders, ColorScheme colorScheme) {
+    final representativeOrder = orders.first;
+    final status = _getGroupStatus(orders);
 
     return RefreshIndicator(
-      onRefresh: () async {
-        if (mounted) {
-          setState(() => _isRefreshingOrder = true);
-        }
-        if (widget.orderNumber != null) {
-          await Provider.of<OrderProvider>(
-            context,
-            listen: false,
-          ).getOrderByNumber(widget.orderNumber!);
-        } else {
-          final idToRefresh = _effectiveOrderId ?? widget.orderId ?? order.id;
-          await Provider.of<OrderProvider>(
-            context,
-            listen: false,
-          ).getOrderById(idToRefresh);
-        }
-        await _loadOrderDetails(order.clientId, order.id);
-      },
+      onRefresh: _refreshSingleOrder,
       child: SafeArea(
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -407,33 +494,42 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
               _buildStatusSection(status, colorScheme),
               const SizedBox(height: 16),
 
-              // زر إلغاء الطلب - يظهر فقط قبل جاري التحضير
-              if (status == OrderStatus.pending ||
-                  status == OrderStatus.confirmed) ...[
-                _buildCancelOrderButton(order, colorScheme),
+              // زر إلغاء الطلب - يظهر فقط قبل جاري التحضير وإذا لم يتم إسناد كابتن بعد
+              if ((status == OrderStatus.pending ||
+                      status == OrderStatus.confirmed) &&
+                  !orders.any((o) => o.captainId != null && o.captainId!.isNotEmpty)) ...[
+                _buildCancelOrderButton(representativeOrder, colorScheme),
+                const SizedBox(height: 16),
+              ],
+
+              // زر إعادة إرسال الروشتة لصيدلية أخرى - يظهر فقط إذا كان الطلب ملغياً وهو طلب روشتة
+              if (status == OrderStatus.cancelled && _isPrescriptionOrder(representativeOrder)) ...[
+                _buildResendPrescriptionButton(representativeOrder, colorScheme),
                 const SizedBox(height: 16),
               ],
 
               // زر عرض الملخص - يظهر فقط بعد تأكيد الطلب (ليس في حالة pending أو cancelled)
               if (status != OrderStatus.pending &&
                   status != OrderStatus.cancelled) ...[
-                _buildSummaryButton(order, colorScheme),
+                _buildSummaryButton(representativeOrder, colorScheme),
                 const SizedBox(height: 24),
               ],
 
               // رقم الطلب
-              _buildOrderNumberSection(order, colorScheme),
+              _buildOrderNumberSection(orders, colorScheme),
               const SizedBox(height: 24),
 
               // تتبع الطلب
-              _buildTrackingSection(order, colorScheme),
+              _buildTrackingSection(representativeOrder, status, colorScheme),
               const SizedBox(height: 24),
 
-              // المنتجات
+              // المنتجات والمتاجر
               if (_isLoadingItems)
                 AppShimmer.centeredLines(context)
               else if (_orderItems != null && _orderItems!.isNotEmpty) ...[
                 _buildProductsSection(colorScheme),
+                const SizedBox(height: 24),
+                _buildInvoiceSection(orders, colorScheme),
                 const SizedBox(height: 24),
               ],
 
@@ -444,20 +540,92 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
               ],
 
               // عنوان التوصيل
-              _buildAddressSection(order, colorScheme),
+              _buildAddressSection(representativeOrder, colorScheme),
               const SizedBox(height: 24),
 
               // طريقة الدفع
-              _buildPaymentSection(order, colorScheme),
+              _buildPaymentSection(representativeOrder, colorScheme),
               const SizedBox(height: 24),
 
-              // تعليمات التوصيل
-              if (order.deliveryNotes?.isNotEmpty == true) ...[
-                _buildDeliveryNotesSection(order, colorScheme),
-                const SizedBox(height: 24),
-              ],
+
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  bool _isPrescriptionOrder(OrderModel order) {
+    return order.prescriptionUrl != null && order.prescriptionUrl!.isNotEmpty;
+  }
+
+  String? _getPrescriptionUrl(OrderModel order) {
+    return order.prescriptionUrl;
+  }
+
+  String _cleanNotes(OrderModel order) {
+    return order.deliveryNotes ?? '';
+  }
+
+  void _showZoomableImageDialog(String url) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.all(10),
+          backgroundColor: Colors.transparent,
+          child: Stack(
+            alignment: Alignment.topRight,
+            children: [
+              InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 4.0,
+                child: Image.network(
+                  url,
+                  fit: BoxFit.contain,
+                  width: double.infinity,
+                  height: double.infinity,
+                ),
+              ),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: CircleAvatar(
+                  backgroundColor: Colors.black.withValues(alpha: 0.6),
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildResendPrescriptionButton(OrderModel order, ColorScheme colorScheme) {
+    return SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        onPressed: () {
+          final url = _getPrescriptionUrl(order);
+          final notes = _cleanNotes(order);
+          Navigator.pushNamed(
+            context,
+            AppRoutes.uploadPrescription,
+            arguments: {
+              'prescriptionUrl': url,
+              'initialNotes': notes,
+            },
+          );
+        },
+        icon: const Icon(Icons.refresh_rounded),
+        label: const Text('طلب من صيدلية أخرى 🔄'),
+        style: FilledButton.styleFrom(
+          backgroundColor: colorScheme.primary,
+          padding: const EdgeInsets.symmetric(vertical: 14),
         ),
       ),
     );
@@ -495,12 +663,12 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
-              'هل أنت متأكد من رغبتك في إلغاء هذا الطلب؟',
+              'هل أنت متأكد من رغبتك في إلغاء هذا الطلب؟ سيتم إلغاء جميع الطلبات في هذه المجموعة.',
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
             Text(
-              'رقم الطلب: ${order.orderNumber}',
+              'رقم الطلب: ${order.orderNumber ?? order.id.substring(0, 8)}',
               style: TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Theme.of(context).colorScheme.primary,
@@ -557,6 +725,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
               behavior: SnackBarBehavior.floating,
             ),
           );
+          _refreshSingleOrder();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -605,7 +774,11 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   }
 
   // رقم الطلب - قابل للنسخ
-  Widget _buildOrderNumberSection(OrderModel order, ColorScheme colorScheme) {
+  Widget _buildOrderNumberSection(List<OrderModel> orders, ColorScheme colorScheme) {
+    final displayNumbers = orders
+        .map((o) => '#${o.orderNumber ?? o.id.substring(0, 8).toUpperCase()}')
+        .join(' | ');
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -622,7 +795,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'رقم الطلب',
+                  orders.length > 1 ? 'أرقام الطلبات' : 'رقم الطلب',
                   style: TextStyle(
                     fontSize: 12,
                     color: colorScheme.onSurfaceVariant,
@@ -630,9 +803,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '#${order.orderNumber ?? order.id.substring(0, 13).toUpperCase()}',
+                  displayNumbers,
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 0.5,
                   ),
@@ -642,10 +815,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
           ),
           IconButton(
             onPressed: () {
-              // نسخ رقم الطلب
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('تم نسخ رقم الطلب'),
+                  content: Text('تم نسخ أرقام الطلبات'),
                   duration: Duration(seconds: 2),
                 ),
               );
@@ -760,41 +932,6 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
     );
   }
 
-  // تعليمات التوصيل
-  Widget _buildDeliveryNotesSection(OrderModel order, ColorScheme colorScheme) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: colorScheme.primaryContainer.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.primary.withValues(alpha: 0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.note_rounded, color: colorScheme.primary, size: 20),
-              const SizedBox(width: 8),
-              Text(
-                'تعليمات التوصيل',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.onSurface,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            order.deliveryNotes!,
-            style: const TextStyle(fontSize: 14, height: 1.5),
-          ),
-        ],
-      ),
-    );
-  }
 
   // Bottom Sheet للملخص والفاتورة
   Future<void> _showSummaryBottomSheet(
@@ -940,7 +1077,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                               ],
 
                               // الفاتورة
-                              _buildInvoiceSection(order, colorScheme),
+                              if (_groupOrders != null)
+                                _buildInvoiceSection(_groupOrders!, colorScheme),
                             ],
                           ),
                   ),
@@ -954,6 +1092,10 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
   }
 
   Widget _buildBottomSheetProductsSection(ColorScheme colorScheme) {
+    if (_groupOrders == null || _groupOrders!.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -976,22 +1118,78 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
           ],
         ),
         const SizedBox(height: 12),
-        Container(
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            children: _orderItems!
-                .map((item) => _buildProductItem(item, colorScheme))
-                .toList(),
-          ),
-        ),
+        ..._groupOrders!.map((order) {
+          final storeItems = _orderItems
+                  ?.where((item) => item.orderId == order.id)
+                  .toList() ??
+              [];
+          if (storeItems.isEmpty) return const SizedBox.shrink();
+
+          return Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.2),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Text(
+                    order.storeName ?? 'المتجر',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                ),
+                const Divider(height: 1),
+                ...storeItems.map((item) => _buildProductItem(item, colorScheme)),
+              ],
+            ),
+          );
+        }),
       ],
     );
   }
 
-  Widget _buildInvoiceSection(OrderModel order, ColorScheme colorScheme) {
+  Widget _buildInvoiceSection(List<OrderModel> orders, ColorScheme colorScheme) {
+    double subtotal = 0.0;
+    double deliveryFee = 0.0;
+    double taxAmount = 0.0;
+    double discountAmount = 0.0;
+    final couponCodes = <String>{};
+
+    for (final o in orders) {
+      deliveryFee += o.deliveryFee;
+      taxAmount += o.taxAmount;
+      discountAmount += o.discountAmount;
+      if (o.couponCode != null && o.couponCode!.isNotEmpty) {
+        couponCodes.add(o.couponCode!);
+      }
+    }
+
+    if (_orderItems != null && _orderItems!.isNotEmpty) {
+      subtotal = _orderItems!.fold<double>(
+        0.0,
+        (sum, item) => sum + item.totalPrice,
+      );
+    } else {
+      for (final o in orders) {
+        subtotal += (o.totalAmount + o.discountAmount - o.deliveryFee - o.taxAmount);
+      }
+    }
+
+    final totalAmount = orders.fold<double>(
+      0.0,
+      (sum, o) => sum + o.totalAmount,
+    );
+
+    final discountLabel = couponCodes.isNotEmpty
+        ? 'الخصم (${couponCodes.join(', ')})'
+        : 'الخصم';
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1017,16 +1215,17 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
             ],
           ),
           const Divider(height: 24),
-          _buildSummaryRow(
-            'المجموع الفرعي',
-            order.totalAmount - order.deliveryFee - order.taxAmount,
-          ),
+          _buildSummaryRow('المجموع الفرعي', subtotal),
+          if (discountAmount > 0) ...[
+            const SizedBox(height: 8),
+            _buildSummaryRow(discountLabel, discountAmount, isDiscount: true),
+          ],
           const SizedBox(height: 8),
-          _buildSummaryRow('رسوم التوصيل', order.deliveryFee),
+          _buildSummaryRow('رسوم التوصيل', deliveryFee),
           const SizedBox(height: 8),
-          _buildSummaryRow('الضرائب', order.taxAmount),
+          _buildSummaryRow('الضرائب', taxAmount),
           const Divider(height: 24),
-          _buildSummaryRow('الإجمالي', order.totalAmount, isTotal: true),
+          _buildSummaryRow('الإجمالي', totalAmount, isTotal: true),
         ],
       ),
     );
@@ -1081,8 +1280,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
     );
   }
 
-  Widget _buildTrackingSection(OrderModel order, ColorScheme colorScheme) {
-    final events = _buildTrackingEvents(order);
+  Widget _buildTrackingSection(OrderModel order, OrderStatus groupStatus, ColorScheme colorScheme) {
+    final events = _buildTrackingEvents(order, groupStatus);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1120,10 +1319,8 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
     );
   }
 
-  List<Map<String, dynamic>> _buildTrackingEvents(OrderModel order) {
-    final status = _simplifyStatusForClient(
-      OrderStatusExtension.fromDbValue(order.status.value),
-    );
+  List<Map<String, dynamic>> _buildTrackingEvents(OrderModel order, OrderStatus groupStatus) {
+    final status = _simplifyStatusForClient(groupStatus);
 
     int rankOf(OrderStatus s) {
       const flow = <OrderStatus>[
@@ -1329,19 +1526,54 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
           value: order.deliveryAddress,
         ),
         if (order.deliveryNotes?.isNotEmpty == true)
-          _buildInfoRow(
-            icon: Icons.notes_rounded,
-            label: 'ملاحظات',
-            value: order.deliveryNotes!,
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: colorScheme.primaryContainer.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: colorScheme.primary.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.note_rounded, color: colorScheme.primary, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'ملاحظات',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        order.deliveryNotes!,
+                        style: const TextStyle(fontSize: 14, height: 1.5),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
       ],
     );
   }
 
   Widget _buildProductsSection(ColorScheme colorScheme) {
-    if (_orderItems == null || _orderItems!.isEmpty) {
+    if (_groupOrders == null || _groupOrders!.isEmpty) {
       return const SizedBox.shrink();
     }
+
+    final hasPrescription = _groupOrders!.any((o) => _isPrescriptionOrder(o));
+    final hasExternalItems = _orderItems?.any((item) =>
+        item.selectedOptions != null && item.selectedOptions!['source'] == 'external') ?? false;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1349,13 +1581,13 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
         Row(
           children: [
             Icon(
-              Icons.shopping_bag_rounded,
+              Icons.storefront_rounded,
               color: colorScheme.primary,
               size: 20,
             ),
             const SizedBox(width: 8),
             Text(
-              'المنتجات',
+              'تفاصيل المتاجر والمنتجات',
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
@@ -1365,17 +1597,236 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
           ],
         ),
         const SizedBox(height: 12),
-        Container(
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-            borderRadius: BorderRadius.circular(12),
+        if (hasPrescription)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.orange.withValues(alpha: 0.2)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline_rounded, color: Colors.orange.shade800, size: 22),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'طلب أدوية بروشتة 📄',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                          color: Colors.orange.shade900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        hasExternalItems
+                            ? 'لقد قام الدليفري بتوفير الأدوية الناقصة من صيدليات خارجية وتحديث الفاتورة أدناه بالكامل.'
+                            : 'في حال وجود نواقص في الصيدلية، سيتولى الدليفري البحث عنها في صيدليات خارجية وإضافتها للفاتورة تلقائياً.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.orange.shade900,
+                          height: 1.5,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Builder(
+                        builder: (context) {
+                          final prescriptionOrder = _groupOrders!.firstWhere(
+                            (o) => _isPrescriptionOrder(o),
+                            orElse: () => _groupOrders!.first,
+                          );
+                          final url = _getPrescriptionUrl(prescriptionOrder);
+                          if (url == null || url.isEmpty) return const SizedBox.shrink();
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              const Text(
+                                'صورة الروشتة المرفقة:',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              GestureDetector(
+                                onTap: () => _showZoomableImageDialog(url),
+                                child: Container(
+                                  height: 150,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: Colors.orange.withValues(alpha: 0.2)),
+                                    color: Colors.white,
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(12),
+                                    child: Image.network(
+                                      url,
+                                      width: double.infinity,
+                                      fit: BoxFit.cover,
+                                      loadingBuilder: (context, child, loadingProgress) {
+                                        if (loadingProgress == null) return child;
+                                        return const Center(child: CircularProgressIndicator());
+                                      },
+                                      errorBuilder: (context, error, stackTrace) => const Icon(
+                                        Icons.broken_image_rounded,
+                                        size: 40,
+                                        color: Colors.red,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-          child: Column(
-            children: _orderItems!
-                .map((item) => _buildProductItem(item, colorScheme))
-                .toList(),
-          ),
-        ),
+        ..._groupOrders!.map((order) {
+          final storeItems = _orderItems
+                  ?.where((item) => item.orderId == order.id)
+                  .toList() ??
+              [];
+          final storeStatus = OrderStatusExtension.fromDbValue(order.status.value);
+          final statusColor = _getStatusColor(storeStatus);
+
+          return Card(
+            margin: const EdgeInsets.only(bottom: 16),
+            elevation: 0,
+            color: colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Store Header Row
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary.withValues(alpha: 0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.store_rounded,
+                          color: colorScheme.primary,
+                          size: 20,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              order.storeName ?? 'المتجر',
+                              style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                            ),
+                            if (order.storeCategory != null && order.storeCategory!.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                order.storeCategory!,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: colorScheme.onSurfaceVariant,
+                                  fontWeight: FontWeight.normal,
+                                ),
+                              ),
+                            ],
+                            if (order.storePhone?.isNotEmpty == true) ...[
+                              const SizedBox(height: 2),
+                              GestureDetector(
+                                onTap: () => _launchPhoneCall(order.storePhone!),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.phone_rounded,
+                                      size: 12,
+                                      color: colorScheme.primary,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      order.storePhone!,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: colorScheme.primary,
+                                        decoration: TextDecoration.underline,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      // Store Status Badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          order.statusDisplayName,
+                          style: TextStyle(
+                            color: statusColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 24),
+                  // Store Items
+                  if (storeItems.isEmpty)
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8.0),
+                        child: Text(
+                          'لا توجد منتجات محملة',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    ...storeItems.map(
+                      (item) => _buildProductItem(item, colorScheme),
+                    ),
+                ],
+              ),
+            ),
+          );
+        }),
       ],
     );
   }
@@ -1441,6 +1892,76 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                     color: colorScheme.onSurfaceVariant,
                   ),
                 ),
+                if (item.selectedOptions != null && item.selectedOptions!['source'] == 'external') ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.orange.shade200),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.local_shipping_rounded, color: Colors.orange.shade800, size: 10),
+                        const SizedBox(width: 4),
+                        Text(
+                          'شراء خارجي بواسطة الدليفري 🛵',
+                          style: TextStyle(
+                            color: Colors.orange.shade800,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                if (item.selectedOptions != null &&
+                    item.selectedOptions!.isNotEmpty) ...[
+                  Builder(
+                    builder: (context) {
+                      final Map<String, dynamic> selectedOpts = Map<String, dynamic>.from(item.selectedOptions ?? {});
+                      final attributes = selectedOpts.entries
+                          .where((e) => e.key != 'addons' && e.key != 'source')
+                          .map((e) => '${e.key}: ${e.value}')
+                          .join(' | ');
+                      final addonsList = selectedOpts['addons'] as List<dynamic>?;
+                      final addonsText = addonsList != null && addonsList.isNotEmpty
+                          ? 'إضافات: ${addonsList.map((a) => a['name']).join(', ')}'
+                          : '';
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (attributes.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              attributes,
+                              style: const TextStyle(
+                                color: Colors.blue,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                          if (addonsText.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              addonsText,
+                              style: const TextStyle(
+                                color: Colors.green,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+                ],
                 if (item.specialInstructions?.isNotEmpty == true) ...[
                   const SizedBox(height: 4),
                   Text(
@@ -1468,7 +1989,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
     );
   }
 
-  Widget _buildSummaryRow(String label, double amount, {bool isTotal = false}) {
+  Widget _buildSummaryRow(String label, double amount, {bool isTotal = false, bool isDiscount = false}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -1480,11 +2001,13 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
           ),
         ),
         Text(
-          '${amount.toStringAsFixed(2)} ج.م',
+          isDiscount ? '-${amount.toStringAsFixed(2)} ج.م' : '${amount.toStringAsFixed(2)} ج.م',
           style: TextStyle(
             fontSize: isTotal ? 18 : 14,
             fontWeight: FontWeight.bold,
-            color: isTotal ? AppColors.primary : Colors.black87,
+            color: isTotal 
+                ? AppColors.primary 
+                : (isDiscount ? Colors.red[700] : Colors.black87),
           ),
         ),
       ],
@@ -1632,6 +2155,29 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
       final ttf = await PdfGoogleFonts.cairoRegular();
       final ttfBold = await PdfGoogleFonts.cairoBold();
 
+      final List<OrderModel> pdfOrders = _groupOrders ?? [order];
+      double subtotal = 0.0;
+      double deliveryFee = 0.0;
+      double taxAmount = 0.0;
+      double discountAmount = 0.0;
+      double totalAmount = 0.0;
+      final couponCodes = <String>{};
+
+      for (final o in pdfOrders) {
+        subtotal += (o.totalAmount + o.discountAmount - o.deliveryFee - o.taxAmount);
+        deliveryFee += o.deliveryFee;
+        taxAmount += o.taxAmount;
+        discountAmount += o.discountAmount;
+        totalAmount += o.totalAmount;
+        if (o.couponCode != null && o.couponCode!.isNotEmpty) {
+          couponCodes.add(o.couponCode!);
+        }
+      }
+
+      final displayOrderNumber = pdfOrders
+          .map((o) => o.orderNumber ?? o.id.substring(0, 8).toUpperCase())
+          .join(' - ');
+
       // إضافة صفحة الفاتورة
       pdf.addPage(
         pw.Page(
@@ -1639,6 +2185,133 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
           textDirection: pw.TextDirection.rtl,
           theme: pw.ThemeData.withFont(base: ttf, bold: ttfBold),
           build: (pw.Context context) {
+            final List<pw.TableRow> tableRows = [];
+            // Header Row
+            tableRows.add(
+              pw.TableRow(
+                decoration: pw.BoxDecoration(
+                  color: PdfColor.fromHex('#F5F5F5'),
+                ),
+                children: [
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(8),
+                    child: pw.Text(
+                      'المجموع',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                  ),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(8),
+                    child: pw.Text(
+                      'السعر',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                  ),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(8),
+                    child: pw.Text(
+                      'الكمية',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                  ),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(8),
+                    child: pw.Text(
+                      'المنتج',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                      textAlign: pw.TextAlign.right,
+                    ),
+                  ),
+                ],
+              ),
+            );
+
+            // Populate rows grouped by store
+            for (final ord in pdfOrders) {
+              final storeItems = _orderItems?.where((item) => item.orderId == ord.id).toList() ?? [];
+              if (storeItems.isEmpty) continue;
+
+              if (pdfOrders.length > 1) {
+                // Add store header row
+                tableRows.add(
+                  pw.TableRow(
+                    decoration: pw.BoxDecoration(
+                      color: PdfColor.fromHex('#EEEEEE'),
+                    ),
+                    children: [
+                      pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('')),
+                      pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('')),
+                      pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('')),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          ord.storeName ?? 'المتجر',
+                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              for (final item in storeItems) {
+                tableRows.add(
+                  pw.TableRow(
+                    children: [
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          '${(item.productPrice * item.quantity).toStringAsFixed(2)} ج.م',
+                          style: const pw.TextStyle(fontSize: 10),
+                          textAlign: pw.TextAlign.center,
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          '${item.productPrice.toStringAsFixed(2)} ج.م',
+                          style: const pw.TextStyle(fontSize: 10),
+                          textAlign: pw.TextAlign.center,
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          '${item.quantity}',
+                          style: const pw.TextStyle(fontSize: 10),
+                          textAlign: pw.TextAlign.center,
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          item.productName,
+                          style: const pw.TextStyle(fontSize: 10),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+            }
+
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
@@ -1684,9 +2357,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             ),
                           ),
                           pw.Text(
-                            '#${order.orderNumber ?? order.id.substring(0, 8)}',
+                            '#$displayOrderNumber',
                             style: pw.TextStyle(
-                              fontSize: 18,
+                              fontSize: 15,
                               fontWeight: pw.FontWeight.bold,
                               color: PdfColors.white,
                             ),
@@ -1791,99 +2464,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                   border: pw.TableBorder.all(
                     color: PdfColor.fromHex('#E0E0E0'),
                   ),
-                  children: [
-                    // Header
-                    pw.TableRow(
-                      decoration: pw.BoxDecoration(
-                        color: PdfColor.fromHex('#F5F5F5'),
-                      ),
-                      children: [
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'المجموع',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                            textAlign: pw.TextAlign.center,
-                          ),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'السعر',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                            textAlign: pw.TextAlign.center,
-                          ),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'الكمية',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                            textAlign: pw.TextAlign.center,
-                          ),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'المنتج',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                            textAlign: pw.TextAlign.right,
-                          ),
-                        ),
-                      ],
-                    ),
-                    // Products
-                    ...(_orderItems ?? []).map(
-                      (item) => pw.TableRow(
-                        children: [
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              '${(item.productPrice * item.quantity).toStringAsFixed(2)} ج.م',
-                              style: const pw.TextStyle(fontSize: 10),
-                              textAlign: pw.TextAlign.center,
-                            ),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              '${item.productPrice.toStringAsFixed(2)} ج.م',
-                              style: const pw.TextStyle(fontSize: 10),
-                              textAlign: pw.TextAlign.center,
-                            ),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              '${item.quantity}',
-                              style: const pw.TextStyle(fontSize: 10),
-                              textAlign: pw.TextAlign.center,
-                            ),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              item.productName,
-                              style: const pw.TextStyle(fontSize: 10),
-                              textAlign: pw.TextAlign.right,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                  children: tableRows,
                 ),
 
                 pw.SizedBox(height: 20),
@@ -1905,11 +2486,36 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                           pw.Text(
-                            '${(order.totalAmount - order.deliveryFee - order.taxAmount).toStringAsFixed(2)} ج.م',
+                            '${subtotal.toStringAsFixed(2)} ج.م',
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                         ],
                       ),
+                      if (discountAmount > 0) ...[
+                        pw.SizedBox(height: 4),
+                        pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pw.Text(
+                              couponCodes.isNotEmpty
+                                  ? 'الخصم (${couponCodes.join(', ')}):'
+                                  : 'الخصم:',
+                              style: pw.TextStyle(
+                                fontSize: 11,
+                                color: PdfColor.fromHex('#D32F2F'),
+                              ),
+                            ),
+                            pw.Text(
+                              '-${discountAmount.toStringAsFixed(2)} ج.م',
+                              style: pw.TextStyle(
+                                fontSize: 11,
+                                color: PdfColor.fromHex('#D32F2F'),
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       pw.SizedBox(height: 4),
                       pw.Row(
                         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -1919,7 +2525,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                           pw.Text(
-                            '${order.deliveryFee.toStringAsFixed(2)} ج.م',
+                            '${deliveryFee.toStringAsFixed(2)} ج.م',
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                         ],
@@ -1933,7 +2539,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                           pw.Text(
-                            '${order.taxAmount.toStringAsFixed(2)} ج.م',
+                            '${taxAmount.toStringAsFixed(2)} ج.م',
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                         ],
@@ -1950,7 +2556,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             ),
                           ),
                           pw.Text(
-                            '${order.totalAmount.toStringAsFixed(2)} ج.م',
+                            '${totalAmount.toStringAsFixed(2)} ج.م',
                             style: pw.TextStyle(
                               fontSize: 14,
                               fontWeight: pw.FontWeight.bold,
@@ -1984,7 +2590,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
       // عرض/تنزيل الـ PDF
       await Printing.layoutPdf(
         onLayout: (PdfPageFormat format) async => pdf.save(),
-        name: 'فاتورة_طلب_${order.orderNumber ?? order.id.substring(0, 8)}.pdf',
+        name: 'فاتورة_طلب_${pdfOrders.map((o) => o.orderNumber ?? o.id.substring(0, 8)).join('_')}.pdf',
       );
 
       if (mounted) {
@@ -2030,6 +2636,29 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
       final ttf = await PdfGoogleFonts.cairoRegular();
       final ttfBold = await PdfGoogleFonts.cairoBold();
 
+      final List<OrderModel> pdfOrders = _groupOrders ?? [order];
+      double subtotal = 0.0;
+      double deliveryFee = 0.0;
+      double taxAmount = 0.0;
+      double discountAmount = 0.0;
+      double totalAmount = 0.0;
+      final couponCodes = <String>{};
+
+      for (final o in pdfOrders) {
+        subtotal += (o.totalAmount + o.discountAmount - o.deliveryFee - o.taxAmount);
+        deliveryFee += o.deliveryFee;
+        taxAmount += o.taxAmount;
+        discountAmount += o.discountAmount;
+        totalAmount += o.totalAmount;
+        if (o.couponCode != null && o.couponCode!.isNotEmpty) {
+          couponCodes.add(o.couponCode!);
+        }
+      }
+
+      final displayOrderNumber = pdfOrders
+          .map((o) => o.orderNumber ?? o.id.substring(0, 8).toUpperCase())
+          .join(' - ');
+
       // إضافة صفحة الفاتورة (نفس الكود من _generateInvoicePDF)
       pdf.addPage(
         pw.Page(
@@ -2037,6 +2666,133 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
           textDirection: pw.TextDirection.rtl,
           theme: pw.ThemeData.withFont(base: ttf, bold: ttfBold),
           build: (pw.Context context) {
+            final List<pw.TableRow> tableRows = [];
+            // Header Row
+            tableRows.add(
+              pw.TableRow(
+                decoration: pw.BoxDecoration(
+                  color: PdfColor.fromHex('#F5F5F5'),
+                ),
+                children: [
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(8),
+                    child: pw.Text(
+                      'المجموع',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                  ),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(8),
+                    child: pw.Text(
+                      'السعر',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                  ),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(8),
+                    child: pw.Text(
+                      'الكمية',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                  ),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.all(8),
+                    child: pw.Text(
+                      'المنتج',
+                      style: pw.TextStyle(
+                        fontWeight: pw.FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                      textAlign: pw.TextAlign.right,
+                    ),
+                  ),
+                ],
+              ),
+            );
+
+            // Populate rows grouped by store
+            for (final ord in pdfOrders) {
+              final storeItems = _orderItems?.where((item) => item.orderId == ord.id).toList() ?? [];
+              if (storeItems.isEmpty) continue;
+
+              if (pdfOrders.length > 1) {
+                // Add store header row
+                tableRows.add(
+                  pw.TableRow(
+                    decoration: pw.BoxDecoration(
+                      color: PdfColor.fromHex('#EEEEEE'),
+                    ),
+                    children: [
+                      pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('')),
+                      pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('')),
+                      pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text('')),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(6),
+                        child: pw.Text(
+                          ord.storeName ?? 'المتجر',
+                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+
+              for (final item in storeItems) {
+                tableRows.add(
+                  pw.TableRow(
+                    children: [
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          '${(item.productPrice * item.quantity).toStringAsFixed(2)} ج.م',
+                          style: const pw.TextStyle(fontSize: 10),
+                          textAlign: pw.TextAlign.center,
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          '${item.productPrice.toStringAsFixed(2)} ج.م',
+                          style: const pw.TextStyle(fontSize: 10),
+                          textAlign: pw.TextAlign.center,
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          '${item.quantity}',
+                          style: const pw.TextStyle(fontSize: 10),
+                          textAlign: pw.TextAlign.center,
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          item.productName,
+                          style: const pw.TextStyle(fontSize: 10),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+            }
+
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
@@ -2082,9 +2838,9 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             ),
                           ),
                           pw.Text(
-                            '#${order.orderNumber ?? order.id.substring(0, 8)}',
+                            '#$displayOrderNumber',
                             style: pw.TextStyle(
-                              fontSize: 18,
+                              fontSize: 15,
                               fontWeight: pw.FontWeight.bold,
                               color: PdfColors.white,
                             ),
@@ -2193,99 +2949,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                   border: pw.TableBorder.all(
                     color: PdfColor.fromHex('#E0E0E0'),
                   ),
-                  children: [
-                    // Header
-                    pw.TableRow(
-                      decoration: pw.BoxDecoration(
-                        color: PdfColor.fromHex('#F5F5F5'),
-                      ),
-                      children: [
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'المجموع',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                            textAlign: pw.TextAlign.center,
-                          ),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'السعر',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                            textAlign: pw.TextAlign.center,
-                          ),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'الكمية',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                            textAlign: pw.TextAlign.center,
-                          ),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(
-                            'المنتج',
-                            style: pw.TextStyle(
-                              fontWeight: pw.FontWeight.bold,
-                              fontSize: 11,
-                            ),
-                            textAlign: pw.TextAlign.right,
-                          ),
-                        ),
-                      ],
-                    ),
-                    // Products
-                    ...(_orderItems ?? []).map(
-                      (item) => pw.TableRow(
-                        children: [
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              '${(item.productPrice * item.quantity).toStringAsFixed(2)} ج.م',
-                              style: const pw.TextStyle(fontSize: 10),
-                              textAlign: pw.TextAlign.center,
-                            ),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              '${item.productPrice.toStringAsFixed(2)} ج.م',
-                              style: const pw.TextStyle(fontSize: 10),
-                              textAlign: pw.TextAlign.center,
-                            ),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              '${item.quantity}',
-                              style: const pw.TextStyle(fontSize: 10),
-                              textAlign: pw.TextAlign.center,
-                            ),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text(
-                              item.productName,
-                              style: const pw.TextStyle(fontSize: 10),
-                              textAlign: pw.TextAlign.right,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                  children: tableRows,
                 ),
 
                 pw.SizedBox(height: 20),
@@ -2307,11 +2971,36 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                           pw.Text(
-                            '${(order.totalAmount - order.deliveryFee - order.taxAmount).toStringAsFixed(2)} ج.م',
+                            '${subtotal.toStringAsFixed(2)} ج.م',
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                         ],
                       ),
+                      if (discountAmount > 0) ...[
+                        pw.SizedBox(height: 4),
+                        pw.Row(
+                          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                          children: [
+                            pw.Text(
+                              couponCodes.isNotEmpty
+                                  ? 'الخصم (${couponCodes.join(', ')}):'
+                                  : 'الخصم:',
+                              style: pw.TextStyle(
+                                fontSize: 11,
+                                color: PdfColor.fromHex('#D32F2F'),
+                              ),
+                            ),
+                            pw.Text(
+                              '-${discountAmount.toStringAsFixed(2)} ج.م',
+                              style: pw.TextStyle(
+                                fontSize: 11,
+                                color: PdfColor.fromHex('#D32F2F'),
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                       pw.SizedBox(height: 4),
                       pw.Row(
                         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -2321,7 +3010,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                           pw.Text(
-                            '${order.deliveryFee.toStringAsFixed(2)} ج.م',
+                            '${deliveryFee.toStringAsFixed(2)} ج.م',
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                         ],
@@ -2335,7 +3024,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                           pw.Text(
-                            '${order.taxAmount.toStringAsFixed(2)} ج.م',
+                            '${taxAmount.toStringAsFixed(2)} ج.م',
                             style: const pw.TextStyle(fontSize: 11),
                           ),
                         ],
@@ -2352,7 +3041,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
                             ),
                           ),
                           pw.Text(
-                            '${order.totalAmount.toStringAsFixed(2)} ج.م',
+                            '${totalAmount.toStringAsFixed(2)} ج.م',
                             style: pw.TextStyle(
                               fontSize: 14,
                               fontWeight: pw.FontWeight.bold,
@@ -2387,7 +3076,7 @@ class _OrderTrackingScreenState extends State<OrderTrackingScreen> {
       await Printing.sharePdf(
         bytes: await pdf.save(),
         filename:
-            'فاتورة_طلب_${order.orderNumber ?? order.id.substring(0, 8)}.pdf',
+            'فاتورة_طلب_${pdfOrders.map((o) => o.orderNumber ?? o.id.substring(0, 8)).join('_')}.pdf',
       );
 
       if (mounted) {

@@ -1,6 +1,7 @@
 Options -MultiViews
 
 RewriteEngine On
+RewriteBase /market/
 
 # إعادة توجيه كل المسارات لـ index.html (SPA Flutter Web)
 RewriteCond %{REQUEST_FILENAME} !-f

@@ -4,6 +4,7 @@ class DeliveryCompanyModel extends Equatable {
   final String id;
   final String? adminId;
   final String companyName;
+  final String? companyNameEn;
   final String? ownerEmail;
   final String? ownerName;
   final String? ownerPhone;
@@ -20,6 +21,7 @@ class DeliveryCompanyModel extends Equatable {
     required this.id,
     this.adminId,
     required this.companyName,
+    this.companyNameEn,
     this.ownerEmail,
     this.ownerName,
     this.ownerPhone,
@@ -37,6 +39,7 @@ class DeliveryCompanyModel extends Equatable {
     String? id,
     String? adminId,
     String? companyName,
+    String? companyNameEn,
     String? ownerEmail,
     String? ownerName,
     String? ownerPhone,
@@ -53,6 +56,7 @@ class DeliveryCompanyModel extends Equatable {
       id: id ?? this.id,
       adminId: adminId ?? this.adminId,
       companyName: companyName ?? this.companyName,
+      companyNameEn: companyNameEn ?? this.companyNameEn,
       ownerEmail: ownerEmail ?? this.ownerEmail,
       ownerName: ownerName ?? this.ownerName,
       ownerPhone: ownerPhone ?? this.ownerPhone,
@@ -72,6 +76,7 @@ class DeliveryCompanyModel extends Equatable {
       id: map['id'] as String? ?? '',
       adminId: map['admin_id'] as String?,
       companyName: map['company_name'] as String? ?? '',
+      companyNameEn: map['company_name_en'] as String?,
       ownerEmail: map['owner_email'] as String?,
       ownerName: map['owner_name'] as String?,
       ownerPhone: map['owner_phone'] as String?,
@@ -95,6 +100,7 @@ class DeliveryCompanyModel extends Equatable {
       'id': id,
       'admin_id': adminId,
       'company_name': companyName,
+      'company_name_en': companyNameEn,
       'owner_email': ownerEmail,
       'owner_name': ownerName,
       'owner_phone': ownerPhone,
@@ -114,6 +120,7 @@ class DeliveryCompanyModel extends Equatable {
     id,
     adminId,
     companyName,
+    companyNameEn,
     ownerEmail,
     ownerName,
     ownerPhone,

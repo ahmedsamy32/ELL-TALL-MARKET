@@ -49,21 +49,24 @@ class AppShimmer {
         final content = Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                circle(context, size: 40),
-                const SizedBox(height: 16),
-                for (int i = 0; i < lines; i++) ...[
-                  box(
-                    context,
-                    width: maxWidth * (i == 0 ? 1.0 : (i == 1 ? 0.85 : 0.7)),
-                    height: 12,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  const SizedBox(height: 10),
+            child: SingleChildScrollView(
+              physics: const NeverScrollableScrollPhysics(),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  circle(context, size: 40),
+                  const SizedBox(height: 16),
+                  for (int i = 0; i < lines; i++) ...[
+                    box(
+                      context,
+                      width: maxWidth * (i == 0 ? 1.0 : (i == 1 ? 0.85 : 0.7)),
+                      height: 12,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         );

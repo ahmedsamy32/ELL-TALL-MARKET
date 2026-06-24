@@ -226,12 +226,84 @@ class CartService {
         }
       }
 
+      // البحث عن المتغير المطابق وتحديث السعر الأساسي ومخزونه إن وُجد
+      double basePrice = (product['price'] as num).toDouble();
+      int? variantStock;
+      if (product['variants'] != null && selectedOptions != null) {
+        try {
+          final List<dynamic> variantsJson = product['variants'] as List<dynamic>;
+          final Map<String, String> attributeSelections = {};
+          selectedOptions.forEach((key, val) {
+            if (key != 'addons' && val is String) {
+              attributeSelections[key] = val;
+            }
+          });
+
+          for (final variantMap in variantsJson) {
+            if (variantMap is! Map) continue;
+            final isActive = variantMap['is_active'] as bool? ?? true;
+            if (!isActive) continue;
+
+            final selectedOptsList = variantMap['selected_options'] as List<dynamic>?;
+            if (selectedOptsList == null) continue;
+            if (selectedOptsList.length != attributeSelections.length) continue;
+
+            bool matches = true;
+            for (final opt in selectedOptsList) {
+              if (opt is! Map) {
+                matches = false;
+                break;
+              }
+              final name = opt['name']?.toString();
+              final value = opt['value']?.toString();
+              if (attributeSelections[name] != value) {
+                matches = false;
+                break;
+              }
+            }
+
+            if (matches) {
+              final variantPrice = variantMap['price'];
+              if (variantPrice != null) {
+                basePrice = double.parse(variantPrice.toString());
+              }
+              final stockVal = variantMap['stock_quantity'];
+              if (stockVal != null) {
+                variantStock = int.tryParse(stockVal.toString());
+              }
+              break;
+            }
+          }
+        } catch (e, stack) {
+          AppLogger.error('خطأ أثناء مطابقة متغير المنتج وحساب سعره الأساسي ومخزونه', e, stack);
+        }
+      }
+
+      final int maxStock = variantStock ?? (product['stock_quantity'] as int? ?? 0);
+
+      // حساب سعر الإضافات إن وُجدت
+      double addonsPrice = 0.0;
+      if (selectedOptions != null && selectedOptions['addons'] != null) {
+        try {
+          final addonsList = selectedOptions['addons'] as List;
+          for (final addon in addonsList) {
+            addonsPrice += double.tryParse((addon['price'] ?? 0).toString()) ?? 0.0;
+          }
+        } catch (_) {}
+      }
+      final singleItemPrice = basePrice + addonsPrice;
+
+      // تحقق من توفر الكمية المطلوبة للمرة الأولى
+      if (quantity > maxStock) {
+        throw Exception('الكمية المطلوبة تتجاوز المخزون المتاح');
+      }
+
       if (existingItem != null) {
         // تحديث الكمية للمنتج الموجود
         final newQuantity = (existingItem['quantity'] as int) + quantity;
 
         // التحقق من توفر الكمية الجديدة
-        if (newQuantity > (product['stock_quantity'] as int)) {
+        if (newQuantity > maxStock) {
           throw Exception('الكمية المطلوبة تتجاوز المخزون المتاح');
         }
 
@@ -239,6 +311,7 @@ class CartService {
             .from('cart_items')
             .update({
               'quantity': newQuantity,
+              'total_price': singleItemPrice * newQuantity,
               'updated_at': DateTime.now().toIso8601String(),
             })
             .eq('id', existingItem['id'])
@@ -254,10 +327,10 @@ class CartService {
           'product_id': productId,
           'store_id': product['store_id'],
           'product_name': product['name'],
-          'product_price': product['price'],
+          'product_price': singleItemPrice,
           'product_image': product['image_url'],
           'quantity': quantity,
-          'total_price': (product['price'] as num) * quantity,
+          'total_price': singleItemPrice * quantity,
           'selected_options': selectedOptions ?? {},
         };
 
@@ -319,23 +392,76 @@ class CartService {
       // التحقق من ملكية العنصر للمستخدم
       final cartItem = await _supabase
           .from('cart_items')
-          .select('*, carts!inner(user_id), products(stock_quantity)')
+          .select('*, carts!inner(user_id), products(stock_quantity, variants)')
           .eq('id', cartItemId)
           .eq('carts.user_id', userId)
           .single();
 
+      final productMap = cartItem['products'] as Map<String, dynamic>?;
+      final productStock = productMap?['stock_quantity'] as int? ?? 0;
+      final productVariants = productMap?['variants'] as List<dynamic>?;
+      final selectedOptions = cartItem['selected_options'] as Map<String, dynamic>?;
+
+      int maxStock = productStock;
+      if (productVariants != null && selectedOptions != null) {
+        try {
+          final Map<String, String> attributeSelections = {};
+          selectedOptions.forEach((key, val) {
+            if (key != 'addons' && val is String) {
+              attributeSelections[key] = val;
+            }
+          });
+
+          for (final variantMap in productVariants) {
+            if (variantMap is! Map) continue;
+            final isActive = variantMap['is_active'] as bool? ?? true;
+            if (!isActive) continue;
+
+            final selectedOptsList = variantMap['selected_options'] as List<dynamic>?;
+            if (selectedOptsList == null) continue;
+            if (selectedOptsList.length != attributeSelections.length) continue;
+
+            bool matches = true;
+            for (final opt in selectedOptsList) {
+              if (opt is! Map) {
+                matches = false;
+                break;
+              }
+              final name = opt['name']?.toString();
+              final value = opt['value']?.toString();
+              if (attributeSelections[name] != value) {
+                matches = false;
+                break;
+              }
+            }
+
+            if (matches) {
+              final stockVal = variantMap['stock_quantity'];
+              if (stockVal != null) {
+                maxStock = int.parse(stockVal.toString());
+              }
+              break;
+            }
+          }
+        } catch (e, stack) {
+          AppLogger.error('خطأ أثناء مطابقة متغير المنتج لحساب مخزونه الأقصى عند تحديث الكمية', e, stack);
+        }
+      }
+
       // التحقق من توفر الكمية
-      final productStock = cartItem['products']['stock_quantity'] as int;
-      if (newQuantity > productStock) {
+      if (newQuantity > maxStock) {
         throw Exception(
-          'الكمية المطلوبة تتجاوز المخزون المتاح ($productStock)',
+          'الكمية المطلوبة تتجاوز المخزون المتاح ($maxStock)',
         );
       }
+
+      final double productPrice = (cartItem['product_price'] as num?)?.toDouble() ?? 0.0;
 
       final response = await _supabase
           .from('cart_items')
           .update({
             'quantity': newQuantity,
+            'total_price': productPrice * newQuantity,
             'updated_at': DateTime.now().toIso8601String(),
           })
           .eq('id', cartItemId)
@@ -678,7 +804,7 @@ class CartService {
       final product = await _supabase
           .from('products')
           .select('''
-            id, store_id, stock_quantity, in_stock, is_active, price, name, image_url,
+            id, store_id, stock_quantity, in_stock, is_active, price, name, image_url, variants,
             stores!inner (
               id,
               name,
@@ -692,7 +818,6 @@ class CartService {
 
       if (!(product['is_active'] as bool)) return null;
       if (!(product['in_stock'] as bool)) return null;
-      if ((product['stock_quantity'] as int) < requestedQuantity) return null;
 
       return product;
     } catch (e) {

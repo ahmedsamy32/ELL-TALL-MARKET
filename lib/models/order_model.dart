@@ -40,6 +40,9 @@ class OrderModel with BaseModelMixin {
   final String? storePhone; // رقم هاتف المتجر (من join)
   final double? storeLatitude; // خط عرض المتجر (من join)
   final double? storeLongitude; // خط طول المتجر (من join)
+  final String? storeCity; // مدينة المتجر (من join)
+  final String? storeGovernorate; // محافظة المتجر (من join)
+  final String? storeCategory; // فئة المتجر (من join)
   final String? clientName; // اسم العميل (من join)
   final String? clientPhone; // رقم هاتف العميل (من join)
   final List<String> productNames; // أسماء المنتجات (من order_items)
@@ -50,12 +53,16 @@ class OrderModel with BaseModelMixin {
   final double totalAmount; // DECIMAL(10,2) NOT NULL CHECK (total_amount >= 0)
   final double deliveryFee; // DECIMAL(10,2) DEFAULT 0
   final double taxAmount; // DECIMAL(10,2) DEFAULT 0
+  final String? couponCode; // كود الكوبون المطبق
+  final double discountAmount; // قيمة الخصم المطبق
+
 
   // معلومات التوصيل
   final String deliveryAddress; // TEXT NOT NULL
   final double? deliveryLatitude; // DECIMAL(10, 8)
   final double? deliveryLongitude; // DECIMAL(11, 8)
   final String? deliveryNotes; // TEXT
+  final String? prescriptionUrl; // TEXT
 
   // حالة الطلب
   final OrderStatus status; // order_status_enum DEFAULT 'pending'
@@ -87,6 +94,9 @@ class OrderModel with BaseModelMixin {
     this.storePhone,
     this.storeLatitude,
     this.storeLongitude,
+    this.storeCity,
+    this.storeGovernorate,
+    this.storeCategory,
     this.clientName,
     this.clientPhone,
     this.productNames = const [],
@@ -95,10 +105,13 @@ class OrderModel with BaseModelMixin {
     required this.totalAmount,
     required this.deliveryFee,
     required this.taxAmount,
+    this.couponCode,
+    this.discountAmount = 0.0,
     required this.deliveryAddress,
     this.deliveryLatitude,
     this.deliveryLongitude,
     this.deliveryNotes,
+    this.prescriptionUrl,
     required this.status,
     this.cancellationReason,
     required this.paymentMethod,
@@ -161,6 +174,9 @@ class OrderModel with BaseModelMixin {
       storePhone: storeData?['phone'] as String?,
       storeLatitude: (storeData?['latitude'] as num?)?.toDouble(),
       storeLongitude: (storeData?['longitude'] as num?)?.toDouble(),
+      storeCity: storeData?['city'] as String?,
+      storeGovernorate: storeData?['governorate'] as String?,
+      storeCategory: storeData?['category'] as String?,
       clientName:
           clientData?['full_name'] as String? ??
           profilesData?['full_name'] as String? ??
@@ -177,10 +193,13 @@ class OrderModel with BaseModelMixin {
       totalAmount: (map['total_amount'] as num).toDouble(),
       deliveryFee: (map['delivery_fee'] as num?)?.toDouble() ?? 0.0,
       taxAmount: (map['tax_amount'] as num?)?.toDouble() ?? 0.0,
+      couponCode: map['coupon_code'] as String?,
+      discountAmount: (map['discount_amount'] as num?)?.toDouble() ?? 0.0,
       deliveryAddress: map['delivery_address'] as String,
       deliveryLatitude: (map['delivery_latitude'] as num?)?.toDouble(),
       deliveryLongitude: (map['delivery_longitude'] as num?)?.toDouble(),
       deliveryNotes: map['delivery_notes'] as String?,
+      prescriptionUrl: map['prescription_url'] as String?,
       status: OrderStatus.fromString(map['status'] as String? ?? 'pending'),
       cancellationReason: map['cancellation_reason'] as String?,
       paymentMethod: PaymentMethod.fromString(
@@ -221,10 +240,13 @@ class OrderModel with BaseModelMixin {
       'total_amount': totalAmount,
       'delivery_fee': deliveryFee,
       'tax_amount': taxAmount,
+      'coupon_code': couponCode,
+      'discount_amount': discountAmount,
       'delivery_address': deliveryAddress,
       'delivery_latitude': deliveryLatitude,
       'delivery_longitude': deliveryLongitude,
       'delivery_notes': deliveryNotes,
+      'prescription_url': prescriptionUrl,
       'status': status.value,
       'payment_method': paymentMethod.value,
       'payment_status': paymentStatus.value,
@@ -246,10 +268,14 @@ class OrderModel with BaseModelMixin {
       'total_amount': totalAmount,
       'delivery_fee': deliveryFee,
       'tax_amount': taxAmount,
+      'coupon_code': couponCode,
+      'discount_amount': discountAmount,
       'delivery_address': deliveryAddress,
       'delivery_latitude': deliveryLatitude,
       'delivery_longitude': deliveryLongitude,
       'delivery_notes': deliveryNotes,
+      'prescription_url': prescriptionUrl,
+      'client_phone': clientPhone,
       'payment_method': paymentMethod.value,
       'payment_status': paymentStatus.value,
     };
@@ -264,6 +290,9 @@ class OrderModel with BaseModelMixin {
     String? storeName,
     String? storeAddress,
     String? storePhone,
+    String? storeCity,
+    String? storeGovernorate,
+    String? storeCategory,
     String? orderNumber,
     String? clientName,
     String? clientPhone,
@@ -272,10 +301,13 @@ class OrderModel with BaseModelMixin {
     double? totalAmount,
     double? deliveryFee,
     double? taxAmount,
+    String? couponCode,
+    double? discountAmount,
     String? deliveryAddress,
     double? deliveryLatitude,
     double? deliveryLongitude,
     String? deliveryNotes,
+    String? prescriptionUrl,
     OrderStatus? status,
     PaymentMethod? paymentMethod,
     PaymentStatus? paymentStatus,
@@ -295,6 +327,9 @@ class OrderModel with BaseModelMixin {
       storeName: storeName ?? this.storeName,
       storeAddress: storeAddress ?? this.storeAddress,
       storePhone: storePhone ?? this.storePhone,
+      storeCity: storeCity ?? this.storeCity,
+      storeGovernorate: storeGovernorate ?? this.storeGovernorate,
+      storeCategory: storeCategory ?? this.storeCategory,
       orderNumber: orderNumber ?? this.orderNumber,
       clientName: clientName ?? this.clientName,
       clientPhone: clientPhone ?? this.clientPhone,
@@ -303,10 +338,13 @@ class OrderModel with BaseModelMixin {
       totalAmount: totalAmount ?? this.totalAmount,
       deliveryFee: deliveryFee ?? this.deliveryFee,
       taxAmount: taxAmount ?? this.taxAmount,
+      couponCode: couponCode ?? this.couponCode,
+      discountAmount: discountAmount ?? this.discountAmount,
       deliveryAddress: deliveryAddress ?? this.deliveryAddress,
       deliveryLatitude: deliveryLatitude ?? this.deliveryLatitude,
       deliveryLongitude: deliveryLongitude ?? this.deliveryLongitude,
       deliveryNotes: deliveryNotes ?? this.deliveryNotes,
+      prescriptionUrl: prescriptionUrl ?? this.prescriptionUrl,
       status: status ?? this.status,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       paymentStatus: paymentStatus ?? this.paymentStatus,
@@ -411,8 +449,8 @@ class OrderItemModel with BaseModelMixin {
       selectedOptions: map['selected_options'] != null
           ? Map<String, dynamic>.from(map['selected_options'])
           : null,
-      productImage: map['products'] != null
-          ? (map['products'] as Map<String, dynamic>)['image_url'] as String?
+      productImage: map['products'] is Map
+          ? (map['products'] as Map)['image_url'] as String?
           : null,
       createdAt: BaseModelMixin.parseDateTime(map['created_at']),
       updatedAt: map['updated_at'] != null
@@ -684,7 +722,7 @@ class OrderService {
     try {
       final response = await _client
           .from(OrderModel.tableName)
-          .select('*, store:stores(name)')
+          .select('*, store:stores(name, category)')
           .eq('order_group_id', orderGroupId)
           .order('created_at', ascending: true);
 

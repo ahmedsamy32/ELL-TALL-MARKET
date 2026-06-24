@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/widgets/app_search_bar.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
+import 'package:ell_tall_market/utils/captain_contact_utils.dart';
 
 class ManageOrdersScreen extends StatefulWidget {
   const ManageOrdersScreen({super.key});
@@ -375,7 +377,7 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              "العميل: ${order.clientId}",
+                              "العميل: ${(order.clientName != null && order.clientName!.trim().isNotEmpty) ? order.clientName! : (order.clientPhone != null && order.clientPhone!.isNotEmpty ? order.clientPhone! : 'عميل بدون اسم')}",
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey.shade500,
@@ -489,51 +491,128 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
 
   /// 🔹 عرض تفاصيل الطلب
   void _viewOrderDetails(OrderModel order) {
-    showDialog(
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF667eea), Color(0xFF764ba2)],
-                ),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(
-                Icons.receipt_long_rounded,
-                color: Colors.white,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 10),
-            const Expanded(
-              child: Text(
-                'تفاصيل الطلب',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ],
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text("رقم الطلب: ${order.id}"),
-            Text("العميل: ${order.clientId}"),
-            Text("الإجمالي: ${order.totalAmount} ج.م"),
-            Text("الحالة: ${order.status}"),
-            const SizedBox(height: 16),
-            const Text(
-              "المنتجات:",
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.maxFinite,
-              child: FutureBuilder<List<OrderItemModel>>(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF667eea), Color(0xFF764ba2)],
+                      ),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.receipt_long_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'تفاصيل الطلب',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 18,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                "رقم الطلب: #${order.id.length > 8 ? order.id.substring(0, 8).toUpperCase() : order.id}",
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 4),
+              Text("الحالة: ${_statusLabel(order.status)}"),
+              const SizedBox(height: 4),
+              Text("طريقة الدفع: ${order.paymentMethod.displayName}"),
+              const SizedBox(height: 4),
+              Text("تاريخ الطلب: ${order.createdAtFormatted}"),
+              const Divider(height: 24),
+              const Text("بيانات العميل:", style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              Text("الاسم: ${(order.clientName != null && order.clientName!.trim().isNotEmpty) ? order.clientName! : 'عميل بدون اسم'}"),
+              if (order.clientPhone != null && order.clientPhone!.trim().isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Text("الهاتف: ${order.clientPhone}"),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => CaptainContactUtils.callPhone(
+                        context,
+                        order.clientPhone,
+                        unavailableMessage: 'رقم هاتف العميل غير متوفر',
+                      ),
+                      child: const Icon(Icons.phone, color: Colors.green, size: 16),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 12),
+              if (order.storeName != null || order.storePhone != null) ...[
+                const Text("بيانات المتجر:", style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                if (order.storeName != null) Text("المتجر: ${order.storeName}"),
+                if (order.storePhone != null) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Text("الهاتف: ${order.storePhone}"),
+                      const SizedBox(width: 8),
+                      GestureDetector(
+                        onTap: () => CaptainContactUtils.callPhone(
+                          context,
+                          order.storePhone,
+                          unavailableMessage: 'رقم هاتف المتجر غير متوفر',
+                        ),
+                        child: const Icon(Icons.phone, color: Colors.green, size: 16),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 12),
+              ],
+              const Divider(height: 24),
+              const Text(
+                "المنتجات:",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              FutureBuilder<List<OrderItemModel>>(
                 future: OrderService.getOrderItems(order.id),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
@@ -548,70 +627,124 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
                     return const Text("تعذر تحميل المنتجات");
                   }
                   final items = snapshot.data!;
-                  return ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxHeight: MediaQuery.of(context).size.height * 0.4,
-                    ),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: items.length,
-                      itemBuilder: (context, index) {
-                        final item = items[index];
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 8.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
+                  return ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: items.length,
+                    itemBuilder: (context, index) {
+                      final item = items[index];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "${item.quantity}x ${item.productName}",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            if (item.selectedOptions != null &&
+                                item.selectedOptions!.isNotEmpty)
+                              Builder(
+                                builder: (context) {
+                                  final Map<String, dynamic> selectedOpts = Map<String, dynamic>.from(item.selectedOptions ?? {});
+                                  final attributes = selectedOpts.entries
+                                      .where((e) => e.key != 'addons')
+                                      .map((e) => '${e.key}: ${e.value}')
+                                      .join(' | ');
+                                  final addonsList = selectedOpts['addons'] as List<dynamic>?;
+                                  final addonsText = addonsList != null && addonsList.isNotEmpty
+                                      ? 'إضافات: ${addonsList.map((a) => a['name']).join(', ')}'
+                                      : '';
+
+                                  return Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      if (attributes.isNotEmpty)
+                                        Text(
+                                          attributes,
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.blue,
+                                          ),
+                                        ),
+                                      if (addonsText.isNotEmpty)
+                                        Text(
+                                          addonsText,
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            color: Colors.green,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                    ],
+                                  );
+                                },
+                              ),
+                            if (item.specialInstructions != null &&
+                                item.specialInstructions!.isNotEmpty)
                               Text(
-                                "${item.quantity}x ${item.productName}",
+                                "ملاحظات: ${item.specialInstructions}",
                                 style: const TextStyle(
-                                  fontWeight: FontWeight.w500,
+                                  fontSize: 11,
+                                  color: Colors.orange,
+                                  fontStyle: FontStyle.italic,
                                 ),
                               ),
-                              if (item.selectedOptions != null &&
-                                  item.selectedOptions!.isNotEmpty)
-                                Text(
-                                  item.selectedOptions!.entries
-                                      .map((e) => '${e.key}: ${e.value}')
-                                      .join(' | '),
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.blue,
-                                  ),
-                                ),
-                              if (item.specialInstructions != null &&
-                                  item.specialInstructions!.isNotEmpty)
-                                Text(
-                                  "ملاحظات: ${item.specialInstructions}",
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.orange,
-                                    fontStyle: FontStyle.italic,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
+                          ],
+                        ),
+                      );
+                    },
                   );
                 },
               ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('إغلاق'),
+              const Divider(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("قيمة المنتجات:"),
+                  Text("${((order.totalAmount - order.deliveryFee - order.taxAmount + order.discountAmount).clamp(0.0, double.infinity)).toStringAsFixed(2)} ج.م"),
+                ],
+              ),
+              const SizedBox(height: 6),
+              if (order.discountAmount > 0) ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text("خصم الكوبون ${order.couponCode != null ? "(${order.couponCode})" : ""}:", style: TextStyle(color: Colors.red[700])),
+                    Text("-${order.discountAmount.toStringAsFixed(2)} ج.م", style: TextStyle(color: Colors.red[700], fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 6),
+              ],
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("رسوم التوصيل:"),
+                  Text("${order.deliveryFee.toStringAsFixed(2)} ج.م"),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("الإجمالي الكلي:", style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text("${order.totalAmount.toStringAsFixed(2)} ج.م", style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF667eea))),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
           ),
-        ],
+        ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   /// 🔹 تغيير حالة الطلب
   void _changeOrderStatus(OrderModel order) {
+    String selectedStatus = order.status.value;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -639,44 +772,52 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
             ),
           ],
         ),
-        content: DropdownButtonFormField<String>(
-          initialValue: order.status.value,
-          items: [
-            DropdownMenuItem(
-              value: OrderStatus.pending.value,
-              child: const Text("في الانتظار"),
-            ),
-            DropdownMenuItem(
-              value: OrderStatus.confirmed.value,
-              child: const Text("مؤكد"),
-            ),
-            DropdownMenuItem(
-              value: OrderStatus.preparing.value,
-              child: const Text("قيد التحضير"),
-            ),
-            DropdownMenuItem(
-              value: OrderStatus.ready.value,
-              child: const Text("جاهز"),
-            ),
-            DropdownMenuItem(
-              value: OrderStatus.pickedUp.value,
-              child: const Text("تم الاستلام"),
-            ),
-            DropdownMenuItem(
-              value: OrderStatus.inTransit.value,
-              child: const Text("في الطريق"),
-            ),
-            DropdownMenuItem(
-              value: OrderStatus.delivered.value,
-              child: const Text("تم التوصيل"),
-            ),
-            DropdownMenuItem(
-              value: OrderStatus.cancelled.value,
-              child: const Text("ملغي"),
-            ),
-          ],
-          onChanged: (value) {
-            // Note: تحديث الحالة في قاعدة البيانات
+        content: StatefulBuilder(
+          builder: (context, setDialogState) {
+            return DropdownButtonFormField<String>(
+              initialValue: selectedStatus,
+              items: [
+                DropdownMenuItem(
+                  value: OrderStatus.pending.value,
+                  child: const Text("في الانتظار"),
+                ),
+                DropdownMenuItem(
+                  value: OrderStatus.confirmed.value,
+                  child: const Text("مؤكد"),
+                ),
+                DropdownMenuItem(
+                  value: OrderStatus.preparing.value,
+                  child: const Text("قيد التحضير"),
+                ),
+                DropdownMenuItem(
+                  value: OrderStatus.ready.value,
+                  child: const Text("جاهز"),
+                ),
+                DropdownMenuItem(
+                  value: OrderStatus.pickedUp.value,
+                  child: const Text("تم الاستلام"),
+                ),
+                DropdownMenuItem(
+                  value: OrderStatus.inTransit.value,
+                  child: const Text("في الطريق"),
+                ),
+                DropdownMenuItem(
+                  value: OrderStatus.delivered.value,
+                  child: const Text("تم التوصيل"),
+                ),
+                DropdownMenuItem(
+                  value: OrderStatus.cancelled.value,
+                  child: const Text("ملغي"),
+                ),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  setDialogState(() {
+                    selectedStatus = value;
+                  });
+                }
+              },
+            );
           },
         ),
         actions: [
@@ -685,9 +826,17 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
             child: const Text('إلغاء'),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              final orderProvider = Provider.of<OrderProvider>(context, listen: false);
               Navigator.pop(context);
-              // Note: حفظ الحالة الجديدة
+              final success = await orderProvider.updateOrderStatus(order.id, selectedStatus);
+              messenger.showSnackBar(
+                SnackBar(
+                  content: Text(success ? 'تم تحديث حالة الطلب بنجاح' : 'فشل تحديث حالة الطلب'),
+                  backgroundColor: success ? Colors.green : Colors.red,
+                ),
+              );
             },
             child: const Text('حفظ'),
           ),
@@ -744,8 +893,28 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              onPressed: () {
+              onPressed: () async {
+                final messenger = ScaffoldMessenger.of(context);
+                final orderProvider = Provider.of<OrderProvider>(context, listen: false);
                 Navigator.pop(context);
+                try {
+                  final supabase = Supabase.instance.client;
+                  await supabase.from('orders').delete().eq('id', order.id);
+                  orderProvider.fetchAllOrders();
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text('تم حذف الطلب بنجاح'),
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                } catch (e) {
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text('فشل حذف الطلب: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
               },
               child: const Text('حذف', style: TextStyle(color: Colors.white)),
             ),

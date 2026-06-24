@@ -8,6 +8,9 @@ import 'package:ell_tall_market/models/delivery_company_model.dart';
 import 'package:ell_tall_market/models/delivery_zone_pricing_model.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
+import 'package:ell_tall_market/providers/app_settings_provider.dart';
+import 'package:ell_tall_market/models/settings_model.dart';
+import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/services/delivery_company_service.dart';
 import 'package:ell_tall_market/services/delivery_zone_pricing_service.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
@@ -23,17 +26,48 @@ class ManageDeliveryCompanyScreen extends StatefulWidget {
 }
 
 class _ManageDeliveryCompanyScreenState
-    extends State<ManageDeliveryCompanyScreen> {
+    extends State<ManageDeliveryCompanyScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabController;
   bool _isLoading = true;
   List<DeliveryCompanyModel> _companies = [];
   String? _error;
 
+  // Settings State & Controllers
+  final _settingsFormKey = GlobalKey<FormState>();
+  late AppSettingsModel _currentSettings;
+
+  final _appDeliveryBaseFeeController = TextEditingController();
+  final _appDeliveryFeePerKmController = TextEditingController();
+  final _appDeliveryMaxDistanceController = TextEditingController();
+  final _appDeliveryEstimatedTimeController = TextEditingController();
+  final _multiStoreDeliveryFeePerKmController = TextEditingController();
+  final _multiStoreDeliveryMinDistanceController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
+    _currentSettings = AppSettingsModel.empty();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      setState(() {});
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadCompanies();
+      Provider.of<AppSettingsProvider>(context, listen: false).loadSettings();
     });
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    _appDeliveryBaseFeeController.dispose();
+    _appDeliveryFeePerKmController.dispose();
+    _appDeliveryMaxDistanceController.dispose();
+    _appDeliveryEstimatedTimeController.dispose();
+    _multiStoreDeliveryFeePerKmController.dispose();
+    _multiStoreDeliveryMinDistanceController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadCompanies() async {
@@ -62,26 +96,70 @@ class _ManageDeliveryCompanyScreenState
 
   @override
   Widget build(BuildContext context) {
+    final settingsProvider = Provider.of<AppSettingsProvider>(context);
+    final loadedSettings = settingsProvider.appSettings;
+
+    // Only populate controllers when settings are loaded/changed from database
+    if (loadedSettings.id != _currentSettings.id) {
+      _currentSettings = loadedSettings;
+      _appDeliveryBaseFeeController.text = _currentSettings.appDeliveryBaseFee.toString();
+      _appDeliveryFeePerKmController.text = _currentSettings.appDeliveryFeePerKm.toString();
+      _appDeliveryMaxDistanceController.text = _currentSettings.appDeliveryMaxDistance.toString();
+      _appDeliveryEstimatedTimeController.text = _currentSettings.appDeliveryEstimatedTime.toString();
+      _multiStoreDeliveryFeePerKmController.text = _currentSettings.multiStoreDeliveryFeePerKm.toString();
+      _multiStoreDeliveryMinDistanceController.text = _currentSettings.multiStoreDeliveryMinDistance.toString();
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('🚚 إدارة مكاتب التوصيل'),
         centerTitle: true,
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(icon: Icon(Icons.local_shipping), text: 'المكاتب المسجلة'),
+            Tab(icon: Icon(Icons.settings), text: 'إعدادات التوصيل العامة'),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'تحديث',
-            onPressed: _loadCompanies,
+            onPressed: () {
+              if (_tabController.index == 0) {
+                _loadCompanies();
+              } else {
+                Provider.of<AppSettingsProvider>(context, listen: false).loadSettings();
+              }
+            },
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAddCompanySheet(),
-        label: const Text('مكتب جديد'),
-        icon: const Icon(Icons.add),
-      ),
-      body: ResponsiveCenter(
-        maxWidth: 1200,
-        child: SafeArea(child: _buildBody()),
+      floatingActionButton: _tabController.index == 0
+          ? FloatingActionButton.extended(
+              onPressed: () => _showAddCompanySheet(),
+              label: const Text('مكتب جديد'),
+              icon: const Icon(Icons.add),
+            )
+          : null,
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          // Tab 1: Companies list
+          ResponsiveCenter(
+            maxWidth: 1200,
+            child: SafeArea(child: _buildBody()),
+          ),
+          // Tab 2: General settings
+          ResponsiveCenter(
+            maxWidth: 700,
+            child: SafeArea(
+              child: settingsProvider.isLoading
+                  ? AppShimmer.centeredLines(context)
+                  : _buildGeneralSettingsTab(settingsProvider),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -212,6 +290,7 @@ class _ManageDeliveryCompanyScreenState
 
   void _showAddCompanySheet() {
     final nameController = TextEditingController();
+    final nameEnController = TextEditingController();
     final ownerEmailController = TextEditingController();
     final ownerNameController = TextEditingController();
     final ownerPasswordController = TextEditingController();
@@ -219,6 +298,7 @@ class _ManageDeliveryCompanyScreenState
 
     // FocusNodes للتحكم في ترتيب الانتقال
     final nameFocus = FocusNode();
+    final nameEnFocus = FocusNode();
     final ownerNameFocus = FocusNode();
     final emailFocus = FocusNode();
     final passwordFocus = FocusNode();
@@ -230,6 +310,7 @@ class _ManageDeliveryCompanyScreenState
     bool isSubmitting = false;
     bool obscurePassword = true;
     bool nameError = false;
+    bool nameEnError = false;
     bool emailError = false;
     bool passwordError = false;
     bool governorateError = false;
@@ -346,7 +427,7 @@ class _ManageDeliveryCompanyScreenState
                           },
                           onSubmitted: (_) {
                             nameFocus.unfocus();
-                            FocusScope.of(context).requestFocus(ownerNameFocus);
+                            FocusScope.of(context).requestFocus(nameEnFocus);
                           },
                           decoration: InputDecoration(
                             labelText: 'اسم المكتب *',
@@ -355,6 +436,27 @@ class _ManageDeliveryCompanyScreenState
                             ),
                             prefixIcon: const Icon(Icons.business),
                             errorText: nameError ? 'هذا الحقل مطلوب' : null,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: nameEnController,
+                          focusNode: nameEnFocus,
+                          textInputAction: TextInputAction.next,
+                          onTapOutside: (_) {
+                            FocusScope.of(context).unfocus();
+                          },
+                          onSubmitted: (_) {
+                            nameEnFocus.unfocus();
+                            FocusScope.of(context).requestFocus(ownerNameFocus);
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'اسم المكتب بالإنجليزي *',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            prefixIcon: const Icon(Icons.abc),
+                            errorText: nameEnError ? 'هذا الحقل مطلوب' : null,
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -652,6 +754,7 @@ class _ManageDeliveryCompanyScreenState
                                     ? null
                                     : () async {
                                         if (nameController.text.isEmpty ||
+                                            nameEnController.text.isEmpty ||
                                             ownerEmailController.text.isEmpty ||
                                             selectedGovernorate == null ||
                                             selectedCity == null ||
@@ -661,6 +764,8 @@ class _ManageDeliveryCompanyScreenState
                                           setSheetState(() {
                                             nameError =
                                                 nameController.text.isEmpty;
+                                            nameEnError =
+                                                nameEnController.text.isEmpty;
                                             emailError = ownerEmailController
                                                 .text
                                                 .isEmpty;
@@ -676,7 +781,7 @@ class _ManageDeliveryCompanyScreenState
                                               ?.showSnackBar(
                                                 const SnackBar(
                                                   content: Text(
-                                                    'الرجاء إدخال الاسم والبريد الإلكتروني وكلمة المرور والمحافظة والمدينة',
+                                                    'الرجاء إدخال اسم المكتب واسمه بالإنجليزي والبريد الإلكتروني وكلمة المرور والمحافظة والمدينة',
                                                   ),
                                                   backgroundColor: Colors.red,
                                                 ),
@@ -687,6 +792,7 @@ class _ManageDeliveryCompanyScreenState
                                         setSheetState(() {
                                           isSubmitting = true;
                                           nameError = false;
+                                          nameEnError = false;
                                           emailError = false;
                                           passwordError = false;
                                           governorateError = false;
@@ -744,6 +850,8 @@ class _ManageDeliveryCompanyScreenState
 
                                           await DeliveryCompanyService.createCompany(
                                             companyName: nameController.text
+                                                .trim(),
+                                            companyNameEn: nameEnController.text
                                                 .trim(),
                                             ownerEmail: ownerEmailController
                                                 .text
@@ -833,6 +941,7 @@ class _ManageDeliveryCompanyScreenState
 
   void _showEditCompanySheet(DeliveryCompanyModel company) {
     final nameController = TextEditingController(text: company.companyName);
+    final nameEnController = TextEditingController(text: company.companyNameEn);
     final ownerEmailController = TextEditingController(
       text: company.ownerEmail,
     );
@@ -844,6 +953,7 @@ class _ManageDeliveryCompanyScreenState
 
     // FocusNodes للتحكم في ترتيب الانتقال
     final nameFocus = FocusNode();
+    final nameEnFocus = FocusNode();
     final ownerNameFocus = FocusNode();
     final emailFocus = FocusNode();
     final passwordFocus = FocusNode();
@@ -855,6 +965,7 @@ class _ManageDeliveryCompanyScreenState
     bool isSubmitting = false;
     bool obscurePassword = true;
     bool nameError = false;
+    bool nameEnError = false;
     bool emailError = false;
     bool passwordError = false;
     bool governorateError = false;
@@ -971,7 +1082,7 @@ class _ManageDeliveryCompanyScreenState
                           },
                           onSubmitted: (_) {
                             nameFocus.unfocus();
-                            FocusScope.of(context).requestFocus(ownerNameFocus);
+                            FocusScope.of(context).requestFocus(nameEnFocus);
                           },
                           decoration: InputDecoration(
                             labelText: 'اسم المكتب *',
@@ -980,6 +1091,27 @@ class _ManageDeliveryCompanyScreenState
                             ),
                             prefixIcon: const Icon(Icons.business),
                             errorText: nameError ? 'هذا الحقل مطلوب' : null,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: nameEnController,
+                          focusNode: nameEnFocus,
+                          textInputAction: TextInputAction.next,
+                          onTapOutside: (_) {
+                            FocusScope.of(context).unfocus();
+                          },
+                          onSubmitted: (_) {
+                            nameEnFocus.unfocus();
+                            FocusScope.of(context).requestFocus(ownerNameFocus);
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'اسم المكتب بالإنجليزي *',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            prefixIcon: const Icon(Icons.abc),
+                            errorText: nameEnError ? 'هذا الحقل مطلوب' : null,
                           ),
                         ),
                         const SizedBox(height: 16),
@@ -1294,6 +1426,7 @@ class _ManageDeliveryCompanyScreenState
                                     ? null
                                     : () async {
                                         if (nameController.text.isEmpty ||
+                                            nameEnController.text.isEmpty ||
                                             ownerEmailController.text.isEmpty ||
                                             selectedGovernorate == null ||
                                             selectedCity == null ||
@@ -1303,6 +1436,8 @@ class _ManageDeliveryCompanyScreenState
                                           setSheetState(() {
                                             nameError =
                                                 nameController.text.isEmpty;
+                                            nameEnError =
+                                                nameEnController.text.isEmpty;
                                             emailError = ownerEmailController
                                                 .text
                                                 .isEmpty;
@@ -1318,7 +1453,7 @@ class _ManageDeliveryCompanyScreenState
                                               ?.showSnackBar(
                                                 const SnackBar(
                                                   content: Text(
-                                                    'الرجاء إدخال الاسم والبريد الإلكتروني وكلمة المرور والمحافظة والمدينة',
+                                                    'الرجاء إدخال اسم المكتب واسمه بالإنجليزي والبريد الإلكتروني وكلمة المرور والمحافظة والمدينة',
                                                   ),
                                                   backgroundColor: Colors.red,
                                                 ),
@@ -1329,6 +1464,7 @@ class _ManageDeliveryCompanyScreenState
                                         setSheetState(() {
                                           isSubmitting = true;
                                           nameError = false;
+                                          nameEnError = false;
                                           emailError = false;
                                           passwordError = false;
                                           governorateError = false;
@@ -1390,6 +1526,8 @@ class _ManageDeliveryCompanyScreenState
                                           await DeliveryCompanyService.updateCompany(
                                             companyId: company.id,
                                             companyName: nameController.text
+                                                .trim(),
+                                            companyNameEn: nameEnController.text
                                                 .trim(),
                                             ownerEmail: ownerEmailController
                                                 .text
@@ -1533,6 +1671,325 @@ class _ManageDeliveryCompanyScreenState
               }
             },
             child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGeneralSettingsTab(AppSettingsProvider provider) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Form(
+        key: _settingsFormKey,
+        child: Column(
+          children: [
+            Card(
+              elevation: 4,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      '🚚 إعدادات التوصيل العامة',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                    const Divider(),
+                    _buildDeliveryInfoBanner(),
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.of(
+                          context,
+                        ).pushNamed(AppRoutes.deliveryZonePricing);
+                      },
+                      icon: const Icon(Icons.map_rounded),
+                      label: const Text('إدارة تسعير المناطق (Owner فقط)'),
+                    ),
+                    const SizedBox(height: 16),
+                    _buildTextFieldSetting(
+                      "💰 رسوم التوصيل الأساسية (ج.م)",
+                      _appDeliveryBaseFeeController,
+                    ),
+                    _buildTextFieldSetting(
+                      "📏 رسوم لكل كيلومتر (ج.م)",
+                      _appDeliveryFeePerKmController,
+                    ),
+                    _buildTextFieldSetting(
+                      "🗺️ أقصى مسافة للتوصيل (كم)",
+                      _appDeliveryMaxDistanceController,
+                    ),
+                    _buildIntFieldSetting(
+                      "⏱️ الوقت التقديري للتوصيل (دقيقة)",
+                      _appDeliveryEstimatedTimeController,
+                    ),
+                    const Divider(height: 32),
+                    const Text(
+                      "🏪 رسوم التوصيل لعدة متاجر",
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _buildSwitchSetting(
+                      "تفعيل رسوم التوصيل بين المتاجر",
+                      _currentSettings.multiStoreDeliveryFeeEnabled,
+                      (value) => _updateSetting(multiStoreDeliveryFeeEnabled: value),
+                    ),
+                    _buildTextFieldSetting(
+                      "💰 سعر كيلومتر التوصيل بين المتاجر (ج.م)",
+                      _multiStoreDeliveryFeePerKmController,
+                    ),
+                    _buildTextFieldSetting(
+                      "📏 الحد الأدنى للمسافة لتطبيق رسوم المتاجر (كم)",
+                      _multiStoreDeliveryMinDistanceController,
+                      textInputAction: TextInputAction.done,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            _buildActionButtons(provider),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeliveryInfoBanner() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blue.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, color: Colors.blue[700]),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Text(
+              'هذه الإعدادات تُطبق عند اختيار التاجر "توصيل التطبيق".\nيتم حساب رسوم التوصيل تلقائياً بناءً على المسافة.',
+              style: TextStyle(fontSize: 12, height: 1.4),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTextFieldSetting(
+    String title,
+    TextEditingController controller, {
+    TextInputAction textInputAction = TextInputAction.next,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: TextFormField(
+        controller: controller,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        textInputAction: textInputAction,
+        decoration: InputDecoration(
+          labelText: title,
+          border: const OutlineInputBorder(),
+          suffixIcon: const Icon(Icons.edit),
+        ),
+        validator: (value) {
+          if (value == null || value.trim().isEmpty) {
+            return 'هذا الحقل مطلوب';
+          }
+          if (double.tryParse(value) == null) {
+            return 'يرجى إدخال رقم صحيح';
+          }
+          return null;
+        },
+      ),
+    );
+  }
+
+  Widget _buildIntFieldSetting(
+    String title,
+    TextEditingController controller, {
+    TextInputAction textInputAction = TextInputAction.next,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: TextFormField(
+        controller: controller,
+        keyboardType: TextInputType.number,
+        textInputAction: textInputAction,
+        decoration: InputDecoration(
+          labelText: title,
+          border: const OutlineInputBorder(),
+          suffixIcon: const Icon(Icons.edit),
+        ),
+        validator: (value) {
+          if (value == null || value.trim().isEmpty) {
+            return 'هذا الحقل مطلوب';
+          }
+          if (int.tryParse(value) == null) {
+            return 'يرجى إدخال رقم صحيح';
+          }
+          return null;
+        },
+      ),
+    );
+  }
+
+  Widget _buildSwitchSetting(
+    String title,
+    bool value,
+    ValueChanged<bool> onChanged,
+  ) {
+    return SwitchListTile(
+      title: Text(title),
+      value: value,
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _buildActionButtons(AppSettingsProvider provider) {
+    return Row(
+      children: [
+        Expanded(
+          child: ElevatedButton.icon(
+            onPressed: _saveSettings,
+            icon: const Icon(Icons.save),
+            label: const Text('حفظ'),
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: _resetSettings,
+            icon: const Icon(Icons.refresh),
+            label: const Text('إعادة تعيين'),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _updateSetting({
+    double? appDeliveryBaseFee,
+    double? appDeliveryFeePerKm,
+    double? appDeliveryMaxDistance,
+    int? appDeliveryEstimatedTime,
+    double? multiStoreDeliveryFeePerKm,
+    double? multiStoreDeliveryMinDistance,
+    bool? multiStoreDeliveryFeeEnabled,
+  }) {
+    setState(() {
+      _currentSettings = _currentSettings.copyWith(
+        appDeliveryBaseFee: appDeliveryBaseFee ?? _currentSettings.appDeliveryBaseFee,
+        appDeliveryFeePerKm: appDeliveryFeePerKm ?? _currentSettings.appDeliveryFeePerKm,
+        appDeliveryMaxDistance: appDeliveryMaxDistance ?? _currentSettings.appDeliveryMaxDistance,
+        appDeliveryEstimatedTime: appDeliveryEstimatedTime ?? _currentSettings.appDeliveryEstimatedTime,
+        multiStoreDeliveryFeePerKm: multiStoreDeliveryFeePerKm ?? _currentSettings.multiStoreDeliveryFeePerKm,
+        multiStoreDeliveryMinDistance: multiStoreDeliveryMinDistance ?? _currentSettings.multiStoreDeliveryMinDistance,
+        multiStoreDeliveryFeeEnabled: multiStoreDeliveryFeeEnabled ?? _currentSettings.multiStoreDeliveryFeeEnabled,
+      );
+    });
+  }
+
+  void _saveSettings() async {
+    if (!_settingsFormKey.currentState!.validate()) return;
+
+    final updatedSettings = _currentSettings.copyWith(
+      appDeliveryBaseFee: double.tryParse(_appDeliveryBaseFeeController.text) ?? _currentSettings.appDeliveryBaseFee,
+      appDeliveryFeePerKm: double.tryParse(_appDeliveryFeePerKmController.text) ?? _currentSettings.appDeliveryFeePerKm,
+      appDeliveryMaxDistance: double.tryParse(_appDeliveryMaxDistanceController.text) ?? _currentSettings.appDeliveryMaxDistance,
+      appDeliveryEstimatedTime: int.tryParse(_appDeliveryEstimatedTimeController.text) ?? _currentSettings.appDeliveryEstimatedTime,
+      multiStoreDeliveryFeePerKm: double.tryParse(_multiStoreDeliveryFeePerKmController.text) ?? _currentSettings.multiStoreDeliveryFeePerKm,
+      multiStoreDeliveryMinDistance: double.tryParse(_multiStoreDeliveryMinDistanceController.text) ?? _currentSettings.multiStoreDeliveryMinDistance,
+    );
+
+    try {
+      await Provider.of<AppSettingsProvider>(
+        context,
+        listen: false,
+      ).updateAppSettings(updatedSettings);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ تم حفظ الإعدادات بنجاح'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ فشل حفظ الإعدادات: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _resetSettings() async {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('إعادة تعيين الإعدادات'),
+        content: const Text(
+          'هل تريد إعادة تعيين جميع الإعدادات للقيم الافتراضية؟',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              try {
+                final provider = Provider.of<AppSettingsProvider>(context, listen: false);
+                await provider.resetSettings();
+                final loaded = provider.appSettings;
+                setState(() {
+                  _currentSettings = loaded;
+                  _appDeliveryBaseFeeController.text = loaded.appDeliveryBaseFee.toString();
+                  _appDeliveryFeePerKmController.text = loaded.appDeliveryFeePerKm.toString();
+                  _appDeliveryMaxDistanceController.text = loaded.appDeliveryMaxDistance.toString();
+                  _appDeliveryEstimatedTimeController.text = loaded.appDeliveryEstimatedTime.toString();
+                  _multiStoreDeliveryFeePerKmController.text = loaded.multiStoreDeliveryFeePerKm.toString();
+                  _multiStoreDeliveryMinDistanceController.text = loaded.multiStoreDeliveryMinDistance.toString();
+                });
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ تم إعادة التعيين بنجاح'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('❌ فشل إعادة التعيين: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('تأكيد'),
           ),
         ],
       ),

@@ -24,7 +24,11 @@ class NotificationProvider with ChangeNotifier {
     return _notifications.where((n) {
       if (n.targetRole == role) return true;
       final audience = n.data?['audience'] as String?;
-      return audience == role;
+      if (audience == role) return true;
+      if (role == 'delivery_company_admin' && audience == 'delivery_office') {
+        return true;
+      }
+      return false;
     }).toList();
   }
 
@@ -35,7 +39,11 @@ class NotificationProvider with ChangeNotifier {
       if (n.isRead) return false;
       if (n.targetRole == role) return true;
       final audience = n.data?['audience'] as String?;
-      return audience == role;
+      if (audience == role) return true;
+      if (role == 'delivery_company_admin' && audience == 'delivery_office') {
+        return true;
+      }
+      return false;
     }).length;
   }
 
@@ -53,39 +61,74 @@ class NotificationProvider with ChangeNotifier {
     _initRealtimeSubscription();
   }
 
-  void _initRealtimeSubscription() {
-    final userId = _supabase.auth.currentUser?.id;
-    if (userId == null) return;
+  void _initRealtimeSubscription({String? userId, String? storeId}) {
+    // Unsubscribe from any previous subscription
+    _notificationsChannel?.unsubscribe();
+    _notificationsChannel = null;
 
-    _notificationsChannel =
-        _supabase
-            .channel('notifications_$userId')
-            .onPostgresChanges(
-              event: PostgresChangeEvent.all,
-              schema: 'public',
-              table: 'notifications',
-              filter: PostgresChangeFilter(
-                type: PostgresChangeFilterType.eq,
-                column: 'user_id',
-                value: userId,
-              ),
-              callback: (payload) {
-                switch (payload.eventType) {
-                  case PostgresChangeEvent.insert:
-                    _handleNewNotification(payload.newRecord);
-                    break;
-                  case PostgresChangeEvent.update:
-                    _handleNotificationUpdate(payload.newRecord);
-                    break;
-                  case PostgresChangeEvent.delete:
-                    _handleNotificationDelete(payload.oldRecord['id']);
-                    break;
-                  default:
-                    break;
-                }
-              },
-            )
-          ..subscribe();
+    final targetUserId = userId ?? _supabase.auth.currentUser?.id;
+
+    if (targetUserId != null) {
+      _notificationsChannel = _supabase
+          .channel('notifications_user_$targetUserId')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'notifications',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'user_id',
+              value: targetUserId,
+            ),
+            callback: (payload) {
+              switch (payload.eventType) {
+                case PostgresChangeEvent.insert:
+                  _handleNewNotification(payload.newRecord);
+                  break;
+                case PostgresChangeEvent.update:
+                  _handleNotificationUpdate(payload.newRecord);
+                  break;
+                case PostgresChangeEvent.delete:
+                  _handleNotificationDelete(payload.oldRecord['id']);
+                  break;
+                default:
+                  break;
+              }
+            },
+          )
+        ..subscribe();
+      AppLogger.info('✅ Subscribed to real-time user notifications for $targetUserId');
+    } else if (storeId != null) {
+      _notificationsChannel = _supabase
+          .channel('notifications_store_$storeId')
+          .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'notifications',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'store_id',
+              value: storeId,
+            ),
+            callback: (payload) {
+              switch (payload.eventType) {
+                case PostgresChangeEvent.insert:
+                  _handleNewNotification(payload.newRecord);
+                  break;
+                case PostgresChangeEvent.update:
+                  _handleNotificationUpdate(payload.newRecord);
+                  break;
+                case PostgresChangeEvent.delete:
+                  _handleNotificationDelete(payload.oldRecord['id']);
+                  break;
+                default:
+                  break;
+              }
+            },
+          )
+        ..subscribe();
+      AppLogger.info('✅ Subscribed to real-time store notifications for $storeId');
+    }
   }
 
   @override
@@ -102,12 +145,15 @@ class NotificationProvider with ChangeNotifier {
     _activeRole = targetRole;
     _setLoading(true);
     _setError(null); // مسح الأخطاء السابقة
+    _initRealtimeSubscription(userId: userId);
     try {
       final response = await _supabase
           .from('notifications')
           .select()
           .eq('user_id', userId)
-          .or('target_role.eq.$targetRole,data->>audience.eq.$targetRole')
+          .or(targetRole == 'delivery_company_admin'
+              ? 'target_role.eq.$targetRole,data->>audience.eq.$targetRole,data->>audience.eq.delivery_office'
+              : 'target_role.eq.$targetRole,data->>audience.eq.$targetRole')
           .order('created_at', ascending: false);
 
       _notifications = (response as List)
@@ -144,6 +190,7 @@ class NotificationProvider with ChangeNotifier {
     _activeRole = 'merchant';
     _setLoading(true);
     _setError(null);
+    _initRealtimeSubscription(storeId: storeId);
     try {
       AppLogger.info('🏪 جلب إشعارات المتجر: $storeId');
       final response = await _supabase
@@ -248,6 +295,20 @@ class NotificationProvider with ChangeNotifier {
     }
   }
 
+  // ===== حذف مجموعة من الإشعارات دفعة واحدة =====
+  Future<void> deleteNotifications(List<String> notificationIds) async {
+    if (notificationIds.isEmpty) return;
+    try {
+      await _supabase.from('notifications').delete().inFilter('id', notificationIds);
+
+      _notifications.removeWhere((n) => notificationIds.contains(n.id));
+      _updateUnreadCount();
+    } catch (e) {
+      AppLogger.error('❌ Error deleting notifications list', e);
+      _setError(e.toString());
+    }
+  }
+
   // ===== حذف كل الإشعارات =====
   Future<void> deleteAllNotifications() async {
     final userId = _supabase.auth.currentUser?.id;
@@ -299,7 +360,11 @@ class NotificationProvider with ChangeNotifier {
     // تجاهل الإشعار إذا لم يكن من نفس الدور المحمّل حالياً
     if (_activeRole != null) {
       final audience = notification.data?['audience'] as String?;
-      if (notification.targetRole != _activeRole && audience != _activeRole) {
+      bool isMatch = notification.targetRole == _activeRole || audience == _activeRole;
+      if (_activeRole == 'delivery_company_admin' && audience == 'delivery_office') {
+        isMatch = true;
+      }
+      if (!isMatch) {
         AppLogger.info(
           '🔕 تجاهل إشعار realtime (role=${notification.targetRole}, audience=$audience, active=$_activeRole)',
         );

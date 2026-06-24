@@ -558,6 +558,7 @@ class StoreService {
     String? imageUrl,
     String? coverUrl,
     String? deliveryMode,
+    bool? autoAcceptOrders,
   }) async {
     try {
       final data = <String, dynamic>{
@@ -587,6 +588,7 @@ class StoreService {
       if (imageUrl != null) data['image_url'] = imageUrl;
       if (coverUrl != null) data['cover_url'] = coverUrl;
       if (deliveryMode != null) data['delivery_mode'] = deliveryMode;
+      if (autoAcceptOrders != null) data['auto_accept_orders'] = autoAcceptOrders;
 
       final response = await _supabase
           .from('stores')

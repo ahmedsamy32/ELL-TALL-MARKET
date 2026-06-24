@@ -12,6 +12,26 @@ class AppSettingsProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _error;
 
+  AppSettingsProvider() {
+    _initAuthListener();
+  }
+
+  void _initAuthListener() {
+    _supabase.auth.onAuthStateChange.listen((data) {
+      final event = data.event;
+      if (event == AuthChangeEvent.signedIn ||
+          event == AuthChangeEvent.initialSession ||
+          event == AuthChangeEvent.userUpdated) {
+        AppLogger.info('🔑 Auth event ($event) triggered settings load');
+        loadSettings();
+      } else if (event == AuthChangeEvent.signedOut) {
+        AppLogger.info('🔑 Auth event ($event) reset settings to empty');
+        _appSettings = AppSettingsModel.empty();
+        notifyListeners();
+      }
+    });
+  }
+
   AppSettingsModel get appSettings => _appSettings;
   bool get isLoading => _isLoading;
   String? get error => _error;
@@ -83,7 +103,8 @@ class AppSettingsProvider with ChangeNotifier {
         final updated = await _supabase
             .from('app_settings')
             .update(updateData)
-            .eq('client_id', userId);
+            .eq('client_id', userId)
+            .select();
 
         final bool didUpdate = updated.isNotEmpty;
         if (!didUpdate) {

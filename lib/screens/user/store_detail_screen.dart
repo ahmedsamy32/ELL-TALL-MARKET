@@ -11,6 +11,8 @@ import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/models/coupon_model.dart';
 import 'package:ell_tall_market/services/coupon_service.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
+import 'package:ell_tall_market/utils/app_colors.dart';
+import 'package:ell_tall_market/widgets/custom_button.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
 import 'package:ell_tall_market/widgets/product_card.dart';
 import 'package:ell_tall_market/providers/favorites_provider.dart';
@@ -20,6 +22,10 @@ import 'package:share_plus/share_plus.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/utils/cart_helper.dart';
+import 'package:ell_tall_market/services/product_service.dart';
+import 'package:ell_tall_market/services/delivery_company_service.dart';
+import 'package:ell_tall_market/screens/user/product_detail_screen.dart';
+
 
 class StoreDetailScreen extends StatefulWidget {
   const StoreDetailScreen({super.key});
@@ -39,6 +45,8 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
   Future<List<Map<String, dynamic>>>? _sectionsFuture;
   Future<StoreDetailBundle>? _detailBundleFuture;
   Future<List<CouponModel>>? _couponsFuture;
+  String? _deliveryCompanyName;
+  bool _isLoadingDeliveryCompany = true;
 
   @override
   void initState() {
@@ -85,6 +93,14 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
         _coverLookupDone = true;
       }
     });
+
+    if (store.city != null && store.city!.isNotEmpty) {
+      _loadDeliveryCompany(store.city!);
+    } else {
+      setState(() {
+        _isLoadingDeliveryCompany = false;
+      });
+    }
 
     // تأجيل تحميل الفئات والمنتجات حتى ينتهي الـ build
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -141,6 +157,35 @@ class _StoreDetailScreenState extends State<StoreDetailScreen> {
       setState(() {
         _coverLookupDone = true;
       });
+    }
+  }
+
+  Future<void> _loadDeliveryCompany(String city) async {
+    if (city.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _isLoadingDeliveryCompany = false;
+        });
+      }
+      return;
+    }
+    try {
+      final companies = await DeliveryCompanyService.getCompaniesByCity(city);
+      if (mounted) {
+        setState(() {
+          if (companies.isNotEmpty) {
+            _deliveryCompanyName = companies.first.companyName;
+          }
+          _isLoadingDeliveryCompany = false;
+        });
+      }
+    } catch (e) {
+      AppLogger.error('خطأ في جلب شركة التوصيل للمتجر بمدينة $city', e);
+      if (mounted) {
+        setState(() {
+          _isLoadingDeliveryCompany = false;
+        });
+      }
     }
   }
 
@@ -347,9 +392,16 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
     final icon = isStoreDelivery
         ? Icons.storefront
         : Icons.local_shipping_outlined;
-    final label = isStoreDelivery
-        ? 'التوصيل بواسطة المتجر'
-        : 'سوق التل اسرع دليفري';
+    final String label;
+    if (isStoreDelivery) {
+      label = 'التوصيل بواسطة المتجر';
+    } else {
+      if (_isLoadingDeliveryCompany) {
+        label = 'جاري تحديد مكتب التوصيل...';
+      } else {
+        label = _deliveryCompanyName ?? 'سوق التل اسرع دليفري';
+      }
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1034,40 +1086,45 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
 
     return Column(
       children: [
-        Stack(
-          clipBehavior: Clip.none,
-          children: [
-            SizedBox(
-              height: coverHeight,
-              width: double.infinity,
-              child: Hero(
-                tag: 'store_${store.id}',
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.only(
-                    bottomLeft: Radius.circular(0),
-                    bottomRight: Radius.circular(0),
-                  ),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest,
+        SizedBox(
+          height: coverHeight + cardOverlap,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: coverHeight,
+                child: Hero(
+                  tag: 'store_${store.id}',
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(0),
+                      bottomRight: Radius.circular(0),
                     ),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 350),
-                      child: _buildCoverImage(store, colorScheme),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest,
+                      ),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 350),
+                        child: _buildCoverImage(store, colorScheme),
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            Positioned(
-              left: 16,
-              right: 16,
-              bottom: -cardOverlap,
-              child: _buildStoreInfoCard(store, colorScheme),
-            ),
-          ],
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: 0,
+                child: _buildStoreInfoCard(store, colorScheme),
+              ),
+            ],
+          ),
         ),
-        const SizedBox(height: cardOverlap + 32),
+        const SizedBox(height: 32),
       ],
     );
   }
@@ -1334,6 +1391,25 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
             const SizedBox(height: 12),
 
             _buildDeliveryModeBadge(store, colorScheme),
+            if (store.category?.trim() == 'صيدلية' ||
+                store.category?.trim() == '27fb2938-4949-4720-bbe1-56816279db0a' ||
+                store.name.contains('صيدلية') ||
+                store.name.contains('صيدليه')) ...[
+              const SizedBox(height: 12),
+              CustomButton(
+                text: 'طلب بروشتة 📄',
+                backgroundColor: AppColors.secondary,
+                onPressed: () {
+                  _checkLoginAndNavigate(() {
+                    Navigator.pushNamed(
+                      context,
+                      AppRoutes.uploadPrescription,
+                      arguments: store,
+                    );
+                  });
+                },
+              ),
+            ],
           ],
         ),
       ),
@@ -1433,7 +1509,7 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
                       Text(
                         hasMoreCoupons
                             ? 'عروض وخصومات متاحة (${activeCoupons.length})'
-                            : coupon.name,
+                            : _getCouponDisplayName(coupon),
                         style: const TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
@@ -1480,6 +1556,7 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
   void _showCouponDetails(CouponModel coupon) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
@@ -1490,152 +1567,265 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
             topRight: Radius.circular(20),
           ),
         ),
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFF9800).withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.local_offer,
-                    color: Color(0xFFFF9800),
-                    size: 28,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+        child: SafeArea(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Text(
-                        coupon.name,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1A1A1A),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFF9800).withValues(alpha: 0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.local_offer,
+                          color: Color(0xFFFF9800),
+                          size: 28,
                         ),
                       ),
-                      Text(
-                        'عرض خاص من ${_store?.name ?? ""}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey[600],
-                          fontWeight: FontWeight.w500,
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _getCouponDisplayName(coupon),
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF1A1A1A),
+                              ),
+                            ),
+                            Text(
+                              'عرض خاص من ${_store?.name ?? ""}',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[600],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.share, color: Color(0xFFFF9800)),
-                  onPressed: () {
-                    final shareText =
-                        '''
+                      IconButton(
+                        icon: const Icon(Icons.share, color: Color(0xFFFF9800)),
+                        onPressed: () {
+                          final shareText =
+                              '''
 🎁 كوبون خصم من ${_store?.name ?? "التل ماركت"}
 كود الخصم: ${coupon.code}
 قيمة الخصم: ${coupon.discountValueFormatted}
-${coupon.minimumOrderAmount > 0 ? "الحد الأدنى للطلب: ${coupon.minimumOrderAmount} ج.م" : ""}
-                    ''';
-                    final renderBox = context.findRenderObject() as RenderBox?;
-                    final origin = renderBox != null
-                        ? (renderBox.localToGlobal(Offset.zero) &
-                              renderBox.size)
-                        : null;
+                          ''';
+                          final renderBox = context.findRenderObject() as RenderBox?;
+                          final origin = renderBox != null
+                              ? (renderBox.localToGlobal(Offset.zero) &
+                                    renderBox.size)
+                              : null;
 
-                    SharePlus.instance.share(
-                      ShareParams(text: shareText, sharePositionOrigin: origin),
-                    );
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            InkWell(
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: coupon.code));
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('تم نسخ الكود للحافظة'),
-                    duration: Duration(seconds: 1),
+                          SharePlus.instance.share(
+                            ShareParams(text: shareText, sharePositionOrigin: origin),
+                          );
+                        },
+                      ),
+                    ],
                   ),
-                );
-              },
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[100],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: const Color(0xFFFF9800),
-                    width: 2,
-                    style: BorderStyle.solid,
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      coupon.code,
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 2,
-                        color: Color(0xFFFF9800),
+                  const SizedBox(height: 24),
+                  InkWell(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: coupon.code));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('تم نسخ الكود للحافظة'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: const Color(0xFFFF9800),
+                          width: 2,
+                          style: BorderStyle.solid,
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            coupon.code,
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 2,
+                              color: Color(0xFFFF9800),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Icon(Icons.copy, color: Color(0xFFFF9800), size: 24),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    const Icon(Icons.copy, color: Color(0xFFFF9800), size: 24),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildCouponDetailRow(
+                    icon: Icons.discount,
+                    label: 'قيمة الخصم',
+                    value: coupon.discountValueFormatted,
+                  ),
+                  if (coupon.validUntil != null)
+                    _buildCouponDetailRow(
+                      icon: Icons.schedule,
+                      label: 'صالح حتى',
+                      value: coupon.validUntilFormatted,
+                    ),
+                  if (coupon.description != null && coupon.description!.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(
+                        coupon.description!,
+                        style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                      ),
+                    ),
+                  if (coupon.couponType == CouponType.productSpecific &&
+                      coupon.productIds.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    const Text(
+                      'المنتجات المشمولة بالخصم (اضغط لفتح المنتج):',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1A1A1A),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FutureBuilder<List<ProductModel>>(
+                      future: ProductService.getProductsByIds(coupon.productIds),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) {
+                          return AppShimmer.wrap(
+                            context,
+                            child: AppShimmer.box(context, width: double.infinity, height: 60),
+                          );
+                        }
+                        if (snapshot.hasError || !snapshot.hasData || snapshot.data!.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+                        final products = snapshot.data!;
+                        return Column(
+                          children: products.map((product) {
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[50],
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.grey[200]!),
+                              ),
+                              child: InkWell(
+                                onTap: () {
+                                  Navigator.pop(context); // close sheet
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => ProductDetailScreen(product: product),
+                                    ),
+                                  );
+                                },
+                                borderRadius: BorderRadius.circular(12),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Row(
+                                    children: [
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: product.imageUrl != null && product.imageUrl!.isNotEmpty
+                                            ? CachedNetworkImage(
+                                                imageUrl: product.imageUrl!,
+                                                width: 50,
+                                                height: 50,
+                                                fit: BoxFit.cover,
+                                                placeholder: (context, url) => AppShimmer.wrap(
+                                                  context,
+                                                  child: AppShimmer.box(context, width: 50, height: 50),
+                                                ),
+                                                errorWidget: (context, url, error) => Container(
+                                                  width: 50,
+                                                  height: 50,
+                                                  color: Colors.grey[200],
+                                                  child: const Icon(Icons.shopping_bag_outlined, color: Colors.grey),
+                                                ),
+                                              )
+                                            : Container(
+                                                width: 50,
+                                                height: 50,
+                                                color: Colors.grey[200],
+                                                child: const Icon(Icons.shopping_bag_outlined, color: Colors.grey),
+                                              ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              product.name,
+                                              style: const TextStyle(
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.bold,
+                                                color: Color(0xFF1A1A1A),
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              '${product.price.toStringAsFixed(0)} ج.م',
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                color: Color(0xFFFF9800),
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const Icon(Icons.arrow_forward_ios_rounded, size: 16, color: Colors.grey),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          }).toList(),
+                        );
+                      },
+                    ),
                   ],
-                ),
+
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.check),
+                      label: const Text('تم'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFFF9800),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
-            _buildCouponDetailRow(
-              icon: Icons.discount,
-              label: 'قيمة الخصم',
-              value: coupon.discountValueFormatted,
-            ),
-            if (coupon.minimumOrderAmount > 0)
-              _buildCouponDetailRow(
-                icon: Icons.shopping_cart,
-                label: 'الحد الأدنى للطلب',
-                value: '${coupon.minimumOrderAmount.toStringAsFixed(0)} ج.م',
-              ),
-            if (coupon.validUntil != null)
-              _buildCouponDetailRow(
-                icon: Icons.schedule,
-                label: 'صالح حتى',
-                value: coupon.validUntilFormatted,
-              ),
-            if (coupon.description != null && coupon.description!.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: Text(
-                  coupon.description!,
-                  style: TextStyle(fontSize: 14, color: Colors.grey[700]),
-                ),
-              ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.check),
-                label: const Text('تم'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFFF9800),
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1777,7 +1967,7 @@ ${coupon.minimumOrderAmount > 0 ? "الحد الأدنى للطلب: ${coupon.mi
               children: [
                 Expanded(
                   child: Text(
-                    coupon.name,
+                    _getCouponDisplayName(coupon),
                     style: const TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -1835,15 +2025,6 @@ ${coupon.minimumOrderAmount > 0 ? "الحد الأدنى للطلب: ${coupon.mi
             const SizedBox(height: 8),
             Row(
               children: [
-                if (coupon.minimumOrderAmount > 0) ...[
-                  Icon(Icons.shopping_cart, size: 14, color: Colors.grey[600]),
-                  const SizedBox(width: 4),
-                  Text(
-                    'حد أدنى: ${coupon.minimumOrderAmount.toStringAsFixed(0)} ج.م',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                  ),
-                  const SizedBox(width: 12),
-                ],
                 Icon(Icons.schedule, size: 14, color: Colors.grey[600]),
                 const SizedBox(width: 4),
                 Text(
@@ -1884,6 +2065,20 @@ ${coupon.minimumOrderAmount > 0 ? "الحد الأدنى للطلب: ${coupon.mi
         ],
       ),
     );
+  }
+
+  String _getCouponDisplayName(CouponModel coupon) {
+    final name = coupon.name.trim();
+    if (name.contains('في القسيمة')) {
+      return name.replaceAll('في القسيمة', 'في ${_store?.name ?? 'المتجر'}');
+    }
+    if (name.contains('في القسيمه')) {
+      return name.replaceAll('في القسيمه', 'في ${_store?.name ?? 'المتجر'}');
+    }
+    if (name == 'مرحباً بك في القسيمة' || name == 'مرحبا بك في القسيمة' || name == 'مرحباً بك في القسيمه' || name == 'مرحبا بك في القسيمه') {
+      return 'مرحباً بك في ${_store?.name ?? 'المتجر'}';
+    }
+    return name;
   }
 
   /// Empty products state

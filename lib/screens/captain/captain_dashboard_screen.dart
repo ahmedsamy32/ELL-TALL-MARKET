@@ -178,23 +178,25 @@ class _CaptainDashboardState extends State<CaptainDashboard>
     final captain = authProvider.currentUserProfile;
     final isWide = MediaQuery.sizeOf(context).width >= 1200;
 
-    final captainBody = ResponsiveCenter(
-      maxWidth: 1000,
-      child: IndexedStack(
-        index: _selectedIndex,
-        children: [
-          // 0: لوحة التحكم الرئيسية
-          _buildDashboardTab(orderProvider, authProvider, theme, colorScheme),
-          // 1: الطلبات
-          captain != null
-              ? CaptainOrdersScreen(
-                  captainId: captain.id,
-                  captainName: captain.fullName ?? '',
-                )
-              : const SizedBox.shrink(),
-          // 2: المحفظة
-          const CaptainWalletScreen(),
-        ],
+    final captainBody = SafeArea(
+      child: ResponsiveCenter(
+        maxWidth: 1000,
+        child: IndexedStack(
+          index: _selectedIndex,
+          children: [
+            // 0: لوحة التحكم الرئيسية
+            _buildDashboardTab(orderProvider, authProvider, theme, colorScheme),
+            // 1: الطلبات
+            captain != null
+                ? CaptainOrdersScreen(
+                    captainId: captain.id,
+                    captainName: captain.fullName ?? '',
+                  )
+                : const SizedBox.shrink(),
+            // 2: المحفظة
+            const CaptainWalletScreen(),
+          ],
+        ),
       ),
     );
 
@@ -1814,7 +1816,7 @@ class _CaptainDashboardState extends State<CaptainDashboard>
 }
 
 // ===== Bottom Sheet Content Widget =====
-class _NotificationsBottomSheetContent extends StatelessWidget {
+class _NotificationsBottomSheetContent extends StatefulWidget {
   final String? targetRole;
   final ScrollController scrollController;
 
@@ -1822,6 +1824,67 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
     this.targetRole,
     required this.scrollController,
   });
+
+  @override
+  State<_NotificationsBottomSheetContent> createState() => _NotificationsBottomSheetContentState();
+}
+
+class _NotificationsBottomSheetContentState extends State<_NotificationsBottomSheetContent> {
+  bool _isSelectionMode = false;
+  final Set<String> _selectedIds = {};
+
+  void _toggleSelection(String id) {
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+        if (_selectedIds.isEmpty) {
+          _isSelectionMode = false;
+        }
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  void _confirmDeleteSelected(BuildContext context, NotificationProvider provider) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الإشهارات المحددة'),
+        content: Text('هل أنت متأكد من حذف ${_selectedIds.length} إشعار؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final idsToDelete = _selectedIds.toList();
+              setState(() {
+                _isSelectionMode = false;
+                _selectedIds.clear();
+              });
+              await provider.deleteNotifications(idsToDelete);
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('تم حذف الإشعارات المحددة'),
+                    backgroundColor: AppColors.danger,
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              }
+            },
+            child: const Text(
+              'حذف',
+              style: TextStyle(color: AppColors.danger),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1838,7 +1901,7 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
     }
 
     final notifications = notificationProvider.getNotificationsForRole(
-      targetRole,
+      widget.targetRole,
     );
 
     if (notificationProvider.error != null) {
@@ -1849,18 +1912,85 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
       return _buildEmpty(context);
     }
 
-    return ListView.builder(
-      controller: scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-      itemCount: notifications.length,
-      itemBuilder: (context, index) {
-        final notification = notifications[index];
-        return _buildNotificationItem(
-          context,
-          notification,
-          notificationProvider,
-        );
-      },
+    return Column(
+      children: [
+        if (_isSelectionMode)
+          Container(
+            color: Theme.of(context).primaryColor.withValues(alpha: 0.08),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    setState(() {
+                      _isSelectionMode = false;
+                      _selectedIds.clear();
+                    });
+                  },
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'تم تحديد ${_selectedIds.length}',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.select_all),
+                  tooltip: 'تحديد الكل',
+                  onPressed: () {
+                    setState(() {
+                      _selectedIds.addAll(notifications.map((n) => n.id));
+                    });
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.mark_email_read),
+                  tooltip: 'تحديد كمقروء',
+                  onPressed: () async {
+                    for (final id in _selectedIds) {
+                      await notificationProvider.markAsRead(id);
+                    }
+                    setState(() {
+                      _isSelectionMode = false;
+                      _selectedIds.clear();
+                    });
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('تم تحديد الإشعارات كمقروءة'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, color: AppColors.danger),
+                  tooltip: 'حذف المحدد',
+                  onPressed: () {
+                    _confirmDeleteSelected(context, notificationProvider);
+                  },
+                ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: ListView.builder(
+            controller: widget.scrollController,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            itemCount: notifications.length,
+            itemBuilder: (context, index) {
+              final notification = notifications[index];
+              return _buildNotificationItem(
+                context,
+                notification,
+                notificationProvider,
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
@@ -1963,7 +2093,7 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
     final theme = Theme.of(context);
     return Dismissible(
       key: Key(notification.id),
-      direction: DismissDirection.endToStart,
+      direction: _isSelectionMode ? DismissDirection.none : DismissDirection.endToStart,
       background: Container(
         margin: const EdgeInsets.symmetric(vertical: 4),
         decoration: BoxDecoration(
@@ -1996,9 +2126,16 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
             horizontal: 16,
             vertical: 8,
           ),
-          leading: _getNotificationIcon(
-            notification.type ?? NotificationType.system,
-          ),
+          leading: _isSelectionMode
+              ? Checkbox(
+                  value: _selectedIds.contains(notification.id),
+                  onChanged: (val) {
+                    _toggleSelection(notification.id);
+                  },
+                )
+              : _getNotificationIcon(
+                  notification.type ?? NotificationType.system,
+                ),
           title: Text(
             notification.title,
             style: TextStyle(
@@ -2038,14 +2175,26 @@ class _NotificationsBottomSheetContent extends StatelessWidget {
                   ),
                 ),
           onTap: () {
-            if (!notification.isRead) provider.markAsRead(notification.id);
-            Navigator.pop(context);
-            final data = Map<String, dynamic>.from(notification.data ?? {});
-            data.putIfAbsent('target_role', () => notification.targetRole);
-            if (!data.containsKey('type') && notification.type != null) {
-              data['type'] = notification.type!.value;
+            if (_isSelectionMode) {
+              _toggleSelection(notification.id);
+            } else {
+              if (!notification.isRead) provider.markAsRead(notification.id);
+              Navigator.pop(context);
+              final data = Map<String, dynamic>.from(notification.data ?? {});
+              data.putIfAbsent('target_role', () => notification.targetRole);
+              if (!data.containsKey('type') && notification.type != null) {
+                data['type'] = notification.type!.value;
+              }
+              NotificationServiceEnhanced.instance.handleNotificationAction(data);
             }
-            NotificationServiceEnhanced.instance.handleNotificationAction(data);
+          },
+          onLongPress: () {
+            if (!_isSelectionMode) {
+              setState(() {
+                _isSelectionMode = true;
+                _selectedIds.add(notification.id);
+              });
+            }
           },
         ),
       ),

@@ -15,7 +15,7 @@ class OrderCard extends StatelessWidget {
     required this.order,
     required this.onTap,
     this.showAutoAcceptCountdown = false,
-    this.autoAcceptDuration = const Duration(seconds: 60),
+    this.autoAcceptDuration = const Duration(seconds: 90),
   });
 
   @override
@@ -353,6 +353,50 @@ class _CompactOrderItemsList extends StatelessWidget {
                         '${item.quantity}× ${item.productPrice.toStringAsFixed(2)} ج.م',
                         style: TextStyle(fontSize: 12, color: Colors.grey[700]),
                       ),
+                      if (item.selectedOptions != null &&
+                          item.selectedOptions!.isNotEmpty) ...[
+                        Builder(
+                          builder: (context) {
+                            final Map<String, dynamic> selectedOpts = Map<String, dynamic>.from(item.selectedOptions ?? {});
+                            final attributes = selectedOpts.entries
+                                .where((e) => e.key != 'addons')
+                                .map((e) => '${e.key}: ${e.value}')
+                                .join(' | ');
+                            final addonsList = selectedOpts['addons'] as List<dynamic>?;
+                            final addonsText = addonsList != null && addonsList.isNotEmpty
+                                ? 'إضافات: ${addonsList.map((a) => a['name']).join(', ')}'
+                                : '';
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (attributes.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    attributes,
+                                    style: const TextStyle(
+                                      color: Colors.blue,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                                if (addonsText.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    addonsText,
+                                    style: const TextStyle(
+                                      color: Colors.green,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            );
+                          }
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -562,8 +606,11 @@ class _OrderFooter extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final hasDeliveryFee = order.deliveryFee > 0;
+    final hasDiscount = order.discountAmount > 0;
+    
+    // إجمالي المنتجات قبل خصم الكوبون
     final productsOnlyTotal =
-        (order.totalAmount - order.deliveryFee - order.taxAmount).clamp(
+        (order.totalAmount - order.deliveryFee - order.taxAmount + order.discountAmount).clamp(
           0.0,
           double.infinity,
         );
@@ -603,8 +650,38 @@ class _OrderFooter extends StatelessWidget {
               ),
             ],
           ),
+          if (hasDiscount) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Icon(
+                  Icons.card_giftcard_rounded,
+                  size: 17,
+                  color: Colors.red[700],
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  'خصم الكوبون ${order.couponCode != null ? "(${order.couponCode})" : ""}:',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.red[700],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  '-${order.discountAmount.toStringAsFixed(2)} ج.م',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.red[700],
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 6),
-          if (hasDeliveryFee)
+          if (hasDeliveryFee) ...[
             Row(
               children: [
                 Icon(
@@ -632,7 +709,8 @@ class _OrderFooter extends StatelessWidget {
                 ),
               ],
             ),
-          if (hasDeliveryFee) const SizedBox(height: 6),
+            const SizedBox(height: 6),
+          ],
           Row(
             children: [
               Icon(
@@ -710,8 +788,9 @@ class _StatusLabel extends StatelessWidget {
       case OrderStatus.confirmed:
         return 'new';
       case OrderStatus.preparing:
-      case OrderStatus.ready:
         return 'inProgress';
+      case OrderStatus.ready:
+        return 'ready';
       case OrderStatus.pickedUp:
       case OrderStatus.inTransit:
         return 'delivery';
@@ -728,6 +807,8 @@ class _StatusLabel extends StatelessWidget {
         return 'جديدة';
       case 'inProgress':
         return 'قيد التجهيز';
+      case 'ready':
+        return 'جاهز للتوصيل';
       case 'delivery':
         return 'في التوصيل';
       case 'completed':
@@ -745,6 +826,8 @@ class _StatusLabel extends StatelessWidget {
         return const Color(0xFFFF9800); // orange
       case 'inProgress':
         return const Color(0xFF2196F3); // blue
+      case 'ready':
+        return const Color(0xFF4CAF50); // green
       case 'delivery':
         return const Color(0xFF9C27B0); // purple
       case 'completed':
@@ -762,6 +845,8 @@ class _StatusLabel extends StatelessWidget {
         return Icons.notification_important_rounded;
       case 'inProgress':
         return Icons.inventory_2_rounded;
+      case 'ready':
+        return Icons.check_circle_outline_rounded;
       case 'delivery':
         return Icons.local_shipping_rounded;
       case 'completed':
