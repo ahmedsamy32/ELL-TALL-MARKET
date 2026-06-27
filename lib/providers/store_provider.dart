@@ -525,8 +525,29 @@ class StoreProvider with ChangeNotifier {
   }
 
   String _resolveStoreCategoryId(StoreModel store) {
-    final category = store.category?.trim();
-    if (category != null && category.isNotEmpty) {
+    final category = store.category?.trim() ?? '';
+    final name = store.name.trim();
+
+    // 1. Unify Pharmacy under the official database UUID
+    if (category == '27fb2938-4949-4720-bbe1-56816279db0a' ||
+        category == 'صيدلية' ||
+        category == 'صيدليات' ||
+        category == 'pharmacy' ||
+        name.contains('صيدلية') ||
+        name.contains('صيدليه')) {
+      return '27fb2938-4949-4720-bbe1-56816279db0a';
+    }
+
+    // 2. Unify Clothing under the official database UUID
+    if (category == '822c0cf0-3f31-4b8b-97a6-64e50bd72cd6' ||
+        category == 'clothing' ||
+        category == 'ملابس' ||
+        category == 'أزياء' ||
+        category == 'ملابس وأزياء') {
+      return '822c0cf0-3f31-4b8b-97a6-64e50bd72cd6';
+    }
+
+    if (category.isNotEmpty) {
       return category;
     }
     return _getCategoryFromName(store.name);
@@ -534,6 +555,8 @@ class StoreProvider with ChangeNotifier {
 
   String _formatCategoryLabel(String raw) {
     if (raw.isEmpty) return 'عام';
+    if (raw == '27fb2938-4949-4720-bbe1-56816279db0a') return 'صيدلية';
+    if (raw == '822c0cf0-3f31-4b8b-97a6-64e50bd72cd6') return 'ملابس وأزياء';
     return raw;
   }
 
@@ -542,6 +565,10 @@ class StoreProvider with ChangeNotifier {
     if (categoryId == null || categoryId.isEmpty) {
       return 'غير محدد';
     }
+
+    // Fallbacks for known UUIDs
+    if (categoryId == '27fb2938-4949-4720-bbe1-56816279db0a') return 'صيدلية';
+    if (categoryId == '822c0cf0-3f31-4b8b-97a6-64e50bd72cd6') return 'ملابس وأزياء';
 
     // Check internal mapping first for performance
     if (_categoryMapping.containsKey(categoryId)) {

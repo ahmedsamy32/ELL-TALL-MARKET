@@ -250,7 +250,8 @@ class CategoryProvider with ChangeNotifier {
     final available = <String>{..._availableCategoryIdsFromProducts};
     if (_availableCategoryNamesFromStores.isNotEmpty) {
       for (final category in _categories) {
-        if (_availableCategoryNamesFromStores.contains(category.name)) {
+        if (_availableCategoryNamesFromStores.contains(category.name) ||
+            _availableCategoryNamesFromStores.contains(category.id)) {
           available.add(category.id);
         }
       }

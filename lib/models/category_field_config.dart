@@ -58,6 +58,7 @@ class CategoryFieldConfig {
     final mapping = <String, String>{
       // UUID الفعلي من قاعدة البيانات -> categoryId
       '822c0cf0-3f31-4b8b-97a6-64e50bd72cd6': 'clothing', // ملابس وأزياء
+      '27fb2938-4949-4720-bbe1-56816279db0a': 'pharmacy', // صيدلية
       // أضف المزيد من الـ UUIDs هنا عند الحاجة
       // مثال:
       // 'uuid-مطاعم': 'restaurant',

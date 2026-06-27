@@ -663,9 +663,28 @@ class _CategoryScreenState extends State<CategoryScreen> {
       },
     };
 
-    final key = category.name.toLowerCase();
+    final nameLower = category.name.toLowerCase();
+    final idLower = category.id.toLowerCase();
+    
+    String styleKey = 'default';
+    if (nameLower.contains('سوبر') || nameLower.contains('بقالة') || nameLower.contains('grocery') || nameLower.contains('supermarket')) {
+      styleKey = 'supermarket';
+    } else if (nameLower.contains('صيدل') || nameLower.contains('pharmacy') || idLower == '27fb2938-4949-4720-bbe1-56816279db0a') {
+      styleKey = 'pharmacy';
+    } else if (nameLower.contains('مطعم') || nameLower.contains('مطاعم') || nameLower.contains('restaurant') || nameLower.contains('restaurants')) {
+      styleKey = 'restaurants';
+    } else if (nameLower.contains('مخبز') || nameLower.contains('bakery') || nameLower.contains('حلويات')) {
+      styleKey = 'bakery';
+    } else if (nameLower.contains('جزار') || nameLower.contains('butcher') || nameLower.contains('لحوم')) {
+      styleKey = 'butcher';
+    } else if (nameLower.contains('خضار') || nameLower.contains('فواكه') || nameLower.contains('vegetable') || nameLower.contains('vegetables')) {
+      styleKey = 'vegetables';
+    } else {
+      styleKey = nameLower;
+    }
+
     final style =
-        categoryStyles[key] ??
+        categoryStyles[styleKey] ??
         {
           'icon': Icons.store_rounded,
           'color': colorScheme.primary,
