@@ -923,9 +923,10 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
                                           _loadData();
                                         } catch (e) {
                                           if (!mounted) return;
+                                          final errorMsg = e is PostgrestException ? e.message : e.toString();
                                           ScaffoldMessenger.of(context).showSnackBar(
                                             SnackBar(
-                                              content: Text('فشل تفعيل الباقة: $e'),
+                                              content: Text('فشل تفعيل الباقة: $errorMsg'),
                                               backgroundColor: Colors.red,
                                             ),
                                           );
@@ -1756,9 +1757,10 @@ class _TopupBottomSheetState extends State<_TopupBottomSheet> {
                                 widget.onLoadData();
                               } catch (e) {
                                 if (!mounted) return;
+                                final errorMsg = e is PostgrestException ? e.message : e.toString();
                                 messenger.showSnackBar(
                                   SnackBar(
-                                    content: Text('خطأ أثناء إرسال الطلب: $e'),
+                                    content: Text('خطأ أثناء إرسال الطلب: $errorMsg'),
                                     backgroundColor: Colors.red,
                                   ),
                                 );
