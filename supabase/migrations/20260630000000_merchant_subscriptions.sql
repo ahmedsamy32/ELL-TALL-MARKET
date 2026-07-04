@@ -350,3 +350,71 @@ BEGIN
     );
 END;
 $$;
+
+
+-- 7️⃣ وظيفة تفعيل اشتراك باقة لتاجر والتحقق من الرصيد الكافي
+CREATE OR REPLACE FUNCTION public.activate_merchant_subscription(
+    p_merchant_id UUID,
+    p_tier_id INT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_monthly_price DECIMAL(10, 2);
+    v_included_orders INT;
+    v_wallet_balance DECIMAL(10, 2);
+    v_tier_name VARCHAR(50);
+BEGIN
+    -- 1. جلب تفاصيل الباقة المطلوبة
+    SELECT monthly_price, included_orders, name
+    INTO v_monthly_price, v_included_orders, v_tier_name
+    FROM public.subscription_tiers
+    WHERE id = p_tier_id;
+
+    IF v_tier_name IS NULL THEN
+        RAISE EXCEPTION 'الباقة المطلوبة غير موجودة في النظام';
+    END IF;
+
+    -- 2. جلب رصيد المحفظة الحالي للتاجر مع قفل الصف لمنع التعارض والسباق
+    SELECT wallet_balance
+    INTO v_wallet_balance
+    FROM public.merchants
+    WHERE id = p_merchant_id
+    FOR UPDATE;
+
+    IF v_wallet_balance IS NULL THEN
+        RAISE EXCEPTION 'التاجر غير موجود في النظام';
+    END IF;
+
+    -- 3. التحقق من كفاية رصيد المحفظة لتفعيل الباقة
+    IF v_wallet_balance < v_monthly_price THEN
+        RAISE EXCEPTION 'رصيد المحفظة غير كافٍ لتفعيل الباقة. سعر الباقة: % جنيه، رصيدك الحالي: % جنيه', 
+                        v_monthly_price, v_wallet_balance;
+    END IF;
+
+    -- 4. خصم قيمة الباقة من المحفظة وتحديث بيانات الاشتراك
+    UPDATE public.merchants
+    SET wallet_balance = wallet_balance - v_monthly_price,
+        current_tier_id = p_tier_id,
+        remaining_orders = v_included_orders,
+        overlimit_orders_count = 0, -- إعادة تصفير عداد الأوردرات الإضافية
+        package_expiry_date = NOW() + INTERVAL '30 days',
+        status = 'active', -- إعادة تفعيل المتجر تلقائياً لو كان موقوفاً
+        updated_at = NOW()
+    WHERE id = p_merchant_id;
+
+    -- 5. تسجيل حركة الخصم في جدول الحركات للشفافية
+    INSERT INTO public.wallet_transactions (merchant_id, amount, type, description)
+    VALUES (
+        p_merchant_id, 
+        v_monthly_price, 
+        'debit', 
+        'خصم قيمة الاشتراك في ' || v_tier_name
+    );
+
+END;
+$$;
+
