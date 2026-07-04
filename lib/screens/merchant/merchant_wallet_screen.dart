@@ -269,7 +269,10 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
       _errorMessage = 'حدث خطأ أثناء تحميل بيانات المحفظة. حاول لاحقاً.';
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('حدث خطأ في تحميل البيانات')));
+      ).showSnackBar(SnackBar(
+        content: Text('حدث خطأ في تحميل البيانات'),
+        behavior: SnackBarBehavior.floating,
+      ));
       setState(() => _isLoading = false);
     } finally {
       _isLoadingData = false;
@@ -914,9 +917,10 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
                                           }
 
                                           ScaffoldMessenger.of(context).showSnackBar(
-                                            SnackBar(
-                                              content: Text('تم تفعيل $tierName بنجاح'),
+                                            const SnackBar(
+                                              content: Text('تم تفعيل الباقة بنجاح'),
                                               backgroundColor: Colors.green,
+                                              behavior: SnackBarBehavior.floating,
                                             ),
                                           );
 
@@ -928,6 +932,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
                                             SnackBar(
                                               content: Text('فشل تفعيل الباقة: $errorMsg'),
                                               backgroundColor: Colors.red,
+                                              behavior: SnackBarBehavior.floating,
                                             ),
                                           );
                                         } finally {
@@ -993,6 +998,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
         SnackBar(
           content: Text(permissionResult.message ?? 'تم رفض إذن الوصول للصور'),
           backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
         ),
       );
       return null;
@@ -1699,6 +1705,7 @@ class _TopupBottomSheetState extends State<_TopupBottomSheet> {
                                   const SnackBar(
                                     content: Text('يرجى إدخال مبلغ صحيح'),
                                     backgroundColor: Colors.red,
+                                    behavior: SnackBarBehavior.floating,
                                   ),
                                 );
                                 return;
@@ -1709,6 +1716,7 @@ class _TopupBottomSheetState extends State<_TopupBottomSheet> {
                                   const SnackBar(
                                     content: Text('يرجى إرفاق صورة الإيصال'),
                                     backgroundColor: Colors.red,
+                                    behavior: SnackBarBehavior.floating,
                                   ),
                                 );
                                 return;
@@ -1752,6 +1760,7 @@ class _TopupBottomSheetState extends State<_TopupBottomSheet> {
                                   const SnackBar(
                                     content: Text('تم إرسال طلب الشحن بنجاح'),
                                     backgroundColor: Colors.green,
+                                    behavior: SnackBarBehavior.floating,
                                   ),
                                 );
                                 widget.onLoadData();
@@ -1762,6 +1771,7 @@ class _TopupBottomSheetState extends State<_TopupBottomSheet> {
                                   SnackBar(
                                     content: Text('خطأ أثناء إرسال الطلب: $errorMsg'),
                                     backgroundColor: Colors.red,
+                                    behavior: SnackBarBehavior.floating,
                                   ),
                                 );
                               } finally {
