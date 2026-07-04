@@ -459,7 +459,7 @@ class StoreService {
     }
 
     // النقاط حسب الإيرادات
-    final revenue = stats['total_revenue'] as double? ?? 0.0;
+    final revenue = (stats['total_revenue'] as num?)?.toDouble() ?? 0.0;
     if (revenue >= 10000) {
       score += 30;
     } else if (revenue >= 5000) {

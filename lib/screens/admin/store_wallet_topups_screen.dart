@@ -243,7 +243,7 @@ class _StoreWalletTopupsScreenState extends State<StoreWalletTopupsScreen>
       try {
         final storesResponse = await _supabase
             .from('stores')
-            .select('id, name, category')
+            .select('id, name, category, merchant:merchants(remaining_orders, subscription_tiers(name))')
             .order('name');
         final stores = List<Map<String, dynamic>>.from(storesResponse as List);
         final storeIds = stores
@@ -357,12 +357,32 @@ class _StoreWalletTopupsScreenState extends State<StoreWalletTopupsScreen>
             final balance = storeId == null
                 ? 0.0
                 : (storeBalanceMap[storeId] ?? 0.0);
+
+            final merchantData = store['merchant'];
+            Map<String, dynamic>? merchantMap;
+            if (merchantData is Map<String, dynamic>) {
+              merchantMap = merchantData;
+            } else if (merchantData is List && merchantData.isNotEmpty) {
+              merchantMap = merchantData.first as Map<String, dynamic>?;
+            }
+            final remainingOrders = merchantMap?['remaining_orders'] as int? ?? 0;
+            final tierData = merchantMap?['subscription_tiers'];
+            Map<String, dynamic>? tierMap;
+            if (tierData is Map<String, dynamic>) {
+              tierMap = tierData;
+            } else if (tierData is List && tierData.isNotEmpty) {
+              tierMap = tierData.first as Map<String, dynamic>?;
+            }
+            final packageName = tierMap?['name']?.toString() ?? 'بدون باقة';
+            final packageInfo = "$packageName ($remainingOrders أوردر متبقي)";
+
             return {
               'id': storeId,
               'name': name,
               'balance': balance,
               'type': 'store',
               'category': categoryLabel,
+              'package_info': packageInfo,
             };
           }),
         );
@@ -1051,10 +1071,11 @@ class _StoreWalletTopupsScreenState extends State<StoreWalletTopupsScreen>
           final name = row['name']?.toString() ?? 'غير معروف';
           final balance = (row['balance'] as num?)?.toDouble() ?? 0.0;
           final category = row['category']?.toString();
+          final packageInfo = row['package_info']?.toString() ?? 'بدون باقة';
           final subtitle = row['type'] == 'store'
               ? (category != null && category.trim().isNotEmpty
-                    ? 'متجر • فئة: $category'
-                    : 'متجر • بدون فئة')
+                    ? 'متجر • فئة: $category\nالباقة: $packageInfo'
+                    : 'متجر • بدون فئة\nالباقة: $packageInfo')
               : 'مكتب';
 
           return Card(
@@ -1062,6 +1083,7 @@ class _StoreWalletTopupsScreenState extends State<StoreWalletTopupsScreen>
               title: Text(name),
               subtitle: Text(subtitle),
               trailing: Text(balance.toStringAsFixed(2)),
+              isThreeLine: row['type'] == 'store',
             ),
           );
         },

@@ -84,7 +84,7 @@ class FinancialServiceEnhanced {
       final recentTransactions = <Map<String, dynamic>>[];
 
       for (final transaction in transactionsList) {
-        final amount = (transaction['amount'] as double?) ?? 0.0;
+        final amount = (transaction['amount'] as num?)?.toDouble() ?? 0.0;
         final status = transaction['status'] as String?;
         final type = transaction['type'] as String?;
 
@@ -174,7 +174,7 @@ class FinancialServiceEnhanced {
       final monthlyBreakdown = <String, double>{};
 
       for (final transaction in transactionsList) {
-        final amount = (transaction['amount'] as double?) ?? 0.0;
+        final amount = (transaction['amount'] as num?)?.toDouble() ?? 0.0;
         final status = transaction['status'] as String?;
         final type = transaction['type'] as String?;
         final createdAt = DateTime.parse(transaction['created_at']);
@@ -880,7 +880,7 @@ class FinancialServiceEnhanced {
       double exemptRevenue = 0;
 
       for (final transaction in transactions) {
-        final amount = (transaction['amount'] as double?) ?? 0.0;
+        final amount = (transaction['amount'] as num?)?.toDouble() ?? 0.0;
         final isExempt = _isTransactionTaxExempt(transaction);
 
         totalRevenue += amount;
@@ -1007,9 +1007,9 @@ class FinancialServiceEnhanced {
   int _calculateFinancialHealthScore(Map<String, dynamic> metrics) {
     double score = 50; // Base score
 
-    final revenue = metrics['revenue'] as double? ?? 0.0;
-    final refunds = metrics['refunds'] as double? ?? 0.0;
-    final balance = metrics['balance'] as double? ?? 0.0;
+    final revenue = (metrics['revenue'] as num?)?.toDouble() ?? 0.0;
+    final refunds = (metrics['refunds'] as num?)?.toDouble() ?? 0.0;
+    final balance = (metrics['balance'] as num?)?.toDouble() ?? 0.0;
 
     // Positive indicators
     if (revenue > 0) score += 20;

@@ -208,7 +208,7 @@ class ProductVariant {
               .toList() ??
           [],
       sku: json['sku'] as String,
-      price: json['price'] as double?,
+      price: (json['price'] as num?)?.toDouble(),
       stockQuantity: json['stock_quantity'] as int?,
       imageUrl: json['image_url'] as String?,
       isActive: json['is_active'] as bool? ?? true,

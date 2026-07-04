@@ -372,7 +372,7 @@ class PaymentServiceEnhanced {
       );
 
       // Update original payment status
-      final originalAmount = paymentRecord['amount'] as double;
+      final originalAmount = (paymentRecord['amount'] as num).toDouble();
       PaymentStatusEnhanced newStatus;
 
       if (amount >= originalAmount) {
@@ -523,9 +523,9 @@ class PaymentServiceEnhanced {
         return _createErrorResponse(transferCalculation['error']);
       }
 
-      final transferAmount = transferCalculation['transfer_amount'] as double;
-      final commission = transferCalculation['commission'] as double;
-      final fees = transferCalculation['fees'] as double;
+      final transferAmount = (transferCalculation['transfer_amount'] as num).toDouble();
+      final commission = (transferCalculation['commission'] as num).toDouble();
+      final fees = (transferCalculation['fees'] as num).toDouble();
 
       final transactionId = _generateTransactionId();
       final now = DateTime.now();

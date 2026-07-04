@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
@@ -25,7 +26,6 @@ class MerchantWalletScreen extends StatefulWidget {
 
 class _MerchantWalletScreenState extends State<MerchantWalletScreen>
     with SingleTickerProviderStateMixin {
-  static const String _instapayNumber = '';
   late TabController _tabController;
   bool _isLoading = true;
   bool _isLoadingData = false;
@@ -48,6 +48,15 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
   List<StoreModel> _merchantStores = [];
   StoreModel? _selectedStore;
   bool _isSubmittingTopup = false;
+
+  // Subscription state variables
+  String _currentPackageName = 'بدون باقة نشطة';
+  int _remainingOrders = 0;
+  String _packageExpiryDate = '';
+  bool _isSubmittingSubscription = false;
+  int? _currentTierId;
+  int _includedOrders = 0;
+  int _remainingDays = 0;
 
   @override
   void initState() {
@@ -121,6 +130,49 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
       );
 
       final currentBalance = (wallet?['balance'] as num?)?.toDouble() ?? 0.0;
+
+      // Fetch merchant subscription details
+      String packageName = 'بدون باقة نشطة';
+      int remainingOrders = 0;
+      String expiryDateStr = '';
+      int? currentTierId;
+      int includedOrders = 0;
+      int remainingDays = 0;
+
+      try {
+        final merchantSubData = await Supabase.instance.client
+            .from('merchants')
+            .select('current_tier_id, remaining_orders, package_expiry_date, subscription_tiers(name, included_orders)')
+            .eq('id', merchant.id)
+            .maybeSingle();
+
+        if (merchantSubData != null) {
+          currentTierId = merchantSubData['current_tier_id'] as int?;
+          remainingOrders = merchantSubData['remaining_orders'] as int? ?? 0;
+          final expiryDateRaw = merchantSubData['package_expiry_date'];
+          if (expiryDateRaw != null) {
+            final parsedDate = DateTime.tryParse(expiryDateRaw.toString());
+            if (parsedDate != null) {
+              expiryDateStr = intl.DateFormat('yyyy/MM/dd').format(parsedDate);
+              remainingDays = parsedDate.difference(DateTime.now()).inDays;
+              if (remainingDays < 0) remainingDays = 0;
+            }
+          }
+          final dynamic tierData = merchantSubData['subscription_tiers'];
+          if (tierData is Map) {
+            packageName = tierData['name']?.toString() ?? 'بدون باقة نشطة';
+            includedOrders = tierData['included_orders'] as int? ?? 0;
+          } else if (tierData is List && tierData.isNotEmpty) {
+            final first = tierData.first;
+            if (first is Map) {
+              packageName = first['name']?.toString() ?? 'بدون باقة نشطة';
+              includedOrders = first['included_orders'] as int? ?? 0;
+            }
+          }
+        }
+      } catch (e) {
+        // Log error silently
+      }
 
       final transactionRows = await StoreWalletService.getTransactions(
         _currentStoreId!,
@@ -200,6 +252,12 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
       if (!mounted) return;
       setState(() {
         _currentBalance = currentBalance;
+        _currentPackageName = packageName;
+        _remainingOrders = remainingOrders;
+        _packageExpiryDate = expiryDateStr;
+        _currentTierId = currentTierId;
+        _includedOrders = includedOrders;
+        _remainingDays = remainingDays;
         _transactions = latestTransactions;
         _summary = summary;
         _filteredTransactions = filteredTransactions;
@@ -376,36 +434,532 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
     );
   }
 
-  Widget _buildTopupCard() {
-    final instapayText = _instapayNumber.isEmpty
-        ? 'رقم إنستا باي غير مضبوط بعد'
-        : _instapayNumber;
+  Widget _buildRedesignedMainCard() {
+    // Determine package name label in Arabic
+    String packageLabel = _currentPackageName;
+    if (_currentPackageName == 'Basic') {
+      packageLabel = 'الباقة الأساسية';
+    } else if (_currentPackageName == 'Pro') {
+      packageLabel = 'باقة النمو (Pro)';
+    } else if (_currentPackageName == 'Unlimited') {
+      packageLabel = 'الباقة غير المحدودة (Unlimited)';
+    }
+
+    final isUnlimited = _includedOrders == -1 || 
+                       _currentPackageName.toLowerCase().contains('unlimited') || 
+                       _currentPackageName.contains('غير محدود');
+
+    // Calculate consumption progress
+    double progress = 0.0;
+    int spentOrders = 0;
+    if (!isUnlimited && _includedOrders > 0) {
+      spentOrders = _includedOrders - _remainingOrders;
+      if (spentOrders < 0) spentOrders = 0;
+      progress = spentOrders / _includedOrders;
+      if (progress > 1.0) progress = 1.0;
+    }
+
+    // Textual progress bar representation [████████░░░░]
+    String textProgressBar = '';
+    if (!isUnlimited && _includedOrders > 0) {
+      final int totalBlocks = 12;
+      final int filledBlocks = (progress * totalBlocks).round();
+      final int emptyBlocks = totalBlocks - filledBlocks;
+      textProgressBar = '[${'█' * filledBlocks}${'░' * emptyBlocks}]';
+    }
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+      margin: const EdgeInsets.all(16),
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            colors: [
+              Theme.of(context).primaryColor,
+              Theme.of(context).primaryColor.withValues(alpha: 0.8),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'شحن المحفظة عبر إنستا باي',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            // Title & logo
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _selectedStore != null ? '${_selectedStore!.name} - سوق التل' : 'محفظة متجرك - سوق التل',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Icon(Icons.account_balance_wallet, color: Colors.white),
+              ],
             ),
-            const SizedBox(height: 8),
-            Text('أرسل التحويل إلى: $instapayText'),
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: ElevatedButton.icon(
-                onPressed: _isSubmittingTopup ? null : _showTopupDialog,
-                icon: const Icon(Icons.upload_file),
-                label: const Text('طلب شحن جديد'),
+            const Divider(color: Colors.white24, height: 24),
+            
+            // Balance
+            const Text(
+              'الرصيد المتاح:',
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${_currentBalance.toStringAsFixed(2)} ج.م',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            
+            // Subscription details
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        '$packageLabel - نشطة ⚡',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (isUnlimited) ...[
+                    const Text(
+                      'استهلاك الأوردرات: غير محدود ⚡',
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ] else if (_includedOrders > 0) ...[
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'استهلاك الأوردرات:',
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                        Text(
+                          '$spentOrders / $_includedOrders أوردر',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    // Graphical progress bar
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: progress,
+                        backgroundColor: Colors.white24,
+                        valueColor: const AlwaysStoppedAnimation<Color>(Colors.greenAccent),
+                        minHeight: 8,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    // Text progress bar [████████░░░░]
+                    Text(
+                      textProgressBar,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                  ] else ...[
+                    const Text(
+                      'لا يوجد باقة نشطة حالياً',
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                  ],
+                  if (_packageExpiryDate.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'ينتهي الاشتراك في: $_packageExpiryDate (باقي $_remainingDays يوم)',
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ],
+                ],
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildQuickActions() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'أزرار التحكم السريع (Quick Actions)',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _isSubmittingTopup ? null : _showTopupDialog,
+                  icon: const Icon(Icons.add_circle_outline, size: 18),
+                  label: const Text('➕ شحن بإنستا باي', style: TextStyle(fontSize: 12)),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _isSubmittingSubscription ? null : _showSubscriptionSelectionDialog,
+                  icon: const Icon(Icons.autorenew, size: 18),
+                  label: const Text('🔄 ترقية/تجديد الباقة', style: TextStyle(fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSmartInsights() {
+    String insightText = '💡 اشترك في إحدى باقات سوق التل الذكية للحصول على عدد طلبات مجاني وتوفير رسوم التشغيل.';
+    
+    if (_currentTierId == 1) {
+      insightText = '💡 مبيعاتك ممتازة! لو رقيت لباقة النمو (Pro) هتوفر في رسوم الأوردرات الإضافية بناءً على معدل مبيعاتك الحالي.';
+    } else if (_currentTierId == 2) {
+      insightText = '💡 مبيعاتك ممتازة! لو رقيت للباقة غير المحدودة (Unlimited) هتوفر حوالي 45 جنيه بناءً على معدل أوردراتك الحالي.';
+    } else if (_currentTierId == 3) {
+      insightText = '💡 أنت مشترك في الباقة غير المحدودة! مبيعاتك في نمو مستمر وتوفر 100% من رسوم الأوردرات الإضافية.';
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.amber.shade50.withValues(alpha: 0.8),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.amber.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.lightbulb, color: Colors.amber.shade800, size: 20),
+              const SizedBox(width: 8),
+              const Text(
+                'قسم التنبيهات الذكية (Smart Insights)',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.black87),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            insightText,
+            style: const TextStyle(fontSize: 12, color: Colors.black87, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransactionsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Text(
+            '🕒 أحدث الحركات:',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+        ),
+        _buildStatusFilter(),
+        if (_filteredTransactions.isEmpty)
+          Container(
+            height: 200,
+            alignment: Alignment.center,
+            child: const Text('لا توجد معاملات حديثة'),
+          )
+        else
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _filteredTransactions.length,
+            itemBuilder: (context, index) {
+              final t = _filteredTransactions[index];
+              return _buildRedesignedTransactionCard(t);
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _buildRedesignedTransactionCard(FinancialTransactionModel transaction) {
+    final rawAmount = transaction.amount;
+    final isNegativeAmount = rawAmount < 0;
+    
+    // Determine sign and direction icon
+    String directionIcon = '⬆️';
+    String amountPrefix = '+';
+    Color amountColor = Colors.green;
+    
+    final typeCode = _getTransactionTypeCode(transaction);
+    if (typeCode == 'deposit') {
+      directionIcon = '⬆️';
+      amountPrefix = '+';
+      amountColor = Colors.green;
+    } else {
+      directionIcon = '⬇️';
+      amountPrefix = '-';
+      amountColor = Colors.red;
+    }
+    
+    if (isNegativeAmount) {
+      amountPrefix = '-';
+      amountColor = Colors.red;
+    }
+
+    final dateText = intl.DateFormat('MM/dd').format(transaction.createdAt);
+    
+    // Clean up description based on transaction title and orderId
+    String titleText = _getTransactionTitle(transaction);
+    if (transaction.orderId.isNotEmpty) {
+      titleText = 'رسوم أوردر إضافي (#${transaction.orderId})';
+    } else if (transaction.notes != null && transaction.notes!.contains('تجديد')) {
+      titleText = transaction.notes!;
+    } else if (typeCode == 'deposit') {
+      titleText = 'شحن محفظة (إنستا باي)';
+    }
+
+    final amountText = '$amountPrefix${_settingsProvider.formatCurrency(rawAmount.abs())}';
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: ListTile(
+        leading: Text(directionIcon, style: const TextStyle(fontSize: 18)),
+        title: Text(
+          titleText,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              amountText,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: amountColor,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '($dateText)',
+              style: TextStyle(fontSize: 11, color: Theme.of(context).hintColor),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showSubscriptionSelectionDialog() async {
+    final merchantProvider = Provider.of<MerchantProvider>(context, listen: false);
+    final merchant = merchantProvider.selectedMerchant;
+    if (merchant == null) return;
+
+    final List<Map<String, dynamic>> tiers = [
+      {
+        'id': 1,
+        'name': 'الباقة الأساسية',
+        'price': '150 جنيه',
+        'details': '30 طلب / شهر',
+      },
+      {
+        'id': 2,
+        'name': 'الباقة الاحترافية',
+        'price': '450 جنيه',
+        'details': '100 طلب / شهر',
+      },
+      {
+        'id': 3,
+        'name': 'الباقة غير المحدودة',
+        'price': '900 جنيه',
+        'details': 'طلبات غير محدودة / شهر',
+      },
+    ];
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetStateContext, setDialogState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Pull handler
+                    Container(
+                      width: 40,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'اختر الباقة المناسبة',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                    ),
+                    const SizedBox(height: 16),
+                    ListView.separated(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: tiers.length,
+                      separatorBuilder: (_, _) => const Divider(),
+                      itemBuilder: (itemContext, index) {
+                        final tier = tiers[index];
+                        final tierId = tier['id'] as int;
+                        final tierName = tier['name'] as String;
+                        final tierPrice = tier['price'] as String;
+                        final tierDetails = tier['details'] as String;
+
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      tierName,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '$tierDetails - السعر: $tierPrice',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: Theme.of(itemContext).hintColor,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              ElevatedButton(
+                                onPressed: _isSubmittingSubscription
+                                    ? null
+                                    : () async {
+                                        setDialogState(() {
+                                          _isSubmittingSubscription = true;
+                                        });
+                                        setState(() {
+                                          _isSubmittingSubscription = true;
+                                        });
+
+                                        try {
+                                          await Supabase.instance.client.rpc(
+                                            'activate_merchant_subscription',
+                                            params: {
+                                              'p_merchant_id': merchant.id,
+                                              'p_tier_id': tierId,
+                                            },
+                                          );
+
+                                          if (!mounted) return;
+                                          if (sheetContext.mounted) {
+                                            Navigator.pop(sheetContext);
+                                          }
+
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(
+                                              content: Text('تم تفعيل $tierName بنجاح'),
+                                              backgroundColor: Colors.green,
+                                            ),
+                                          );
+
+                                          _loadData();
+                                        } catch (e) {
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(
+                                              content: Text('فشل تفعيل الباقة: $e'),
+                                              backgroundColor: Colors.red,
+                                            ),
+                                          );
+                                        } finally {
+                                          if (mounted) {
+                                            setState(() {
+                                              _isSubmittingSubscription = false;
+                                            });
+                                          }
+                                        }
+                                      },
+                                child: const Text('تفعيل'),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(sheetContext),
+                        child: const Text('إلغاء'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -417,155 +971,189 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
     final notesController = TextEditingController();
     _ReceiptImage? receiptImage;
 
-    await showDialog(
+    await showModalBottomSheet(
       context: context,
-      builder: (dialogContext) {
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('طلب شحن المحفظة'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: amountController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
+          builder: (sheetStateContext, setDialogState) {
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  20,
+                  16,
+                  MediaQuery.of(sheetStateContext).viewInsets.bottom + 16,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Pull handler
+                      Container(
+                        width: 40,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
                       ),
-                      decoration: const InputDecoration(
-                        labelText: 'مبلغ الشحن',
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 16),
+                      const Text(
+                        'طلب شحن المحفظة',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: referenceController,
-                      decoration: const InputDecoration(
-                        labelText: 'مرجع إنستا باي (اختياري)',
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 20),
+                      TextField(
+                        controller: amountController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'مبلغ الشحن',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: notesController,
-                      maxLines: 2,
-                      decoration: const InputDecoration(
-                        labelText: 'ملاحظات (اختياري)',
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: referenceController,
+                        decoration: const InputDecoration(
+                          labelText: 'مرجع إنستا باي (اختياري)',
+                          border: OutlineInputBorder(),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: () async {
-                        final picked = await _pickReceiptImage();
-                        if (picked == null) return;
-                        setDialogState(() {
-                          receiptImage = picked;
-                        });
-                      },
-                      icon: const Icon(Icons.image),
-                      label: const Text('إرفاق صورة الإيصال'),
-                    ),
-                    if (receiptImage != null) ...[
-                      const SizedBox(height: 8),
-                      Text('تم اختيار: ${receiptImage!.fileName}'),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: notesController,
+                        maxLines: 2,
+                        decoration: const InputDecoration(
+                          labelText: 'ملاحظات (اختياري)',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final picked = await _pickReceiptImage();
+                          if (picked == null) return;
+                          setDialogState(() {
+                            receiptImage = picked;
+                          });
+                        },
+                        icon: const Icon(Icons.image),
+                        label: const Text('إرفاق صورة الإيصال'),
+                      ),
+                      if (receiptImage != null) ...[
+                        const SizedBox(height: 8),
+                        Text('تم اختيار: ${receiptImage!.fileName}'),
+                      ],
+                      const SizedBox(height: 20),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.pop(sheetContext),
+                              child: const Text('إلغاء'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: _isSubmittingTopup
+                                  ? null
+                                  : () async {
+                                      final messenger = ScaffoldMessenger.of(context);
+                                      final amount = double.tryParse(
+                                        amountController.text.trim(),
+                                      );
+                                      if (amount == null || amount <= 0) {
+                                        messenger.showSnackBar(
+                                          const SnackBar(
+                                            content: Text('يرجى إدخال مبلغ صحيح'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                        return;
+                                      }
+
+                                      if (receiptImage == null) {
+                                        messenger.showSnackBar(
+                                          const SnackBar(
+                                            content: Text('يرجى إرفاق صورة الإيصال'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                        return;
+                                      }
+
+                                      setState(() => _isSubmittingTopup = true);
+
+                                      try {
+                                        final receiptPath =
+                                            await StoreWalletService.uploadTopupReceipt(
+                                              storeId: _currentStoreId!,
+                                              bytes: receiptImage!.bytes,
+                                              fileName: receiptImage!.fileName,
+                                            );
+
+                                        if (receiptPath == null) {
+                                          throw Exception('فشل رفع الإيصال');
+                                        }
+
+                                        final submitted =
+                                            await StoreWalletService.submitTopupRequest(
+                                              storeId: _currentStoreId!,
+                                              amount: amount,
+                                              receiptPath: receiptPath,
+                                              instapayReference:
+                                                  referenceController.text.trim().isEmpty
+                                                  ? null
+                                                  : referenceController.text.trim(),
+                                              notes: notesController.text.trim().isEmpty
+                                                  ? null
+                                                  : notesController.text.trim(),
+                                            );
+
+                                        if (!submitted) {
+                                          throw Exception('فشل إرسال طلب الشحن');
+                                        }
+
+                                        if (!mounted) return;
+                                        if (!sheetContext.mounted) return;
+                                        Navigator.pop(sheetContext);
+                                        messenger.showSnackBar(
+                                          const SnackBar(
+                                            content: Text('تم إرسال طلب الشحن بنجاح'),
+                                            backgroundColor: Colors.green,
+                                          ),
+                                        );
+                                        _loadData();
+                                      } catch (e) {
+                                        if (!mounted) return;
+                                        messenger.showSnackBar(
+                                          SnackBar(
+                                            content: Text('خطأ أثناء إرسال الطلب: $e'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      } finally {
+                                        if (mounted) {
+                                          setState(() => _isSubmittingTopup = false);
+                                        }
+                                      }
+                                    },
+                              child: const Text('إرسال'),
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
-                  ],
+                  ),
                 ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('إلغاء'),
-                ),
-                ElevatedButton(
-                  onPressed: _isSubmittingTopup
-                      ? null
-                      : () async {
-                          final messenger = ScaffoldMessenger.of(context);
-                          final amount = double.tryParse(
-                            amountController.text.trim(),
-                          );
-                          if (amount == null || amount <= 0) {
-                            messenger.showSnackBar(
-                              const SnackBar(
-                                content: Text('يرجى إدخال مبلغ صحيح'),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                            return;
-                          }
-
-                          if (receiptImage == null) {
-                            messenger.showSnackBar(
-                              const SnackBar(
-                                content: Text('يرجى إرفاق صورة الإيصال'),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                            return;
-                          }
-
-                          setState(() => _isSubmittingTopup = true);
-
-                          try {
-                            final receiptPath =
-                                await StoreWalletService.uploadTopupReceipt(
-                                  storeId: _currentStoreId!,
-                                  bytes: receiptImage!.bytes,
-                                  fileName: receiptImage!.fileName,
-                                );
-
-                            if (receiptPath == null) {
-                              throw Exception('فشل رفع الإيصال');
-                            }
-
-                            final submitted =
-                                await StoreWalletService.submitTopupRequest(
-                                  storeId: _currentStoreId!,
-                                  amount: amount,
-                                  receiptPath: receiptPath,
-                                  instapayReference:
-                                      referenceController.text.trim().isEmpty
-                                      ? null
-                                      : referenceController.text.trim(),
-                                  notes: notesController.text.trim().isEmpty
-                                      ? null
-                                      : notesController.text.trim(),
-                                );
-
-                            if (!submitted) {
-                              throw Exception('فشل إرسال طلب الشحن');
-                            }
-
-                            if (!mounted) return;
-                            if (!dialogContext.mounted) return;
-                            Navigator.pop(dialogContext);
-                            messenger.showSnackBar(
-                              const SnackBar(
-                                content: Text('تم إرسال طلب الشحن بنجاح'),
-                                backgroundColor: Colors.green,
-                              ),
-                            );
-                            _loadData();
-                          } catch (e) {
-                            if (!mounted) return;
-                            messenger.showSnackBar(
-                              SnackBar(
-                                content: Text('خطأ أثناء إرسال الطلب: $e'),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                          } finally {
-                            if (mounted) {
-                              setState(() => _isSubmittingTopup = false);
-                            }
-                          }
-                        },
-                  child: const Text('إرسال'),
-                ),
-              ],
             );
           },
         );
@@ -614,17 +1202,10 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
         children: [
           _buildStoreSelector(),
           _buildBalanceWarning(),
-          _buildBalanceCard(),
-          _buildTopupCard(),
-          _buildStatusFilter(),
-          if (_filteredTransactions.isEmpty)
-            Container(
-              height: 400,
-              alignment: Alignment.center,
-              child: const Text('لا توجد معاملات حديثة'),
-            )
-          else
-            ..._filteredTransactions.map((t) => _buildTransactionCard(t)),
+          _buildRedesignedMainCard(),
+          _buildQuickActions(),
+          _buildSmartInsights(),
+          _buildTransactionsSection(),
         ],
       ),
     );
@@ -724,45 +1305,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
     );
   }
 
-  Widget _buildBalanceCard() {
-    return Card(
-      margin: EdgeInsets.all(16),
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Text(
-              'الرصيد الحالي',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            if (_selectedStore != null) ...[
-              const SizedBox(height: 4),
-              Text(
-                _selectedStore!.name,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withValues(alpha: 0.7),
-                ),
-              ),
-            ],
-            SizedBox(height: 8),
-            Text(
-              _settingsProvider.formatCurrency(_currentBalance),
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: _currentBalance < 0
-                    ? Colors.red
-                    : Theme.of(context).primaryColor,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+
 
   Widget _buildBalanceWarning() {
     if (_currentBalance >= 0) {
@@ -1181,82 +1724,6 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
         .toDouble();
   }
 
-  Widget _buildTransactionCard(FinancialTransactionModel transaction) {
-    final rawAmount = transaction.amount;
-    final isNegativeAmount = rawAmount < 0;
-    final amountPrefix = isNegativeAmount
-        ? '-'
-        : (transaction.type.isIncoming ? '+' : '-');
-    final amountText =
-        '$amountPrefix${_settingsProvider.formatCurrency(rawAmount.abs())}';
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ExpansionTile(
-        leading: _getTransactionIcon(transaction),
-        title: Text(_getTransactionTitle(transaction)),
-        subtitle: Text('$amountText - ${_formatDate(transaction.createdAt)}'),
-        trailing: _buildStatusChip(transaction.status),
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (transaction.orderId.isNotEmpty)
-                  Text('رقم الطلب: ${transaction.orderId}'),
-                if (transaction.notes != null)
-                  Text('ملاحظات: ${transaction.notes}'),
-                Text('تاريخ المعاملة: ${_formatDate(transaction.createdAt)}'),
-                Text('حالة المعاملة: ${_getStatusText(transaction.status)}'),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusChip(TransactionStatus status) {
-    final colors = {
-      TransactionStatus.completed: Colors.green,
-      TransactionStatus.pending: Colors.orange,
-      TransactionStatus.failed: Colors.red,
-    };
-
-    return Chip(
-      label: Text(
-        _getStatusText(status),
-        style: const TextStyle(color: Colors.white, fontSize: 12),
-      ),
-      backgroundColor: colors[status] ?? Colors.grey,
-    );
-  }
-
-  Icon _getTransactionIcon(FinancialTransactionModel transaction) {
-    final typeCode = _getTransactionTypeCode(transaction);
-    switch (typeCode) {
-      case 'deposit':
-        return const Icon(Icons.account_balance_wallet, color: Colors.green);
-      case 'adjustment':
-        return const Icon(Icons.tune, color: Colors.orange);
-      default:
-        return const Icon(Icons.help_outline, color: Colors.grey);
-    }
-  }
-
-  String _getStatusText(TransactionStatus status) {
-    switch (status) {
-      case TransactionStatus.completed:
-        return 'مكتمل';
-      case TransactionStatus.pending:
-        return 'قيد التنفيذ';
-      case TransactionStatus.failed:
-        return 'فشل';
-      default:
-        return 'غير محدد';
-    }
-  }
-
   String _getTransactionTitle(FinancialTransactionModel transaction) {
     final typeCode = _getTransactionTypeCode(transaction);
     switch (typeCode) {
@@ -1267,10 +1734,6 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
       default:
         return 'معاملة مالية';
     }
-  }
-
-  String _formatDate(DateTime date) {
-    return intl.DateFormat('yyyy/MM/dd').format(date);
   }
 }
 
