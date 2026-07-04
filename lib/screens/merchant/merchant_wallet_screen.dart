@@ -47,7 +47,6 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
   String? _currentStoreId;
   List<StoreModel> _merchantStores = [];
   StoreModel? _selectedStore;
-  bool _isSubmittingTopup = false;
 
   // Subscription state variables
   String _currentPackageName = 'بدون باقة نشطة';
@@ -622,7 +621,7 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: _isSubmittingTopup ? null : _showTopupDialog,
+                  onPressed: _showTopupDialog,
                   icon: const Icon(Icons.add_circle_outline, size: 18),
                   label: const Text('➕ شحن بإنستا باي', style: TextStyle(fontSize: 12)),
                   style: ElevatedButton.styleFrom(
@@ -966,11 +965,6 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
   Future<void> _showTopupDialog() async {
     if (_currentStoreId == null) return;
 
-    final amountController = TextEditingController();
-    final referenceController = TextEditingController();
-    final notesController = TextEditingController();
-    _ReceiptImage? receiptImage;
-
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -978,191 +972,14 @@ class _MerchantWalletScreenState extends State<MerchantWalletScreen>
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (sheetContext) {
-        return StatefulBuilder(
-          builder: (sheetStateContext, setDialogState) {
-            return SafeArea(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  20,
-                  16,
-                  MediaQuery.of(sheetStateContext).viewInsets.bottom + 16,
-                ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Pull handler
-                      Container(
-                        width: 40,
-                        height: 5,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[300],
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'طلب شحن المحفظة',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                      ),
-                      const SizedBox(height: 20),
-                      TextField(
-                        controller: amountController,
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'مبلغ الشحن',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: referenceController,
-                        decoration: const InputDecoration(
-                          labelText: 'مرجع إنستا باي (اختياري)',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: notesController,
-                        maxLines: 2,
-                        decoration: const InputDecoration(
-                          labelText: 'ملاحظات (اختياري)',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: () async {
-                          final picked = await _pickReceiptImage();
-                          if (picked == null) return;
-                          setDialogState(() {
-                            receiptImage = picked;
-                          });
-                        },
-                        icon: const Icon(Icons.image),
-                        label: const Text('إرفاق صورة الإيصال'),
-                      ),
-                      if (receiptImage != null) ...[
-                        const SizedBox(height: 8),
-                        Text('تم اختيار: ${receiptImage!.fileName}'),
-                      ],
-                      const SizedBox(height: 20),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () => Navigator.pop(sheetContext),
-                              child: const Text('إلغاء'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: _isSubmittingTopup
-                                  ? null
-                                  : () async {
-                                      final messenger = ScaffoldMessenger.of(context);
-                                      final amount = double.tryParse(
-                                        amountController.text.trim(),
-                                      );
-                                      if (amount == null || amount <= 0) {
-                                        messenger.showSnackBar(
-                                          const SnackBar(
-                                            content: Text('يرجى إدخال مبلغ صحيح'),
-                                            backgroundColor: Colors.red,
-                                          ),
-                                        );
-                                        return;
-                                      }
-
-                                      if (receiptImage == null) {
-                                        messenger.showSnackBar(
-                                          const SnackBar(
-                                            content: Text('يرجى إرفاق صورة الإيصال'),
-                                            backgroundColor: Colors.red,
-                                          ),
-                                        );
-                                        return;
-                                      }
-
-                                      setState(() => _isSubmittingTopup = true);
-
-                                      try {
-                                        final receiptPath =
-                                            await StoreWalletService.uploadTopupReceipt(
-                                              storeId: _currentStoreId!,
-                                              bytes: receiptImage!.bytes,
-                                              fileName: receiptImage!.fileName,
-                                            );
-
-                                        if (receiptPath == null) {
-                                          throw Exception('فشل رفع الإيصال');
-                                        }
-
-                                        final submitted =
-                                            await StoreWalletService.submitTopupRequest(
-                                              storeId: _currentStoreId!,
-                                              amount: amount,
-                                              receiptPath: receiptPath,
-                                              instapayReference:
-                                                  referenceController.text.trim().isEmpty
-                                                  ? null
-                                                  : referenceController.text.trim(),
-                                              notes: notesController.text.trim().isEmpty
-                                                  ? null
-                                                  : notesController.text.trim(),
-                                            );
-
-                                        if (!submitted) {
-                                          throw Exception('فشل إرسال طلب الشحن');
-                                        }
-
-                                        if (!mounted) return;
-                                        if (!sheetContext.mounted) return;
-                                        Navigator.pop(sheetContext);
-                                        messenger.showSnackBar(
-                                          const SnackBar(
-                                            content: Text('تم إرسال طلب الشحن بنجاح'),
-                                            backgroundColor: Colors.green,
-                                          ),
-                                        );
-                                        _loadData();
-                                      } catch (e) {
-                                        if (!mounted) return;
-                                        messenger.showSnackBar(
-                                          SnackBar(
-                                            content: Text('خطأ أثناء إرسال الطلب: $e'),
-                                            backgroundColor: Colors.red,
-                                          ),
-                                        );
-                                      } finally {
-                                        if (mounted) {
-                                          setState(() => _isSubmittingTopup = false);
-                                        }
-                                      }
-                                    },
-                              child: const Text('إرسال'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
+        return _TopupBottomSheet(
+          storeId: _currentStoreId!,
+          onPickImage: _pickReceiptImage,
+          onLoadData: _loadData,
+          settingsProvider: _settingsProvider,
         );
       },
     );
-
-    amountController.dispose();
-    referenceController.dispose();
-    notesController.dispose();
   }
 
   Future<_ReceiptImage?> _pickReceiptImage() async {
@@ -1750,4 +1567,216 @@ class _ReceiptImage {
   final String fileName;
 
   const _ReceiptImage(this.bytes, this.fileName);
+}
+
+class _TopupBottomSheet extends StatefulWidget {
+  final String storeId;
+  final Future<_ReceiptImage?> Function() onPickImage;
+  final Future<void> Function() onLoadData;
+  final AppSettingsProvider settingsProvider;
+
+  const _TopupBottomSheet({
+    required this.storeId,
+    required this.onPickImage,
+    required this.onLoadData,
+    required this.settingsProvider,
+  });
+
+  @override
+  State<_TopupBottomSheet> createState() => _TopupBottomSheetState();
+}
+
+class _TopupBottomSheetState extends State<_TopupBottomSheet> {
+  final _amountController = TextEditingController();
+  final _referenceController = TextEditingController();
+  final _notesController = TextEditingController();
+  _ReceiptImage? _receiptImage;
+  bool _isSubmitting = false;
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    _referenceController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          16,
+          20,
+          16,
+          MediaQuery.of(context).viewInsets.bottom + 16,
+        ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Pull handler
+              Container(
+                width: 40,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'طلب شحن المحفظة',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _amountController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'مبلغ الشحن',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _referenceController,
+                decoration: const InputDecoration(
+                  labelText: 'مرجع إنستا باي (اختياري)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _notesController,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'ملاحظات (اختياري)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final picked = await widget.onPickImage();
+                  if (picked == null) return;
+                  setState(() {
+                    _receiptImage = picked;
+                  });
+                },
+                icon: const Icon(Icons.image),
+                label: const Text('إرفاق صورة الإيصال'),
+              ),
+              if (_receiptImage != null) ...[
+                const SizedBox(height: 8),
+                Text('تم اختيار: ${_receiptImage!.fileName}'),
+              ],
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('إلغاء'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _isSubmitting
+                          ? null
+                          : () async {
+                              final messenger = ScaffoldMessenger.of(context);
+                              final navigator = Navigator.of(context);
+                              final amount = double.tryParse(
+                                _amountController.text.trim(),
+                              );
+                              if (amount == null || amount <= 0) {
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text('يرجى إدخال مبلغ صحيح'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                                return;
+                              }
+
+                              if (_receiptImage == null) {
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text('يرجى إرفاق صورة الإيصال'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                                return;
+                              }
+
+                              setState(() => _isSubmitting = true);
+
+                              try {
+                                final receiptPath =
+                                    await StoreWalletService.uploadTopupReceipt(
+                                      storeId: widget.storeId,
+                                      bytes: _receiptImage!.bytes,
+                                      fileName: _receiptImage!.fileName,
+                                    );
+
+                                if (receiptPath == null) {
+                                  throw Exception('فشل رفع الإيصال');
+                                }
+
+                                final submitted =
+                                    await StoreWalletService.submitTopupRequest(
+                                      storeId: widget.storeId,
+                                      amount: amount,
+                                      receiptPath: receiptPath,
+                                      instapayReference:
+                                          _referenceController.text.trim().isEmpty
+                                          ? null
+                                          : _referenceController.text.trim(),
+                                      notes: _notesController.text.trim().isEmpty
+                                          ? null
+                                          : _notesController.text.trim(),
+                                    );
+
+                                if (!submitted) {
+                                  throw Exception('فشل إرسال طلب الشحن');
+                                }
+
+                                if (!mounted) return;
+                                navigator.pop();
+                                messenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text('تم إرسال طلب الشحن بنجاح'),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                                widget.onLoadData();
+                              } catch (e) {
+                                if (!mounted) return;
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text('خطأ أثناء إرسال الطلب: $e'),
+                                    backgroundColor: Colors.red,
+                                  ),
+                                );
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _isSubmitting = false);
+                                }
+                              }
+                            },
+                      child: const Text('إرسال'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
