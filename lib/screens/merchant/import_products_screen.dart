@@ -8,7 +8,6 @@ import '../../core/logger.dart';
 import '../../services/store_service.dart';
 import '../../services/category_service.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
-import 'package:ell_tall_market/utils/file_bytes_reader.dart';
 
 
 class ImportProductsScreen extends StatefulWidget {
@@ -149,26 +148,10 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
       final result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['xlsx'],
-        withData: true, // Important for Web to get bytes
       );
 
       if (result != null) {
-        final fileBytes =
-            result.files.single.bytes ??
-            await readFileBytes(result.files.single.path);
-
-        if (fileBytes == null) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                  'فشل قراءة بيانات الملف. جرّب ملف أصغر أو تأكد من صلاحيات الوصول.',
-                ),
-              ),
-            );
-          }
-          return;
-        }
+        final fileBytes = await result.files.single.readAsBytes();
 
         setState(() {
           // _selectedFileName = fileName;

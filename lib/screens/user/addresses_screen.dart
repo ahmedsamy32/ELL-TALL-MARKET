@@ -874,7 +874,7 @@ class _AddressesScreenState extends State<AddressesScreen>
       // تحويل الإحداثيات إلى عنوان فعلي
       try {
         List<Placemark> placemarks =
-            await placemarkFromCoordinates(
+            await Geocoding().placemarkFromCoordinates(
               position.latitude,
               position.longitude,
             ).timeout(

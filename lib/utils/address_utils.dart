@@ -147,7 +147,7 @@ class AddressUtils {
     Duration timeout = const Duration(seconds: 5),
   }) async {
     try {
-      final placemarks = await placemarkFromCoordinates(lat, lng).timeout(
+      final placemarks = await Geocoding().placemarkFromCoordinates(lat, lng).timeout(
         timeout,
         onTimeout: () {
           AppLogger.warning('⏱️ Placemark timeout after ${timeout.inSeconds}s');

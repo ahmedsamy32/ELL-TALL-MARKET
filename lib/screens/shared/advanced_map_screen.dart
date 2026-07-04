@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geocoding/geocoding.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/config/env.dart';
 import 'package:ell_tall_market/services/google_maps_api_service.dart';
@@ -532,7 +532,7 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
         // geocoder as a best-effort source (some areas return "مجاورة" there).
         if (district.isEmpty) {
           try {
-            final placemarks = await placemarkFromCoordinates(
+            final placemarks = await Geocoding().placemarkFromCoordinates(
               position.latitude,
               position.longitude,
             ).timeout(const Duration(seconds: 6));
@@ -601,7 +601,7 @@ class _AdvancedMapScreenState extends State<AdvancedMapScreen>
       }
 
       // 🧯 fallback: geocoding package (قد يرجع Plus Codes أحياناً)
-      final placemarks = await placemarkFromCoordinates(
+      final placemarks = await Geocoding().placemarkFromCoordinates(
         position.latitude,
         position.longitude,
       ).timeout(const Duration(seconds: 10));

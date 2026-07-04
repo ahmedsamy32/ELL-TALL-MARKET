@@ -43,7 +43,7 @@ dependencies:
   shared_preferences: ^2.2.1
   # Media & Files
   image_picker: ^1.0.4
-  device_info_plus: ^12.4.0
+  device_info_plus: ^13.2.0
   # Database & Backend
   supabase_flutter: ^2.10.2
   web_socket_channel: ^3.0.1
@@ -52,7 +52,7 @@ dependencies:
   # Charts & Analytics
   syncfusion_flutter_charts: ^33.2.6
   fl_chart: ^1.1.1
-  flutter_stripe: ^12.0.2
+  flutter_stripe: ^13.0.0
   # UI Components
   flutter_staggered_grid_view: ^0.7.0
   cached_network_image: ^3.3.0
@@ -73,11 +73,11 @@ dependencies:
   # Location Services
   google_maps_flutter: ^2.5.0
   geolocator: ^14.0.2
-  geocoding: ^4.0.0
+  geocoding: ^5.0.0
   google_places_flutter: ^2.0.12
   # Analytics & Performance
   cupertino_icons: ^1.0.8
-  flutter_local_notifications: ^21.0.0
+  flutter_local_notifications: ^22.0.1
   path: ^1.9.0
   image: ^4.3.0
   image_cropper: ^12.2.1
@@ -86,12 +86,12 @@ dependencies:
   printing: ^5.13.4
   path_provider: ^2.1.5
   flutter_polyline_points: ^3.1.0
-  share_plus: ^12.0.2
-  package_info_plus: ^9.0.1
+  share_plus: ^13.2.0
+  package_info_plus: ^10.2.0
   flutter_keyboard_visibility: ^6.0.0
   # Product Import
   excel: ^4.0.6
-  file_picker: ^11.0.2
+  file_picker: ^12.0.0-beta.7
 
 dev_dependencies:
   flutter_test:
