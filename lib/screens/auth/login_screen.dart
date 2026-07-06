@@ -497,83 +497,56 @@ class _LoginScreenState extends State<LoginScreen> {
         listen: false,
       );
 
-      // Launch Google OAuth browser
-      final launched = await authProvider.signInWithGoogle();
+      // Launch native Google Sign-In
+      final success = await authProvider.signInWithGoogle();
 
       if (!mounted) return;
 
-      if (launched) {
-        // Browser opened successfully - show message and wait for callback
-        SnackBarHelper.showInfo(
+      if (success) {
+        SnackBarHelper.showSuccess(
           context,
-          '🔄 يرجى إكمال تسجيل الدخول في المتصفح...',
+          '✅ تم تسجيل الدخول بواسطة جوجل بنجاح!',
         );
 
-        // The actual sign-in will be handled by the deep link callback
-        // and auth state listener. We'll listen for auth state changes
-        // to navigate automatically.
+        // Navigate based on user role
+        await authProvider.refreshProfile();
+        if (!mounted) return;
 
-        // Set up a one-time listener for auth state changes
-        StreamSubscription<User?>? subscription;
-        subscription = authProvider.authStateChanges.listen((user) {
-          if (user != null && mounted) {
-            // Cancel immediately to prevent multiple calls
-            subscription?.cancel();
-
-            // User signed in successfully via OAuth callback
-            SnackBarHelper.showSuccess(
+        final userRole = authProvider.currentProfile?.role;
+        switch (userRole) {
+          case UserRole.admin:
+            Navigator.pushReplacementNamed(
               context,
-              '✅ تم تسجيل الدخول بواسطة جوجل بنجاح!',
+              AppRoutes.adminDashboard,
             );
-
-            // Navigate based on user role
-            authProvider.refreshProfile().then((_) {
-              if (!mounted) return;
-
-              final userRole = authProvider.currentProfile?.role;
-              switch (userRole) {
-                case UserRole.admin:
-                  Navigator.pushReplacementNamed(
-                    context,
-                    AppRoutes.adminDashboard,
-                  );
-                  break;
-                case UserRole.deliveryCompanyAdmin:
-                  Navigator.pushReplacementNamed(
-                    context,
-                    AppRoutes.deliveryCompanyDashboard,
-                  );
-                  break;
-                case UserRole.merchant:
-                  Navigator.pushReplacementNamed(
-                    context,
-                    AppRoutes.merchantDashboard,
-                  );
-                  break;
-                case UserRole.captain:
-                  Navigator.pushReplacementNamed(
-                    context,
-                    AppRoutes.captainDashboard,
-                  );
-                  break;
-                case UserRole.client:
-                default:
-                  Navigator.pushReplacementNamed(context, AppRoutes.home);
-                  break;
-              }
-            });
-          }
-        });
-
-        // Cancel subscription after 60 seconds (timeout)
-        Future.delayed(const Duration(seconds: 60), () {
-          subscription?.cancel();
-        });
+            break;
+          case UserRole.deliveryCompanyAdmin:
+            Navigator.pushReplacementNamed(
+              context,
+              AppRoutes.deliveryCompanyDashboard,
+            );
+            break;
+          case UserRole.merchant:
+            Navigator.pushReplacementNamed(
+              context,
+              AppRoutes.merchantDashboard,
+            );
+            break;
+          case UserRole.captain:
+            Navigator.pushReplacementNamed(
+              context,
+              AppRoutes.captainDashboard,
+            );
+            break;
+          case UserRole.client:
+          default:
+            Navigator.pushReplacementNamed(context, AppRoutes.home);
+            break;
+        }
       } else {
-        // Failed to launch browser
         SnackBarHelper.showError(
           context,
-          authProvider.errorMessage ?? '❌ فشل فتح متصفح Google',
+          authProvider.errorMessage ?? '❌ فشل تسجيل الدخول بجوجل',
         );
       }
     } catch (e) {

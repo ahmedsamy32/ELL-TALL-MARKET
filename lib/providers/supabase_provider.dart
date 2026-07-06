@@ -11,6 +11,7 @@ import 'merchant_provider.dart';
 import 'product_provider.dart';
 import 'order_provider.dart';
 import '../services/notification_service.dart';
+import '../services/google_signin_service.dart';
 
 /// SupabaseProvider - manages authentication state
 class SupabaseProvider with ChangeNotifier {
@@ -544,56 +545,38 @@ class SupabaseProvider with ChangeNotifier {
     }
   }
 
-  /// Sign in with Google using Supabase Auth
-  /// Note: This launches the OAuth flow in external browser.
-  /// The actual sign-in happens when the deep link callback is processed.
-  /// Listen to auth state changes to detect when sign-in completes.
+  /// Sign in with Google using Supabase Auth (Native flow inside the app)
   Future<bool> signInWithGoogle({String userType = 'client'}) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      AppLogger.info('🔄 Starting Google Sign In for userType: $userType');
+      AppLogger.info('🔄 Starting Native Google Sign In for userType: $userType');
 
-      // استخدام Supabase Native Google Sign In
-      // signInWithOAuth يفتح المتصفح ويرجع true/false فوراً (ليس await للمصادقة)
-      final launched = await Supabase.instance.client.auth.signInWithOAuth(
-        OAuthProvider.google,
-        // ✅ الويب يستخدم URL حقيقي، الموبايل يستخدم Deep Link
-        redirectTo: kIsWeb
-            ? '${Uri.base.origin}/market/auth/callback'
-            : 'elltallmarket://auth/callback',
-        // ✅ الويب يفتح popup في نفس النافذة، الموبايل يفتح متصفح خارجي
-        authScreenLaunchMode: kIsWeb
-            ? LaunchMode.platformDefault
-            : LaunchMode.externalApplication,
-        queryParams: {'access_type': 'offline', 'prompt': 'consent'},
-        // ⚠️ ملاحظة: لا يمكن إرسال metadata مع OAuth!
-        // الحل: سنستخدم pending merchants table أو update بعد تسجيل الدخول
-      );
+      // 1. استدعاء خدمة تسجيل الدخول الأصلية من جوجل
+      final authResponse = await GoogleSignInService.instance.signInWithGoogle();
 
-      if (!launched) {
-        _error = 'فشل فتح متصفح Google للمصادقة';
-        AppLogger.warning('Google Sign In browser launch failed');
+      if (authResponse == null || authResponse.user == null) {
+        _error = 'تم إلغاء تسجيل الدخول أو فشل الاتصال بجوجل';
+        AppLogger.warning('Native Google Sign In failed or was cancelled');
         _isLoading = false;
         notifyListeners();
         return false;
       }
 
-      AppLogger.info('✅ Google OAuth browser launched successfully');
-      AppLogger.info(
-        '⏳ Waiting for user to complete authentication in browser...',
-      );
+      AppLogger.info('✅ Native Google Sign In completed successfully: ${authResponse.user!.email}');
+      
+      // تحديث الحالة المحلية للمستخدم الحالي
+      _currentUser = authResponse.user;
+      
+      // تحميل الملف الشخصي محلياً
+      await _loadProfile();
 
-      // المصادقة ستكتمل عبر deep link callback
-      // وسيتم التعامل معها من خلال _handleAuthStateChange
-      // لذلك نرجع true لنشير أن المتصفح فتح بنجاح
-
-      // Note: Loading state will be cleared by auth state listener
-      // when sign-in completes or after timeout
-
-      return true; // Browser opened successfully
+      _isLoading = false;
+      _error = null;
+      notifyListeners();
+      return true;
     } catch (e, st) {
       _error = 'حدث خطأ في تسجيل الدخول بواسطة Google: $e';
       AppLogger.error('Google Sign In error', e, st);

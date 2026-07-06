@@ -158,6 +158,12 @@ DECLARE
   v_category TEXT;
   v_category_name TEXT;
   v_user_id UUID;
+  
+  -- Subscription variables
+  v_tier_id INT;
+  v_included_orders INT;
+  v_initial_orders INT;
+  v_trial_months INT;
 BEGIN
   -- Ensure this trigger can write to RLS-protected tables during signup.
   PERFORM set_config('row_security', 'off', true);
@@ -224,6 +230,16 @@ BEGIN
 
   -- For merchants: create merchant + store.
   IF v_user_role = 'merchant' THEN
+    -- Get the free trial months setting from settings
+    SELECT COALESCE(setting_value::INT, 2) INTO v_trial_months
+    FROM public.settings
+    WHERE setting_key = 'merchant_free_trial_months';
+    
+    IF v_trial_months IS NULL THEN
+      v_trial_months := 2;
+    END IF;
+
+    -- يتم تسجيل التاجر كـ suspended تلقائياً حتى يختار تفعيل الفترة المجانية بنفسه أو يشترك في باقة مدفوعة
     INSERT INTO public.merchants (
       id,
       store_name,
@@ -231,7 +247,12 @@ BEGIN
       address,
       latitude,
       longitude,
-      is_verified
+      is_verified,
+      current_tier_id,
+      package_expiry_date,
+      remaining_orders,
+      status,
+      trial_used
     )
     VALUES (
       v_user_id,
@@ -240,6 +261,11 @@ BEGIN
       v_address,
       v_latitude,
       v_longitude,
+      FALSE,
+      NULL,
+      NULL,
+      0,
+      'suspended',
       FALSE
     );
 
@@ -4049,7 +4075,10 @@ VALUES
   ('app_delivery_base_fee', '15.00', 'number', 'رسوم التوصيل الأساسية للتطبيق (ج.م)', TRUE),
   ('app_delivery_fee_per_km', '3.00', 'number', 'رسوم التوصيل لكل كيلومتر (ج.م)', TRUE),
   ('app_delivery_max_distance', '25.00', 'number', 'أقصى مسافة للتوصيل (كيلومتر)', TRUE),
-  ('app_delivery_estimated_time', '30', 'number', 'الوقت التقديري للتوصيل (دقيقة)', TRUE)
+  ('app_delivery_estimated_time', '30', 'number', 'الوقت التقديري للتوصيل (دقيقة)', TRUE),
+  ('admin_instapay_address', 'elltall@instapay', 'string', 'عنوان إنستا باي الخاص بالإدارة لاستلام الدفعات', TRUE),
+  ('admin_instapay_phone', '01146668812', 'string', 'رقم الهاتف المرتبط بحساب إنستا باي أو المحفظة', TRUE),
+  ('merchant_topup_instructions', 'يرجى تحويل المبلغ المطلوب إلى عنوان إنستا باي المذكور أعلاه، ثم إدخال رقم المرجع وإرفاق صورة الإيصال لتأكيد الشحن.', 'string', 'تعليمات شحن المحفظة المعروضة للتجار', TRUE)
 ON CONFLICT (setting_key) DO UPDATE
 SET 
   setting_value = EXCLUDED.setting_value,
@@ -6204,6 +6233,866 @@ ALTER TABLE public.stores
 
 -- DROP FUNCTION IF EXISTS public.auto_accept_old_pending_orders();
 -- SELECT cron.unschedule('auto-accept-pending-orders-job');
+
+-- ============================================================================
+-- 💳 MERCHANT SUBSCRIPTION & WALLET SYSTEM (CONSOLIDATED)
+-- ============================================================================
+
+-- Drop existing triggers that might conflict or reference columns to be updated
+DROP TRIGGER IF EXISTS trigger_on_new_order ON public.orders CASCADE;
+DROP TRIGGER IF EXISTS trg_merchant_status_change ON public.merchants CASCADE;
+DROP TRIGGER IF EXISTS trg_order_cancellation_rules ON public.orders CASCADE;
+
+-- Drop foreign keys and tables to ensure clean rebuild
+ALTER TABLE public.merchants DROP CONSTRAINT IF EXISTS merchants_current_tier_id_fkey CASCADE;
+DROP TABLE IF EXISTS public.wallet_transactions CASCADE;
+DROP TABLE IF EXISTS public.subscription_tiers CASCADE;
+
+-- 1️⃣ الخطوة الأولى: إنشاء جدول الباقات وإضافتها للسيستم
+CREATE TABLE public.subscription_tiers (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE,
+    monthly_price DECIMAL(10, 2) NOT NULL CHECK (monthly_price >= 0),
+    included_orders INT NOT NULL, -- القيمة (-1) تعني أوردرات لا محدودة
+    overlimit_fee_per_order DECIMAL(10, 2) NOT NULL DEFAULT 0 CHECK (overlimit_fee_per_order >= 0),
+    max_overlimit_orders INT NOT NULL DEFAULT 0
+);
+
+-- إدخال بيانات الباقات الثلاثة في السيستم
+INSERT INTO public.subscription_tiers (name, monthly_price, included_orders, overlimit_fee_per_order, max_overlimit_orders) 
+VALUES
+  ('Basic', 150.00, 30, 7.00, 10),
+  ('Pro', 450.00, 100, 5.00, 25),
+  ('Unlimited', 900.00, -1, 0.00, 0)
+ON CONFLICT (name) DO UPDATE SET
+  monthly_price = EXCLUDED.monthly_price,
+  included_orders = EXCLUDED.included_orders,
+  overlimit_fee_per_order = EXCLUDED.overlimit_fee_per_order,
+  max_overlimit_orders = EXCLUDED.max_overlimit_orders;
+
+-- 2️⃣ الخطوة الثانية: تحديث جدول التجار الحاليين (merchants)
+ALTER TABLE public.merchants 
+  ADD COLUMN IF NOT EXISTS name TEXT,
+  ADD COLUMN IF NOT EXISTS status TEXT CHECK (status IN ('active', 'suspended', 'closed')) DEFAULT 'active',
+  ADD COLUMN IF NOT EXISTS wallet_balance DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+  ADD COLUMN IF NOT EXISTS current_tier_id INT,
+  ADD COLUMN IF NOT EXISTS package_expiry_date TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS remaining_orders INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS overlimit_orders_count INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS trial_used BOOLEAN DEFAULT FALSE;
+
+-- ربط التجار بجدول الباقات
+ALTER TABLE public.merchants
+  ADD CONSTRAINT merchants_current_tier_id_fkey
+  FOREIGN KEY (current_tier_id) REFERENCES public.subscription_tiers(id) ON DELETE SET NULL;
+
+-- Populate 'name' with 'store_name' for existing records if 'name' is null (deferred compile via dynamic SQL to prevent parser errors)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'merchants' AND column_name = 'name'
+  ) THEN
+    EXECUTE '
+      UPDATE public.merchants
+      SET name = store_name
+      WHERE name IS NULL AND store_name IS NOT NULL
+    ';
+  END IF;
+END $$;
+
+-- Alter Orders Table to Add merchant_id Column for Flutter app compatibility
+ALTER TABLE public.orders
+  ADD COLUMN IF NOT EXISTS merchant_id UUID REFERENCES public.merchants(id) ON DELETE SET NULL;
+
+-- Populate merchant_id for existing orders using stores relation (deferred compile via dynamic SQL to prevent parser errors)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' AND table_name = 'orders' AND column_name = 'merchant_id'
+  ) THEN
+    EXECUTE '
+      UPDATE public.orders o
+      SET merchant_id = s.merchant_id
+      FROM public.stores s
+      WHERE o.store_id = s.id AND o.merchant_id IS NULL
+    ';
+  END IF;
+END $$;
+
+-- إنشاء جدول لتسجيل حركات المحفظة (شحن / خصم)
+CREATE TABLE public.wallet_transactions (
+    id SERIAL PRIMARY KEY,
+    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    amount DECIMAL(10, 2) NOT NULL CHECK (amount >= 0),
+    type VARCHAR(10) NOT NULL CHECK (type IN ('credit', 'debit')), -- credit = شحن ، debit = خصم
+    description TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- إنشاء الفهارس لتحسين الأداء
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_merchant_id ON public.wallet_transactions(merchant_id);
+CREATE INDEX IF NOT EXISTS idx_merchants_status_expiry ON public.merchants(status, package_expiry_date);
+CREATE INDEX IF NOT EXISTS idx_merchants_tier ON public.merchants(current_tier_id);
+
+-- تمكين الـ RLS لحماية الجداول الجديدة
+ALTER TABLE public.subscription_tiers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.wallet_transactions ENABLE ROW LEVEL SECURITY;
+
+-- سياسات الحماية لباقات الاشتراك
+DROP POLICY IF EXISTS "Anyone can view subscription tiers" ON public.subscription_tiers;
+CREATE POLICY "Anyone can view subscription tiers" ON public.subscription_tiers
+  FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Only admins can modify subscription tiers" ON public.subscription_tiers;
+CREATE POLICY "Only admins can modify subscription tiers" ON public.subscription_tiers
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- سياسات الحماية لجدول حركات المحفظة
+DROP POLICY IF EXISTS "Merchants can view own wallet transactions" ON public.wallet_transactions;
+CREATE POLICY "Merchants can view own wallet transactions" ON public.wallet_transactions
+  FOR SELECT USING (
+    auth.uid() = merchant_id
+    OR EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE id = auth.uid() AND role = 'admin'
+    )
+  );
+
+-- 3️⃣ الخطوة الثالثة: العقل المفكر (Trigger) 🧠
+CREATE OR REPLACE FUNCTION public.process_merchant_order_logic()
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_merchant_id UUID;
+    v_merchant_status VARCHAR(50);
+    v_wallet_balance DECIMAL(10, 2);
+    v_tier_id INT;
+    v_remaining_orders INT;
+    v_overlimit_count INT;
+    v_expiry TIMESTAMP;
+    v_included_orders INT;
+    v_overlimit_fee DECIMAL(10, 2);
+    v_max_overlimit INT;
+BEGIN
+    -- جلب معرف التاجر المرتبط بالمتجر
+    SELECT merchant_id INTO v_merchant_id
+    FROM public.stores
+    WHERE id = NEW.store_id;
+
+    IF v_merchant_id IS NULL THEN
+        RAISE EXCEPTION 'المتجر غير موجود أو غير مرتبط بتاجر';
+    END IF;
+
+    -- تلقائياً قم بتحديث حقل merchant_id في الطلب للتوافق مع التطبيق
+    NEW.merchant_id := v_merchant_id;
+
+    -- 1. جلب بيانات التاجر الحالية من السيستم (مع قفل السجل لمنع التعارض والسباق)
+    SELECT status, wallet_balance, current_tier_id, remaining_orders, overlimit_orders_count, package_expiry_date
+    INTO v_merchant_status, v_wallet_balance, v_tier_id, v_remaining_orders, v_overlimit_count, v_expiry
+    FROM merchants WHERE id = v_merchant_id FOR UPDATE;
+
+    -- 2. الفحص الأولي: لو المحل موقوف ارفض الأوردر
+    IF v_merchant_status = 'suspended' OR v_merchant_status = 'closed' THEN
+        RAISE EXCEPTION 'المحل موقوف حالياً ولا يمكنه استقبال طلبات جديدة';
+    END IF;
+
+    -- 3. فحص تاريخ انتهاء الصلاحية (30 يوم أو الفترة المجانية)
+    IF v_expiry IS NOT NULL AND v_expiry < NOW() THEN
+        UPDATE merchants SET status = 'suspended', updated_at = NOW() WHERE id = v_merchant_id;
+        RAISE EXCEPTION 'انتهت صلاحية باقة المحل، يرجى التجديد لتفعيل الحساب';
+    END IF;
+
+    -- 4. فحص لو التاجر في الفترة المجانية (current_tier_id IS NULL ولكنه نشط وصلاحيته مستمرة)
+    IF v_tier_id IS NULL THEN
+        IF v_expiry IS NOT NULL AND v_expiry >= NOW() THEN
+            -- في الفترة المجانية: مرر الأوردر فوراً بدون خصومات أو حدود
+            RETURN NEW;
+        ELSE
+            RAISE EXCEPTION 'التاجر غير مشترك في أي باقة حالياً وليس في فترة تجريبية';
+        END IF;
+    END IF;
+
+    -- 5. جلب شروط وقواعد الباقة المشترك فيها التاجر
+    SELECT included_orders, overlimit_fee_per_order, max_overlimit_orders
+    INTO v_included_orders, v_overlimit_fee, v_max_overlimit
+    FROM subscription_tiers WHERE id = v_tier_id;
+
+    -- 6. تطبيق منطق الباقة اللامحدودة (Unlimited)
+    IF v_included_orders = -1 THEN
+        RETURN NEW; -- مرر الأوردر فوراً بدون أي خصومات
+    END IF;
+
+    -- 7. تطبيق منطق الباقات المحدودة (Basic & Pro)
+    IF v_remaining_orders > 0 THEN
+        -- استهلاك أوردر عادي من الباقة ونقص العداد بمقدار 1
+        UPDATE merchants 
+        SET remaining_orders = remaining_orders - 1,
+            updated_at = NOW()
+        WHERE id = v_merchant_id;
+        
+        RETURN NEW;
+    ELSE
+        -- الباقة الأساسية انتهت.. الدخول في نظام الأوردر الإضافي بالقطعة
+        
+        -- أ. فحص هل التاجر عدى السقف المسموح بيه للأوردرات الزيادة؟
+        IF v_overlimit_count >= v_max_overlimit THEN
+            UPDATE merchants SET status = 'suspended', updated_at = NOW() WHERE id = v_merchant_id;
+            RAISE EXCEPTION 'وصل المحل للحد الأقصى من الطلبات الإضافية، يرجى ترقية الباقة';
+        END IF;
+
+        -- ب. فحص هل محفظته فيها فلوس تغطي تمن الأوردر الزيادة (7 أو 5 جنيه)؟
+        IF v_wallet_balance < v_overlimit_fee THEN
+            UPDATE merchants SET status = 'suspended', updated_at = NOW() WHERE id = v_merchant_id;
+            RAISE EXCEPTION 'رصيد المحفظة غير كافٍ لتغطية رسوم الأوردر الإضافي، تم إيقاف المتجر مؤقتاً';
+        END IF;
+
+        -- ج. الخصم من المحفظة وتحديث العدادات
+        UPDATE merchants 
+        SET wallet_balance = wallet_balance - v_overlimit_fee,
+            overlimit_orders_count = overlimit_orders_count + 1,
+            updated_at = NOW()
+        WHERE id = v_merchant_id;
+
+        -- تسجيل حركة الخصم في جدول المحفظة للشفافية مع التاجر
+        INSERT INTO wallet_transactions (merchant_id, amount, type, description)
+        VALUES (v_merchant_id, v_overlimit_fee, 'debit', 'خصم رسوم أوردر إضافي فوق الباقة');
+
+        RETURN NEW;
+    END IF;
+END;
+$$;
+
+-- ربط الدالة بجدول الطلبات لتعمل تلقائياً قبل إدخال أي أوردر جديد
+DROP TRIGGER IF EXISTS trigger_on_new_order ON public.orders;
+CREATE TRIGGER trigger_on_new_order
+BEFORE INSERT ON public.orders
+FOR EACH ROW
+EXECUTE FUNCTION public.process_merchant_order_logic();
+
+-- 4️⃣ مشغل إضافي لتحديث المتاجر عند تغيير حالة التاجر (لحجب المحل تلقائياً)
+CREATE OR REPLACE FUNCTION public.handle_merchant_status_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.status IN ('suspended', 'closed') THEN
+    UPDATE public.stores
+    SET is_active = FALSE,
+        is_open = FALSE,
+        updated_at = NOW()
+    WHERE merchant_id = NEW.id;
+  ELSIF NEW.status = 'active' AND OLD.status != 'active' THEN
+    UPDATE public.stores
+    SET is_active = TRUE,
+        is_open = TRUE,
+        updated_at = NOW()
+    WHERE merchant_id = NEW.id;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_merchant_status_change ON public.merchants;
+CREATE TRIGGER trg_merchant_status_change
+  AFTER UPDATE OF status ON public.merchants
+  FOR EACH ROW
+  EXECUTE FUNCTION public.handle_merchant_status_change();
+
+-- 5️⃣ مشغل إضافي لقوانين إلغاء الطلبات (لحماية النظام من الاحتيال)
+CREATE OR REPLACE FUNCTION public.check_order_cancellation_rules()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_role TEXT;
+  v_merchant_id UUID;
+BEGIN
+  -- جلب معرّف التاجر
+  v_merchant_id := OLD.merchant_id;
+  IF v_merchant_id IS NULL THEN
+    SELECT merchant_id INTO v_merchant_id
+    FROM public.stores
+    WHERE id = OLD.store_id;
+  END IF;
+
+  -- جلب دور المستخدم الحالي
+  SELECT role INTO v_user_role
+  FROM public.profiles
+  WHERE id = auth.uid();
+
+  IF NEW.status = 'cancelled' AND OLD.status != 'cancelled' THEN
+    IF auth.uid() = v_merchant_id OR v_user_role = 'merchant' THEN
+      -- منع إلغاء الطلب إذا كان بالفعل مع الكابتن
+      IF OLD.status IN ('picked_up', 'in_transit', 'delivered') THEN
+        RAISE EXCEPTION 'Action Unauthorized: Order is already with the driver.';
+      END IF;
+
+      -- منع التاجر من الإلغاء في غير حالتي الانتظار أو القبول
+      IF OLD.status NOT IN ('pending', 'confirmed') THEN
+        RAISE EXCEPTION 'Action Unauthorized: Merchant can only cancel orders in pending or accepted status.';
+      END IF;
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_order_cancellation_rules ON public.orders;
+CREATE TRIGGER trg_order_cancellation_rules
+  BEFORE UPDATE OF status ON public.orders
+  FOR EACH ROW
+  EXECUTE FUNCTION public.check_order_cancellation_rules();
+
+-- 6️⃣ وظيفة الفحص الدوري وإيقاف الاشتراكات المنتهية (لجدولتها في الخلفية)
+CREATE OR REPLACE FUNCTION public.check_and_suspend_expired_merchants()
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE public.merchants m
+  SET status = 'suspended',
+      updated_at = NOW()
+  FROM public.subscription_tiers t
+  WHERE m.current_tier_id = t.id
+    AND m.status = 'active'
+    AND (
+      (m.package_expiry_date IS NOT NULL AND m.package_expiry_date < NOW())
+      OR (
+        m.remaining_orders <= 0
+        AND m.wallet_balance <= 0
+        AND t.included_orders != -1
+      )
+    );
+END;
+$$;
+
+-- 💳 جدول سجل تاريخ الاشتراكات للتجار
+CREATE TABLE IF NOT EXISTS public.subscription_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    merchant_id UUID NOT NULL REFERENCES public.merchants(id) ON DELETE CASCADE,
+    tier_id INT REFERENCES public.subscription_tiers(id) ON DELETE SET NULL,
+    tier_name VARCHAR(50) NOT NULL,
+    price_paid DECIMAL(10, 2) NOT NULL,
+    start_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    end_date TIMESTAMPTZ NOT NULL,
+    orders_included INT NOT NULL,
+    orders_rolled_over INT NOT NULL DEFAULT 0,
+    orders_compensated INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- تمكين الحماية على مستوى الصفوف (RLS)
+ALTER TABLE public.subscription_history ENABLE ROW LEVEL SECURITY;
+
+-- السماح للتجار بقراءة سجل اشتراكاتهم الخاصة فقط
+CREATE POLICY "Allow merchants to read their own subscription history"
+    ON public.subscription_history
+    FOR SELECT
+    USING (auth.uid() = merchant_id);
+
+-- السماح للأدمن بقراءة جميع سجلات الاشتراكات
+CREATE POLICY "Allow admins to read all subscription histories"
+    ON public.subscription_history
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.profiles
+            WHERE id = auth.uid() AND role = 'admin'
+        )
+    );
+
+-- 7️⃣ وظيفة تفعيل اشتراك باقة لتاجر والتحقق من الرصيد الكافي مع ترحيل الأوردرات المتبقية وتعويض الأيام
+CREATE OR REPLACE FUNCTION public.activate_merchant_subscription(
+    p_merchant_id UUID,
+    p_tier_id INT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_monthly_price DECIMAL(10, 2);
+    v_included_orders INT;
+    v_wallet_balance DECIMAL(10, 2);
+    v_tier_name VARCHAR(50);
+    v_current_remaining INT;
+    v_new_remaining INT;
+    v_current_tier INT;
+    v_current_expiry TIMESTAMPTZ;
+    v_remaining_days DECIMAL;
+    v_days_compensation INT;
+    v_old_included_orders INT;
+BEGIN
+    -- 1. جلب تفاصيل الباقة المطلوبة
+    SELECT monthly_price, included_orders, name
+    INTO v_monthly_price, v_included_orders, v_tier_name
+    FROM public.subscription_tiers
+    WHERE id = p_tier_id;
+
+    IF v_tier_name IS NULL THEN
+        RAISE EXCEPTION 'الباقة المطلوبة غير موجودة في النظام';
+    END IF;
+
+    -- 2. جلب رصيد المحفظة والاشتراك السابق للتاجر مع قفل الصف لمنع التعارض والسباق
+    SELECT wallet_balance, remaining_orders, current_tier_id, package_expiry_date
+    INTO v_wallet_balance, v_current_remaining, v_current_tier, v_current_expiry
+    FROM public.merchants
+    WHERE id = p_merchant_id
+    FOR UPDATE;
+
+    IF v_wallet_balance IS NULL THEN
+        RAISE EXCEPTION 'التاجر غير موجود في النظام';
+    END IF;
+
+    -- 3. التحقق من كفاية رصيد المحفظة لتفعيل الباقة
+    IF v_wallet_balance < v_monthly_price THEN
+        RAISE EXCEPTION 'رصيد المحفظة غير كافٍ لتفعيل الباقة. سعر الباقة: % جنيه، رصيدك الحالي: % جنيه', 
+                        v_monthly_price, v_wallet_balance;
+    END IF;
+
+    -- 3.5 حساب تعويض الأيام المتبقية
+    v_days_compensation := 0;
+    IF v_current_tier IS NOT NULL AND v_current_expiry IS NOT NULL AND v_current_expiry > NOW() THEN
+        -- حساب الأيام المتبقية
+        v_remaining_days := EXTRACT(EPOCH FROM (v_current_expiry - NOW())) / 86400.0;
+        
+        -- جلب عدد أوردرات الباقة السابقة
+        SELECT included_orders INTO v_old_included_orders
+        FROM public.subscription_tiers
+        WHERE id = v_current_tier;
+        
+        IF v_old_included_orders IS NOT NULL THEN
+            IF v_old_included_orders = -1 THEN
+                -- باقة غير محدودة سابقة تعوض بـ 3.33 أوردر لليوم
+                v_days_compensation := CEIL(v_remaining_days * (100.0 / 30.0));
+            ELSE
+                v_days_compensation := CEIL(v_remaining_days * (v_old_included_orders::DECIMAL / 30.0));
+            END IF;
+        END IF;
+    END IF;
+
+    -- 4. حساب عدد الأوردرات الجديدة مع ترحيل الأوردرات المتبقية (Rollover) وتعويض الأيام
+    -- الترحيل والتعويض ينطبق فقط إذا كان التجديد/الترقية لباقة محدودة (ليست Unlimited)
+    IF v_included_orders = -1 THEN
+        v_new_remaining := -1; -- باقة غير محدودة
+    ELSE
+        -- إذا كان لدى التاجر باقة سابقة وأوردرات متبقية، يتم ترحيلها وإضافتها للباقة الجديدة
+        IF v_current_tier IS NOT NULL AND v_current_remaining > 0 THEN
+            v_new_remaining := v_included_orders + v_current_remaining + v_days_compensation;
+        ELSE
+            v_new_remaining := v_included_orders + v_days_compensation;
+        END IF;
+    END IF;
+
+    -- 5. خصم قيمة الباقة من المحفظة وتحديث بيانات الاشتراك
+    UPDATE public.merchants
+    SET wallet_balance = wallet_balance - v_monthly_price,
+        current_tier_id = p_tier_id,
+        remaining_orders = v_new_remaining,
+        overlimit_orders_count = 0, -- إعادة تصفير عداد الأوردرات الإضافية
+        package_expiry_date = NOW() + INTERVAL '30 days',
+        status = 'active', -- إعادة تفعيل المتجر تلقائياً لو كان موقوفاً
+        updated_at = NOW()
+    WHERE id = p_merchant_id;
+
+    -- 6. تسجيل حركة الخصم في جدول الحركات للشفافية
+    INSERT INTO public.wallet_transactions (merchant_id, amount, type, description)
+    VALUES (
+        p_merchant_id, 
+        v_monthly_price, 
+        'debit', 
+        'خصم قيمة الاشتراك في ' || v_tier_name
+    );
+
+    -- 6.5 تسجيل تفاصيل تجديد/ترقية الاشتراك في سجل الاشتراكات
+    INSERT INTO public.subscription_history (
+        merchant_id, 
+        tier_id, 
+        tier_name, 
+        price_paid, 
+        start_date, 
+        end_date, 
+        orders_included, 
+        orders_rolled_over, 
+        orders_compensated
+    )
+    VALUES (
+        p_merchant_id, 
+        p_tier_id, 
+        v_tier_name, 
+        v_monthly_price, 
+        NOW(), 
+        NOW() + INTERVAL '30 days', 
+        v_included_orders, 
+        COALESCE(v_current_remaining, 0), 
+        COALESCE(v_days_compensation, 0)
+    );
+
+END;
+$$;
+
+
+-- 8️⃣ وظيفة تفعيل الفترة التجريبية المجانية للتاجر يدوياً لمرة واحدة فقط
+CREATE OR REPLACE FUNCTION public.activate_free_trial(p_merchant_id UUID)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_trial_months INT;
+  v_trial_used BOOLEAN;
+BEGIN
+  -- التحقق مما إذا كانت الفترة التجريبية قد استُخدمت بالفعل
+  SELECT COALESCE(trial_used, FALSE) INTO v_trial_used
+  FROM public.merchants
+  WHERE id = p_merchant_id;
+
+  IF v_trial_used IS TRUE THEN
+    RAISE EXCEPTION 'لقد قمت باستخدام الفترة التجريبية المجانية بالفعل ولا يمكن تفعيلها مرة أخرى';
+  END IF;
+
+  -- الحصول على عدد أشهر الفترة التجريبية من الإعدادات
+  SELECT COALESCE(setting_value::INT, 2) INTO v_trial_months
+  FROM public.settings
+  WHERE setting_key = 'merchant_free_trial_months';
+
+  IF v_trial_months IS NULL OR v_trial_months <= 0 THEN
+    RAISE EXCEPTION 'الفترة التجريبية المجانية غير مفعلة حالياً من قبل الإدارة';
+  END IF;
+
+  -- تفعيل حالة التاجر وتحديث صلاحية الباقة ووضع علامة الاستخدام
+  UPDATE public.merchants
+  SET status = 'active',
+      trial_used = TRUE,
+      package_expiry_date = NOW() + (v_trial_months || ' months')::INTERVAL,
+      remaining_orders = 0, -- أوردرات مفتوحة
+      updated_at = NOW()
+  WHERE id = p_merchant_id;
+
+  -- تفعيل المتجر تلقائياً
+  UPDATE public.stores
+  SET is_active = TRUE,
+      is_open = TRUE,
+      updated_at = NOW()
+  WHERE merchant_id = p_merchant_id;
+
+  -- تسجيل الفترة التجريبية في سجل الاشتراكات للشفافية
+  INSERT INTO public.subscription_history (
+      merchant_id, 
+      tier_id, 
+      tier_name, 
+      price_paid, 
+      start_date, 
+      end_date, 
+      orders_included, 
+      orders_rolled_over, 
+      orders_compensated
+  )
+  VALUES (
+      p_merchant_id, 
+      NULL, 
+      'الفترة التجريبية المجانية', 
+      0.00, 
+      NOW(), 
+      NOW() + (v_trial_months || ' months')::INTERVAL, 
+      0, 
+      0, 
+      0
+  );
+END;
+$$;
+
+-- ============================================================================
+-- 🔔 AUTOMATIC SUBSCRIPTION & EXPIRATION PUSH NOTIFICATIONS
+-- ============================================================================
+
+-- 1. إضافة عمود لتتبع وقت إرسال آخر تنبيه بانتهاء الباقة للتجار لمنع التكرار والإزعاج
+ALTER TABLE public.merchants 
+  ADD COLUMN IF NOT EXISTS last_expiry_warning_sent_at TIMESTAMPTZ;
+
+-- 2. تابع ودالة إرسال تنبيهات تلقائية للتاجر عند تفعيل اشتراك أو فترة تجريبية مجانية جديدة
+CREATE OR REPLACE FUNCTION public.on_subscription_history_inserted()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_merchant_name TEXT;
+  v_store_id UUID;
+  v_body TEXT;
+  v_title TEXT;
+BEGIN
+  -- جلب اسم التاجر
+  SELECT COALESCE(name, 'التاجر') INTO v_merchant_name
+  FROM public.merchants
+  WHERE id = NEW.merchant_id;
+
+  -- جلب معرف المتجر المرتبط
+  SELECT id INTO v_store_id
+  FROM public.stores
+  WHERE merchant_id = NEW.merchant_id
+  LIMIT 1;
+
+  IF NEW.tier_name = 'الفترة التجريبية المجانية' THEN
+    v_title := '🎉 تم تفعيل الفترة التجريبية المجانية';
+    v_body := 'مرحباً ' || v_merchant_name || '! تم تفعيل الفترة التجريبية المجانية لمتجرك بنجاح. صلاحية الفترة حتى ' || to_char(NEW.end_date, 'YYYY-MM-DD') || '. نتمنى لك مبيعات وفيرة!';
+  ELSE
+    v_title := '💳 تم تفعيل الاشتراك بنجاح';
+    v_body := 'مرحباً ' || v_merchant_name || '! تم الاشتراك بنجاح في ' || NEW.tier_name || '. صلاحية الاشتراك حتى ' || to_char(NEW.end_date, 'YYYY-MM-DD') || ' وتتضمن ' || 
+              CASE WHEN NEW.orders_included = -1 THEN 'أوردرات غير محدودة' ELSE NEW.orders_included || ' أوردر' END || 
+              CASE WHEN NEW.orders_rolled_over > 0 THEN ' (منها ' || NEW.orders_rolled_over || ' أوردر مرحّل 🎁)' ELSE '' END || 
+              CASE WHEN NEW.orders_compensated > 0 THEN ' (منها ' || NEW.orders_compensated || ' أوردر تعويضي ⏳)' ELSE '' END || '.';
+  END IF;
+
+  -- إدراج الإشعار في جدول الإشعارات (الذي يُشغل دالة الإشعارات المنبثقة تلقائياً)
+  INSERT INTO public.notifications (user_id, store_id, title, body, type, target_role, data)
+  VALUES (NEW.merchant_id, v_store_id, v_title, v_body, 'system', 'merchant', jsonb_build_object(
+    'subscription_history_id', NEW.id,
+    'tier_name', NEW.tier_name,
+    'end_date', NEW.end_date::TEXT
+  ));
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ربط التابع بجدول سجل الاشتراكات
+DROP TRIGGER IF EXISTS trg_on_subscription_history_inserted ON public.subscription_history;
+CREATE TRIGGER trg_on_subscription_history_inserted
+AFTER INSERT ON public.subscription_history
+FOR EACH ROW
+EXECUTE FUNCTION public.on_subscription_history_inserted();
+
+-- 3. دالة الفحص الدوري للاشتراكات التي أوشكت على الانتهاء (تُرسل التنبيهات قبل 3 أيام)
+CREATE OR REPLACE FUNCTION public.check_expiring_subscriptions()
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  r RECORD;
+  v_store_id UUID;
+  v_days_left INT;
+  v_title TEXT;
+  v_body TEXT;
+BEGIN
+  -- أ. فحص باقات الاشتراك المدفوعة التي ستنتهي خلال 3 أيام
+  FOR r IN (
+    SELECT m.id, m.name, m.package_expiry_date, t.name as tier_name
+    FROM public.merchants m
+    JOIN public.subscription_tiers t ON m.current_tier_id = t.id
+    WHERE m.status = 'active'
+      AND m.package_expiry_date IS NOT NULL
+      AND m.package_expiry_date > NOW()
+      AND m.package_expiry_date <= NOW() + INTERVAL '3 days'
+      AND (m.last_expiry_warning_sent_at IS NULL OR m.last_expiry_warning_sent_at < m.package_expiry_date - INTERVAL '3 days')
+  ) LOOP
+    v_days_left := CEIL(EXTRACT(EPOCH FROM (r.package_expiry_date - NOW())) / 86400.0);
+    v_title := '⚠️ اقترب انتهاء باقة الاشتراك';
+    v_body := 'مرحباً ' || COALESCE(r.name, 'التاجر') || '! نود تنبيهك بأن اشتراكك في ' || r.tier_name || ' سينتهي خلال ' || v_days_left || ' أيام (بتاريخ ' || to_char(r.package_expiry_date, 'YYYY-MM-DD') || '). يرجى شحن محفظتك لضمان التجديد التلقائي وعدم توقف متجرك.';
+
+    SELECT id INTO v_store_id FROM public.stores WHERE merchant_id = r.id LIMIT 1;
+
+    INSERT INTO public.notifications (user_id, store_id, title, body, type, target_role, data)
+    VALUES (r.id, v_store_id, v_title, v_body, 'system', 'merchant', jsonb_build_object(
+      'type', 'expiry_warning',
+      'days_left', v_days_left,
+      'expiry_date', r.package_expiry_date::TEXT
+    ));
+
+    UPDATE public.merchants
+    SET last_expiry_warning_sent_at = NOW()
+    WHERE id = r.id;
+  END LOOP;
+
+  -- ب. فحص الفترات التجريبية المجانية التي ستنتهي خلال 3 أيام
+  FOR r IN (
+    SELECT m.id, m.name, m.package_expiry_date
+    FROM public.merchants m
+    WHERE m.status = 'active'
+      AND m.current_tier_id IS NULL
+      AND m.trial_used = TRUE
+      AND m.package_expiry_date IS NOT NULL
+      AND m.package_expiry_date > NOW()
+      AND m.package_expiry_date <= NOW() + INTERVAL '3 days'
+      AND (m.last_expiry_warning_sent_at IS NULL OR m.last_expiry_warning_sent_at < m.package_expiry_date - INTERVAL '3 days')
+  ) LOOP
+    v_days_left := CEIL(EXTRACT(EPOCH FROM (r.package_expiry_date - NOW())) / 86400.0);
+    v_title := '⚠️ اقترب انتهاء الفترة التجريبية';
+    v_body := 'مرحباً ' || COALESCE(r.name, 'التاجر') || '! نود تنبيهك بأن الفترة التجريبية المجانية لمتجرك ستنتهي خلال ' || v_days_left || ' أيام (بتاريخ ' || to_char(r.package_expiry_date, 'YYYY-MM-DD') || '). يرجى شحن محفظتك والاشتراك في إحدى الباقات لضمان استمرار عمل متجرك دون توقف.';
+
+    SELECT id INTO v_store_id FROM public.stores WHERE merchant_id = r.id LIMIT 1;
+
+    INSERT INTO public.notifications (user_id, store_id, title, body, type, target_role, data)
+    VALUES (r.id, v_store_id, v_title, v_body, 'system', 'merchant', jsonb_build_object(
+      'type', 'expiry_warning',
+      'days_left', v_days_left,
+      'expiry_date', r.package_expiry_date::TEXT
+    ));
+
+    UPDATE public.merchants
+    SET last_expiry_warning_sent_at = NOW()
+    WHERE id = r.id;
+  END LOOP;
+END;
+$$;
+
+-- 4. جدولة المهام تلقائياً عبر pg_cron
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- جدولة فحص انتهاء الباقات وإرسال الإشعارات يومياً الساعة 12:05 بعد منتصف الليل
+SELECT cron.schedule(
+  'check-expiring-subscriptions-job',
+  '5 0 * * *',
+  $$SELECT public.check_expiring_subscriptions()$$
+);
+
+-- جدولة إيقاف المتاجر التي انتهت صلاحيتها بالفعل يومياً الساعة 12:00 بعد منتصف الليل
+SELECT cron.schedule(
+  'check-and-suspend-expired-merchants-job',
+  '0 0 * * *',
+  $$SELECT public.check_and_suspend_expired_merchants()$$
+);
+
+-- ============================================================================
+-- ⚙️ GLOBAL SETTINGS TO USER APP SETTINGS SYNCHRONIZATION
+-- ============================================================================
+
+-- 1. إدراج مفاتيح الإعدادات العالمية المفقودة في جدول الإعدادات الافتراضية
+INSERT INTO public.settings (setting_key, setting_value, setting_type, description, is_public)
+VALUES
+  ('support_email', 'info@eltal-market.com', 'string', 'البريد الإلكتروني للدعم الفني', TRUE),
+  ('support_phone', '01146668812', 'string', 'رقم هاتف الدعم الفني', TRUE),
+  ('support_website', 'https://eltal-market.com', 'string', 'الموقع الإلكتروني للدعم الفني', TRUE),
+  ('multi_store_delivery_fee_per_km', '5.0', 'number', 'رسوم التوصيل الإضافية لكل كم للمتاجر المتعددة', TRUE),
+  ('multi_store_delivery_min_distance', '1.0', 'number', 'الحد الأدنى لمسافة رسوم المتاجر المتعددة', TRUE),
+  ('multi_store_delivery_fee_enabled', 'true', 'boolean', 'تفعيل رسوم التوصيل للمتاجر المتعددة', TRUE)
+ON CONFLICT (setting_key) DO UPDATE
+SET 
+  setting_value = EXCLUDED.setting_value,
+  description = EXCLUDED.description,
+  updated_at = NOW();
+
+-- 2. دالة و Trigger لتحديث جميع إعدادات المستخدمين تلقائياً عند قيام الإدارة بتعديل الإعدادات العالمية
+CREATE OR REPLACE FUNCTION public.sync_settings_to_app_settings()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.setting_key = 'app_delivery_base_fee' THEN
+    UPDATE public.app_settings SET app_delivery_base_fee = NEW.setting_value::NUMERIC;
+  ELSIF NEW.setting_key = 'app_delivery_fee_per_km' THEN
+    UPDATE public.app_settings SET app_delivery_fee_per_km = NEW.setting_value::NUMERIC;
+  ELSIF NEW.setting_key = 'app_delivery_max_distance' THEN
+    UPDATE public.app_settings SET app_delivery_max_distance = NEW.setting_value::NUMERIC;
+  ELSIF NEW.setting_key = 'app_delivery_estimated_time' THEN
+    UPDATE public.app_settings SET app_delivery_estimated_time = NEW.setting_value::INT;
+  ELSIF NEW.setting_key = 'support_email' THEN
+    UPDATE public.app_settings SET support_email = NEW.setting_value;
+  ELSIF NEW.setting_key = 'support_phone' THEN
+    UPDATE public.app_settings SET support_phone = NEW.setting_value;
+  ELSIF NEW.setting_key = 'support_website' THEN
+    UPDATE public.app_settings SET support_website = NEW.setting_value;
+  ELSIF NEW.setting_key = 'multi_store_delivery_fee_per_km' THEN
+    UPDATE public.app_settings SET multi_store_delivery_fee_per_km = NEW.setting_value::NUMERIC;
+  ELSIF NEW.setting_key = 'multi_store_delivery_min_distance' THEN
+    UPDATE public.app_settings SET multi_store_delivery_min_distance = NEW.setting_value::NUMERIC;
+  ELSIF NEW.setting_key = 'multi_store_delivery_fee_enabled' THEN
+    UPDATE public.app_settings SET multi_store_delivery_fee_enabled = (NEW.setting_value = 'true');
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_settings_sync ON public.settings;
+CREATE TRIGGER trg_settings_sync
+AFTER INSERT OR UPDATE OF setting_value ON public.settings
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_settings_to_app_settings();
+
+-- 3. دالة و Trigger لتعبئة القيم الافتراضية للإعدادات العالمية تلقائياً عند إنشاء مستخدم جديد
+CREATE OR REPLACE FUNCTION public.populate_default_app_settings()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.app_delivery_base_fee := COALESCE(
+    (SELECT setting_value::NUMERIC FROM public.settings WHERE setting_key = 'app_delivery_base_fee'),
+    15.00
+  );
+  NEW.app_delivery_fee_per_km := COALESCE(
+    (SELECT setting_value::NUMERIC FROM public.settings WHERE setting_key = 'app_delivery_fee_per_km'),
+    3.00
+  );
+  NEW.app_delivery_max_distance := COALESCE(
+    (SELECT setting_value::NUMERIC FROM public.settings WHERE setting_key = 'app_delivery_max_distance'),
+    25.00
+  );
+  NEW.app_delivery_estimated_time := COALESCE(
+    (SELECT setting_value::INT FROM public.settings WHERE setting_key = 'app_delivery_estimated_time'),
+    30
+  );
+  NEW.support_email := COALESCE(
+    (SELECT setting_value FROM public.settings WHERE setting_key = 'support_email'),
+    'info@eltal-market.com'
+  );
+  NEW.support_phone := COALESCE(
+    (SELECT setting_value FROM public.settings WHERE setting_key = 'support_phone'),
+    '01146668812'
+  );
+  NEW.support_website := COALESCE(
+    (SELECT setting_value FROM public.settings WHERE setting_key = 'support_website'),
+    'https://eltal-market.com'
+  );
+  NEW.multi_store_delivery_fee_per_km := COALESCE(
+    (SELECT setting_value::NUMERIC FROM public.settings WHERE setting_key = 'multi_store_delivery_fee_per_km'),
+    5.0
+  );
+  NEW.multi_store_delivery_min_distance := COALESCE(
+    (SELECT setting_value::NUMERIC FROM public.settings WHERE setting_key = 'multi_store_delivery_min_distance'),
+    1.0
+  );
+  NEW.multi_store_delivery_fee_enabled := COALESCE(
+    (SELECT setting_value = 'true' FROM public.settings WHERE setting_key = 'multi_store_delivery_fee_enabled'),
+    TRUE
+  );
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS trg_app_settings_defaults ON public.app_settings;
+CREATE TRIGGER trg_app_settings_defaults
+BEFORE INSERT ON public.app_settings
+FOR EACH ROW
+EXECUTE FUNCTION public.populate_default_app_settings();
+
+-- 4. تحديث فوري لجميع السجلات الحالية في قاعدة البيانات لمطابقة إعدادات الإدارة الحالية
+UPDATE public.app_settings SET
+  app_delivery_base_fee = COALESCE((SELECT setting_value::NUMERIC FROM public.settings WHERE setting_key = 'app_delivery_base_fee'), 15.00),
+  app_delivery_fee_per_km = COALESCE((SELECT setting_value::NUMERIC FROM public.settings WHERE setting_key = 'app_delivery_fee_per_km'), 3.00),
+  app_delivery_max_distance = COALESCE((SELECT setting_value::NUMERIC FROM public.settings WHERE setting_key = 'app_delivery_max_distance'), 25.00),
+  app_delivery_estimated_time = COALESCE((SELECT setting_value::INT FROM public.settings WHERE setting_key = 'app_delivery_estimated_time'), 30),
+  support_email = COALESCE((SELECT setting_value FROM public.settings WHERE setting_key = 'support_email'), 'info@eltal-market.com'),
+  support_phone = COALESCE((SELECT setting_value FROM public.settings WHERE setting_key = 'support_phone'), '01146668812'),
+  support_website = COALESCE((SELECT setting_value FROM public.settings WHERE setting_key = 'support_website'), 'https://eltal-market.com'),
+  multi_store_delivery_fee_per_km = COALESCE((SELECT setting_value::NUMERIC FROM public.settings WHERE setting_key = 'multi_store_delivery_fee_per_km'), 5.0),
+  multi_store_delivery_min_distance = COALESCE((SELECT setting_value::NUMERIC FROM public.settings WHERE setting_key = 'multi_store_delivery_min_distance'), 1.0),
+  multi_store_delivery_fee_enabled = COALESCE((SELECT setting_value = 'true' FROM public.settings WHERE setting_key = 'multi_store_delivery_fee_enabled'), TRUE);
 
 -- ============================================================================
 -- ✅ END OF CONSOLIDATED SCHEMA

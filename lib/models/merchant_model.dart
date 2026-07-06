@@ -1,4 +1,4 @@
-﻿/// Merchant model that matches the new Supabase merchants table
+/// Merchant model that matches the new Supabase merchants table
 /// Following the official Supabase Dart documentation: https://supabase.com/docs/reference/dart/installing
 library;
 
@@ -18,6 +18,9 @@ class MerchantModel {
   final bool isVerified;
   final DateTime createdAt;
   final DateTime? updatedAt;
+  final String status;
+  final bool trialUsed;
+  final DateTime? packageExpiryDate;
 
   const MerchantModel({
     required this.id,
@@ -29,6 +32,9 @@ class MerchantModel {
     this.isVerified = false,
     required this.createdAt,
     this.updatedAt,
+    this.status = 'suspended',
+    this.trialUsed = false,
+    this.packageExpiryDate,
   });
 
   factory MerchantModel.fromMap(Map<String, dynamic> map) {
@@ -47,6 +53,11 @@ class MerchantModel {
       createdAt: _parseDateTime(map['created_at']),
       updatedAt: map['updated_at'] != null
           ? _parseDateTime(map['updated_at'])
+          : null,
+      status: map['status']?.toString() ?? 'suspended',
+      trialUsed: map['trial_used'] as bool? ?? false,
+      packageExpiryDate: map['package_expiry_date'] != null
+          ? DateTime.tryParse(map['package_expiry_date'].toString())
           : null,
     );
   }
@@ -79,6 +90,9 @@ class MerchantModel {
       'is_verified': isVerified,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
+      'status': status,
+      'trial_used': trialUsed,
+      'package_expiry_date': packageExpiryDate?.toIso8601String(),
     };
   }
 
@@ -103,6 +117,9 @@ class MerchantModel {
     bool? isVerified,
     DateTime? createdAt,
     DateTime? updatedAt,
+    String? status,
+    bool? trialUsed,
+    DateTime? packageExpiryDate,
     // Backward compatibility parameters
     bool? isActive,
     String? logoUrl,
@@ -118,6 +135,9 @@ class MerchantModel {
           isActive ?? isVerified ?? this.isVerified, // Use isActive if provided
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      status: status ?? this.status,
+      trialUsed: trialUsed ?? this.trialUsed,
+      packageExpiryDate: packageExpiryDate ?? this.packageExpiryDate,
     );
   }
 

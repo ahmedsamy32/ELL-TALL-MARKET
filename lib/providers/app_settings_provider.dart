@@ -4,7 +4,7 @@ import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/models/settings_model.dart';
 
 /// Admin/app-wide settings provider.
-/// Uses `public.app_settings` (NOT per-client preferences).
+/// Loads user preferences from `client_settings` and global configurations from `app_settings`.
 class AppSettingsProvider with ChangeNotifier {
   final _supabase = Supabase.instance.client;
 
@@ -46,7 +46,7 @@ class AppSettingsProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // ===== جلب الإعدادات =====
+  // ===== جلب الإعدادات (دمج الإعدادات الخاصة بالمستخدم مع الإعدادات العامة للتطبيق) =====
   Future<void> loadSettings() async {
     _setLoading(true);
     try {
@@ -57,24 +57,54 @@ class AppSettingsProvider with ChangeNotifier {
         return;
       }
 
-      final rows = await _supabase
-          .from('app_settings')
+      // 1. جلب إعدادات المستخدم الخاصة من client_settings
+      final userRows = await _supabase
+          .from('client_settings')
           .select()
           .eq('client_id', userId)
           .limit(1);
 
-      if (rows.isNotEmpty) {
-        _appSettings = AppSettingsModel.fromMap(
-          Map<String, dynamic>.from(rows.first as Map),
-        );
-      } else {
-        _appSettings = AppSettingsModel.defaults(userId);
+      // 2. جلب الإعدادات العامة للتطبيق من app_settings
+      final globalRows = await _supabase
+          .from('app_settings')
+          .select()
+          .limit(1);
+
+      final Map<String, dynamic> mergedMap = {};
+
+      if (userRows.isEmpty) {
+        final defaultUserMap = {
+          'client_id': userId,
+          'notifications_enabled': true,
+          'email_notifications': true,
+          'sms_notifications': false,
+          'dark_mode': false,
+          'language': 'ar',
+          'currency': 'EGP',
+          'biometric_auth': false,
+          'save_payment_methods': true,
+          'auto_update': true,
+          'data_saver': false,
+          'cache_duration': 7,
+          'analytics_enabled': true,
+          'crash_reports': true,
+        };
         try {
-          await updateAppSettings(_appSettings);
+          await _supabase.from('client_settings').insert(defaultUserMap);
+          mergedMap.addAll(defaultUserMap);
         } catch (e) {
-          AppLogger.warning('⚠️ Could not save default app settings', e);
+          AppLogger.warning('⚠️ Could not save default client settings', e);
         }
+      } else {
+        mergedMap.addAll(Map<String, dynamic>.from(userRows.first));
       }
+
+      if (globalRows.isNotEmpty) {
+        mergedMap.addAll(Map<String, dynamic>.from(globalRows.first));
+      }
+
+      _appSettings = AppSettingsModel.fromMap(mergedMap);
+      _setError(null);
       notifyListeners();
     } catch (e) {
       AppLogger.error('❌ Error loading app settings', e);
@@ -85,40 +115,77 @@ class AppSettingsProvider with ChangeNotifier {
     }
   }
 
-  // ===== تحديث الإعدادات =====
+  // ===== تحديث الإعدادات (حفظ الجزء الخاص بالمستخدم وحفظ الجزء العام إذا كان المستخدم أدمن) =====
   Future<void> updateAppSettings(AppSettingsModel settings) async {
+    final previousSettings = _appSettings;
     try {
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) {
         throw Exception('لا يمكن حفظ الإعدادات بدون تسجيل دخول');
       }
 
-      final previousSettings = _appSettings;
       _appSettings = settings;
       notifyListeners();
 
-      final updateData = settings.toDatabaseMap();
+      // 1. فصل إعدادات المستخدم الخاصة لحفظها في client_settings
+      final userSettingsMap = {
+        'notifications_enabled': settings.notificationsEnabled,
+        'email_notifications': settings.emailNotifications,
+        'sms_notifications': settings.smsNotifications,
+        'dark_mode': settings.darkMode,
+        'language': settings.language.code,
+        'currency': settings.currency.code,
+        'biometric_auth': settings.biometricAuth,
+        'save_payment_methods': settings.savePaymentMethods,
+        'auto_update': settings.autoUpdate,
+        'data_saver': settings.dataSaver,
+        'cache_duration': settings.cacheDuration,
+        'analytics_enabled': settings.analyticsEnabled,
+        'crash_reports': settings.crashReports,
+      };
 
-      try {
-        final updated = await _supabase
-            .from('app_settings')
-            .update(updateData)
-            .eq('client_id', userId)
-            .select();
+      // 2. فصل الإعدادات العامة لحفظها في app_settings
+      final globalSettingsMap = {
+        'support_email': settings.supportEmail,
+        'support_phone': settings.supportPhone,
+        'support_website': settings.supportWebsite,
+        'app_delivery_base_fee': settings.appDeliveryBaseFee,
+        'app_delivery_fee_per_km': settings.appDeliveryFeePerKm,
+        'app_delivery_max_distance': settings.appDeliveryMaxDistance,
+        'app_delivery_estimated_time': settings.appDeliveryEstimatedTime,
+        'multi_store_delivery_fee_per_km': settings.multiStoreDeliveryFeePerKm,
+        'multi_store_delivery_min_distance': settings.multiStoreDeliveryMinDistance,
+        'multi_store_delivery_fee_enabled': settings.multiStoreDeliveryFeeEnabled,
+      };
 
-        final bool didUpdate = updated.isNotEmpty;
-        if (!didUpdate) {
-          await _supabase.from('app_settings').insert({
-            ...updateData,
-            'client_id': userId,
-          });
+      // حفظ إعدادات المستخدم الشخصية
+      await _supabase.from('client_settings').upsert({
+        ...userSettingsMap,
+        'client_id': userId,
+      }, onConflict: 'client_id');
+
+      // حفظ الإعدادات العامة للتطبيق (فقط إذا كان المستخدم أدمن)
+      final profileRow = await _supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', userId)
+          .limit(1)
+          .maybeSingle();
+
+      if (profileRow != null && profileRow['role'] == 'admin') {
+        final globalRows = await _supabase.from('app_settings').select('id').limit(1);
+        if (globalRows.isNotEmpty) {
+          final globalId = globalRows.first['id'];
+          await _supabase.from('app_settings').update(globalSettingsMap).eq('id', globalId);
+        } else {
+          await _supabase.from('app_settings').insert(globalSettingsMap);
         }
-      } catch (e) {
-        _appSettings = previousSettings;
-        notifyListeners();
-        rethrow;
       }
+
+      _setError(null);
     } catch (e) {
+      _appSettings = previousSettings;
+      notifyListeners();
       AppLogger.error('❌ Error updating app settings', e);
       _setError(e.toString());
       rethrow;

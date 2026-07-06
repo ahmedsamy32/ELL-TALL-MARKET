@@ -11,6 +11,7 @@ import 'package:ell_tall_market/services/notification_service.dart';
 import 'package:ell_tall_market/services/store_wallet_service.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/models/store_model.dart';
+import 'package:ell_tall_market/models/merchant_model.dart';
 import 'package:ell_tall_market/services/store_service.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_products_screen.dart';
@@ -44,6 +45,8 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
   String? _currentUserId; // لتتبع المستخدم الحالي
   double? _walletBalance;
   bool _isWalletLoading = false;
+  int _freeTrialMonths = 2;
+  bool _isActivatingTrial = false;
 
   @override
   void initState() {
@@ -150,6 +153,25 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
 
         if (merchant != null) {
           AppLogger.info('✅ تم جلب بيانات التاجر: ${merchant.businessName}');
+
+          // Fetch free trial setting
+          try {
+            final settingRow = await Supabase.instance.client
+                .from('settings')
+                .select('setting_value')
+                .eq('setting_key', 'merchant_free_trial_months')
+                .maybeSingle();
+            if (settingRow != null) {
+              final val = int.tryParse(settingRow['setting_value'].toString());
+              if (val != null && mounted) {
+                setState(() {
+                  _freeTrialMonths = val;
+                });
+              }
+            }
+          } catch (e) {
+            AppLogger.warning('⚠️ فشل جلب إعدادات الفترة المجانية: $e');
+          }
 
           final statsCount =
               merchantProvider.selectedMerchantStats?['total_products'];
@@ -880,6 +902,195 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
     );
   }
 
+  Future<void> _activateFreeTrial(String merchantId) async {
+    if (_isActivatingTrial) return;
+    setState(() => _isActivatingTrial = true);
+
+    // Show loading dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(),
+      ),
+    );
+
+    try {
+      await Supabase.instance.client
+          .rpc('activate_free_trial', params: {'p_merchant_id': merchantId});
+
+      if (mounted) {
+        Navigator.pop(context); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم تفعيل الفترة التجريبية المجانية لمدة $_freeTrialMonths أشهر بنجاح! 🎉'),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        // Reload dashboard data
+        final merchantProvider = Provider.of<MerchantProvider>(context, listen: false);
+        merchantProvider.clearData();
+        setState(() {
+          _isInitialized = false;
+        });
+        _loadData(force: true);
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // Close loading dialog
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ أثناء التفعيل: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isActivatingTrial = false);
+      }
+    }
+  }
+
+  Widget _buildSuspendedStorePanel(MerchantModel merchant, ColorScheme colorScheme, TextTheme textTheme) {
+    final showTrialClaim = !merchant.trialUsed && _freeTrialMonths > 0;
+
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: colorScheme.outlineVariant, width: 1),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.lock_outline,
+                  color: colorScheme.error,
+                  size: 28,
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'المتجر مغلق حالياً 🔒',
+                  style: textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                    color: colorScheme.error,
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 24),
+            if (showTrialClaim) ...[
+              Text(
+                'تفعيل الفترة التجريبية المجانية 🎁',
+                style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'متجرك جاهز لبدء العمل، ولكن يجب تفعيل الباقة أولاً. بصفتك شريك جديد في سوق التل، يحق لك تفعيل الفترة التجريبية المجانية بالكامل لمدة $_freeTrialMonths أشهر لتجربة التطبيق بدون دفع أي رسوم مسبقة وبأوردرات غير محدودة ومجانية تماماً.',
+                style: textTheme.bodyMedium?.copyWith(height: 1.5),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _isActivatingTrial ? null : () => _activateFreeTrial(merchant.id),
+                  icon: _isActivatingTrial
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2, valueColor: AlwaysStoppedAnimation(Colors.white)),
+                        )
+                      : const Icon(Icons.card_giftcard),
+                  label: const Text('تفعيل الفترة التجريبية المجانية الآن 🎁'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    backgroundColor: Colors.green,
+                  ),
+                ),
+              ),
+            ] else ...[
+              Text(
+                'لا توجد باقة نشطة حالياً 💳',
+                style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'متجرك مغلق حالياً لانتهاء صلاحية الفترة المجانية أو باقة الاشتراك الخاصة بك. يرجى التوجه إلى شاشة المحفظة لتفعيل أو تجديد الاشتراك الخاص بك لاستئناف تلقي الطلبات وفتح المتجر للزبائن.',
+                style: textTheme.bodyMedium?.copyWith(height: 1.5),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pushNamed(context, AppRoutes.merchantWallet);
+                  },
+                  icon: const Icon(Icons.account_balance_wallet_outlined),
+                  label: const Text('الانتقال إلى المحفظة لتفعيل الاشتراك 💳'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    backgroundColor: colorScheme.primary,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: colorScheme.outlineVariant, width: 0.5),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline, color: colorScheme.primary, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        '💡 تنبيهات وتعليمات هامة:',
+                        style: textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  _buildInstructionItem('1. لا توجد أي التزامات مالية أو عمولات خفية خلال الفترة المجانية.'),
+                  _buildInstructionItem('2. بعد انتهاء الفترة المجانية، سيتم إيقاف المتجر مؤقتاً حتى تقوم باختيار إحدى الباقات المدفوعة المتاحة.'),
+                  _buildInstructionItem('3. يمكنك شحن رصيد محفظتك وتفعيل باقتك في أي وقت لتجنب انقطاع العمل.'),
+                  _buildInstructionItem('4. للمساعدة أو الاستفسار، يمكنك دائماً مراسلة الدعم الفني من صفحة المساعدة في القائمة الجانبية.'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInstructionItem(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          height: 1.4,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+
   Widget _buildDashboardHome() {
     final productProvider = Provider.of<ProductProvider>(context);
     final orderProvider = Provider.of<OrderProvider>(context);
@@ -1026,6 +1237,9 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
             )
             .length;
 
+        final merchant = merchantProvider.selectedMerchant!;
+        final isSuspended = merchant.status == 'suspended';
+
         return RefreshIndicator(
           onRefresh: () async {
             merchantProvider.clearData();
@@ -1047,39 +1261,43 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                 _buildWelcomeHeader(merchantProvider, textTheme, colorScheme),
                 const SizedBox(height: 24),
 
-                // البطاقات الإحصائية
-                _buildStatsGrid(
-                  isWideScreen,
-                  crossAxisCount,
-                  productProvider,
-                  orderProvider,
-                  pendingOrders,
-                  activeOrders,
-                  colorScheme,
-                ),
-                const SizedBox(height: 16),
+                if (isSuspended) ...[
+                  _buildSuspendedStorePanel(merchant, colorScheme, textTheme),
+                ] else ...[
+                  // البطاقات الإحصائية
+                  _buildStatsGrid(
+                    isWideScreen,
+                    crossAxisCount,
+                    productProvider,
+                    orderProvider,
+                    pendingOrders,
+                    activeOrders,
+                    colorScheme,
+                  ),
+                  const SizedBox(height: 16),
 
-                // التنبيهات الهامة
-                if (pendingOrders > 0)
-                  _buildAlertCard(
-                    'طلبات جديدة تحتاج للمراجعة',
-                    'لديك $pendingOrders ${pendingOrders == 1 ? "طلب جديد" : "طلبات جديدة"} في انتظار الموافقة',
-                    Icons.notification_important,
-                    colorScheme.primary,
+                  // التنبيهات الهامة
+                  if (pendingOrders > 0)
+                    _buildAlertCard(
+                      'طلبات جديدة تحتاج للمراجعة',
+                      'لديك $pendingOrders ${pendingOrders == 1 ? "طلب جديد" : "طلبات جديدة"} في انتظار الموافقة',
+                      Icons.notification_important,
+                      colorScheme.primary,
+                      () => setState(() => _selectedIndex = 2),
+                    ),
+                  if (pendingOrders > 0) const SizedBox(height: 16),
+
+                  // الطلبات الأخيرة
+                  _buildSectionHeader(
+                    'الطلبات الأخيرة',
+                    'عرض الكل',
+                    textTheme,
+                    colorScheme,
                     () => setState(() => _selectedIndex = 2),
                   ),
-                if (pendingOrders > 0) const SizedBox(height: 16),
-
-                // الطلبات الأخيرة
-                _buildSectionHeader(
-                  'الطلبات الأخيرة',
-                  'عرض الكل',
-                  textTheme,
-                  colorScheme,
-                  () => setState(() => _selectedIndex = 2),
-                ),
-                const SizedBox(height: 12),
-                _buildRecentOrders(),
+                  const SizedBox(height: 12),
+                  _buildRecentOrders(),
+                ],
               ],
             ),
           ),
@@ -1819,7 +2037,9 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
   Widget _buildStoreStatusToggle() {
     if (_store == null) return const SizedBox.shrink();
     final textTheme = Theme.of(context).textTheme;
-    final isOpen = _store!.isOpen;
+    final merchantProvider = Provider.of<MerchantProvider>(context, listen: false);
+    final isSuspended = merchantProvider.selectedMerchant?.status == 'suspended';
+    final isOpen = _store!.isOpen && !isSuspended;
 
     return Card(
       elevation: 0,
@@ -1872,7 +2092,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                       value: isOpen,
                       activeThumbColor: Colors.green,
                       activeTrackColor: Colors.green.shade300,
-                      onChanged: _isLoadingStatus
+                      onChanged: isSuspended || _isLoadingStatus
                           ? null
                           : (val) => _toggleStoreStatus(val),
                     ),

@@ -4,8 +4,6 @@ import 'package:ell_tall_market/core/logger.dart';
 import 'package:ell_tall_market/models/settings_model.dart';
 
 class ClientSettingsProvider with ChangeNotifier {
-  static const String _tableName = 'client_settings';
-
   final _supabase = Supabase.instance.client;
 
   AppSettingsModel _clientSettings = AppSettingsModel.empty();
@@ -36,25 +34,53 @@ class ClientSettingsProvider with ChangeNotifier {
         return;
       }
 
-      final rows = await _supabase
-          .from(_tableName)
+      // 1. جلب إعدادات المستخدم الخاصة من client_settings
+      final userRows = await _supabase
+          .from('client_settings')
           .select()
           .eq('client_id', userId)
           .limit(1);
 
-      if (rows.isNotEmpty) {
-        _clientSettings = AppSettingsModel.fromMap(
-          Map<String, dynamic>.from(rows.first as Map),
-        );
-      } else {
-        _clientSettings = AppSettingsModel.defaults(userId);
+      // 2. جلب الإعدادات العامة للتطبيق من app_settings
+      final globalRows = await _supabase
+          .from('app_settings')
+          .select()
+          .limit(1);
+
+      final Map<String, dynamic> mergedMap = {};
+
+      if (userRows.isEmpty) {
+        final defaultUserMap = {
+          'client_id': userId,
+          'notifications_enabled': true,
+          'email_notifications': true,
+          'sms_notifications': false,
+          'dark_mode': false,
+          'language': 'ar',
+          'currency': 'EGP',
+          'biometric_auth': false,
+          'save_payment_methods': true,
+          'auto_update': true,
+          'data_saver': false,
+          'cache_duration': 7,
+          'analytics_enabled': true,
+          'crash_reports': true,
+        };
         try {
-          await updateSettings(_clientSettings);
+          await _supabase.from('client_settings').insert(defaultUserMap);
+          mergedMap.addAll(defaultUserMap);
         } catch (e) {
           AppLogger.warning('⚠️ Could not save default client settings', e);
         }
+      } else {
+        mergedMap.addAll(Map<String, dynamic>.from(userRows.first));
       }
 
+      if (globalRows.isNotEmpty) {
+        mergedMap.addAll(Map<String, dynamic>.from(globalRows.first));
+      }
+
+      _clientSettings = AppSettingsModel.fromMap(mergedMap);
       _setError(null);
       notifyListeners();
     } catch (e) {
@@ -77,16 +103,25 @@ class ClientSettingsProvider with ChangeNotifier {
       _clientSettings = settings;
       notifyListeners();
 
-      final updateData = settings.toDatabaseMap()
-        ..remove('app_delivery_base_fee')
-        ..remove('app_delivery_fee_per_km')
-        ..remove('app_delivery_max_distance')
-        ..remove('app_delivery_estimated_time');
+      final userSettingsMap = {
+        'notifications_enabled': settings.notificationsEnabled,
+        'email_notifications': settings.emailNotifications,
+        'sms_notifications': settings.smsNotifications,
+        'dark_mode': settings.darkMode,
+        'language': settings.language.code,
+        'currency': settings.currency.code,
+        'biometric_auth': settings.biometricAuth,
+        'save_payment_methods': settings.savePaymentMethods,
+        'auto_update': settings.autoUpdate,
+        'data_saver': settings.dataSaver,
+        'cache_duration': settings.cacheDuration,
+        'analytics_enabled': settings.analyticsEnabled,
+        'crash_reports': settings.crashReports,
+      };
 
       try {
-        // استخدام upsert لضمان التحديث أو الإضافة بدون أخطاء "duplicate key"
-        await _supabase.from(_tableName).upsert({
-          ...updateData,
+        await _supabase.from('client_settings').upsert({
+          ...userSettingsMap,
           'client_id': userId,
         }, onConflict: 'client_id');
 

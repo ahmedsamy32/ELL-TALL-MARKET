@@ -441,43 +441,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
         listen: false,
       );
 
-      // Launch Google OAuth browser
-      final launched = await authProvider.signInWithGoogle();
+      // Launch native Google Sign-In
+      final success = await authProvider.signInWithGoogle();
       if (!mounted) return;
 
-      AppLogger.info("نتيجة فتح متصفح Google: $launched");
+      AppLogger.info("نتيجة تسجيل دخول Google: $success");
 
-      if (launched) {
-        // Browser opened successfully - show message and wait for callback
-        AppLogger.info("تم فتح متصفح Google بنجاح");
-        SnackBarHelper.showInfo(context, '🔄 يرجى إكمال التسجيل في المتصفح...');
-
-        // Set up a one-time listener for auth state changes
-        StreamSubscription<User?>? subscription;
-        subscription = authProvider.authStateChanges.listen((user) {
-          if (user != null && mounted) {
-            // Cancel immediately to prevent multiple calls
-            subscription?.cancel();
-
-            // User signed in successfully via OAuth callback
-            ScaffoldMessenger.of(context).clearSnackBars();
-            SnackBarHelper.showSuccess(
-              context,
-              '✅ تم التسجيل بواسطة جوجل بنجاح!',
-            );
-            Navigator.pushReplacementNamed(context, AppRoutes.home);
-          }
-        });
-
-        // Cancel subscription after 60 seconds (timeout)
-        Future.delayed(const Duration(seconds: 60), () {
-          subscription?.cancel();
-        });
+      if (success) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        SnackBarHelper.showSuccess(
+          context,
+          '✅ تم التسجيل بواسطة جوجل بنجاح!',
+        );
+        Navigator.pushReplacementNamed(context, AppRoutes.home);
       } else {
-        AppLogger.warning("فشل فتح متصفح Google");
+        AppLogger.warning("فشل تسجيل دخول Google");
         SnackBarHelper.showError(
           context,
-          authProvider.errorMessage ?? '❌ فشل فتح متصفح Google',
+          authProvider.errorMessage ?? '❌ فشل التسجيل بواسطة جوجل',
         );
       }
     } catch (e) {

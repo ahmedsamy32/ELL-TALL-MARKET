@@ -18,6 +18,7 @@ import 'manage_users_screen.dart';
 import 'manage_products_screen.dart';
 import 'manage_orders_screen.dart';
 import 'store_wallet_topups_screen.dart' show StoreWalletTopupsScreen;
+import 'manage_subscription_tiers_screen.dart';
 import 'manage_categories_screen.dart';
 import 'manage_coupons_screen.dart';
 import 'captain_reports_screen.dart';
@@ -45,6 +46,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     const ManageProductsScreen(),
     const ManageOrdersScreen(),
     const StoreWalletTopupsScreen(),
+    const ManageSubscriptionTiersScreen(),
     const ManageCategoriesScreen(),
     const ManageCouponsScreen(),
     const CaptainReportsScreen(),
@@ -62,6 +64,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     (Icons.shopping_bag_rounded, 'المنتجات'),
     (Icons.shopping_cart_rounded, 'الطلبات'),
     (Icons.account_balance_wallet_rounded, 'طلبات الشحن'),
+    (Icons.card_membership_rounded, 'باقات التجار'),
     (Icons.category_rounded, 'الفئات'),
     (Icons.local_offer_rounded, 'الكوبونات'),
     (Icons.assessment_rounded, 'تقارير الكباتن'),
@@ -216,84 +219,86 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 top: Radius.circular(20),
               ),
             ),
-            child: Column(
-              children: [
-                Container(
-                  margin: const EdgeInsets.only(top: 12),
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(2),
+            child: SafeArea(
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.notifications_rounded,
-                        color: AppColors.primary,
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'الإشعارات',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.notifications_rounded,
+                          color: AppColors.primary,
                         ),
-                      ),
-                      const Spacer(),
-                      Consumer<NotificationProvider>(
-                        builder: (context, provider, _) {
-                          final unreadCount = provider.getUnreadCountForRole(
-                            'admin',
-                          );
-                          final hasNotifications = provider
-                              .getNotificationsForRole('admin')
-                              .isNotEmpty;
-                          if (!hasNotifications) {
-                            return const SizedBox.shrink();
-                          }
-                          return Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (unreadCount > 0)
-                                TextButton.icon(
-                                  onPressed: () {
-                                    final uid = Provider.of<SupabaseProvider>(
-                                      context,
-                                      listen: false,
-                                    ).currentUser?.id;
-                                    if (uid != null) {
-                                      provider.markAllAsRead(uid);
-                                    }
-                                  },
-                                  icon: const Icon(Icons.done_all_rounded),
-                                  label: const Text('قراءة الكل'),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'الإشعارات',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Spacer(),
+                        Consumer<NotificationProvider>(
+                          builder: (context, provider, _) {
+                            final unreadCount = provider.getUnreadCountForRole(
+                              'admin',
+                            );
+                            final hasNotifications = provider
+                                .getNotificationsForRole('admin')
+                                .isNotEmpty;
+                            if (!hasNotifications) {
+                              return const SizedBox.shrink();
+                            }
+                            return Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (unreadCount > 0)
+                                  TextButton.icon(
+                                    onPressed: () {
+                                      final uid = Provider.of<SupabaseProvider>(
+                                        context,
+                                        listen: false,
+                                      ).currentUser?.id;
+                                      if (uid != null) {
+                                        provider.markAllAsRead(uid);
+                                      }
+                                    },
+                                    icon: const Icon(Icons.done_all_rounded),
+                                    label: const Text('قراءة الكل'),
+                                  ),
+                                IconButton(
+                                  onPressed: () =>
+                                      _showDeleteAllNotificationsDialog(
+                                        context,
+                                        provider,
+                                      ),
+                                  icon: const Icon(Icons.delete_outline),
+                                  tooltip: 'مسح الكل',
                                 ),
-                              IconButton(
-                                onPressed: () =>
-                                    _showDeleteAllNotificationsDialog(
-                                      context,
-                                      provider,
-                                    ),
-                                icon: const Icon(Icons.delete_outline),
-                                tooltip: 'مسح الكل',
-                              ),
-                            ],
-                          );
-                        },
-                      ),
-                    ],
+                              ],
+                            );
+                          },
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: _NotificationsBottomSheetContent(
-                    scrollController: scrollController,
+                  Expanded(
+                    child: _NotificationsBottomSheetContent(
+                      scrollController: scrollController,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },
@@ -455,7 +460,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                                     ),
                                     subtitle: Text(o.clientName ?? ''),
                                     trailing: Text(
-                                      '${o.totalAmount?.toStringAsFixed(2)} ر.ي',
+                                      '${o.totalAmount?.toStringAsFixed(2)} ج.م',
                                     ),
                                   ),
                                 ),
@@ -1054,7 +1059,7 @@ class _DashboardHomeState extends State<DashboardHome> {
                 ),
                 _buildStatCard(
                   title: 'الإيرادات',
-                  value: '${totalRevenue.toStringAsFixed(0)} ر.ي',
+                  value: '${totalRevenue.toStringAsFixed(0)} ج.م',
                   icon: Icons.trending_up_rounded,
                   color: AppColors.primary,
                   trend: _selectedPeriod != 'all' ? revenueTrend : null,
@@ -1122,7 +1127,7 @@ class _DashboardHomeState extends State<DashboardHome> {
                           style: const TextStyle(fontWeight: FontWeight.w500),
                         ),
                         subtitle: Text(
-                          'المبلغ: ${item.totalAmount?.toStringAsFixed(2)} ر.ي',
+                          'المبلغ: ${item.totalAmount?.toStringAsFixed(2)} ج.م',
                         ),
                         trailing: Container(
                           padding: const EdgeInsets.symmetric(
@@ -1194,7 +1199,7 @@ class _DashboardHomeState extends State<DashboardHome> {
                         style: const TextStyle(fontWeight: FontWeight.w500),
                       ),
                       subtitle: Text(
-                        'المبلغ: ${item.totalAmount?.toStringAsFixed(2)} ر.ي',
+                        'المبلغ: ${item.totalAmount?.toStringAsFixed(2)} ج.م',
                       ),
                       trailing: Container(
                         padding: const EdgeInsets.symmetric(
