@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/providers/supabase_provider.dart';
@@ -488,6 +489,40 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  void _navigateBasedOnRole(UserRole? role) {
+    if (!mounted) return;
+    switch (role) {
+      case UserRole.admin:
+        Navigator.pushReplacementNamed(
+          context,
+          AppRoutes.adminDashboard,
+        );
+        break;
+      case UserRole.deliveryCompanyAdmin:
+        Navigator.pushReplacementNamed(
+          context,
+          AppRoutes.deliveryCompanyDashboard,
+        );
+        break;
+      case UserRole.merchant:
+        Navigator.pushReplacementNamed(
+          context,
+          AppRoutes.merchantDashboard,
+        );
+        break;
+      case UserRole.captain:
+        Navigator.pushReplacementNamed(
+          context,
+          AppRoutes.captainDashboard,
+        );
+        break;
+      case UserRole.client:
+      default:
+        Navigator.pushReplacementNamed(context, AppRoutes.home);
+        break;
+    }
+  }
+
   Future<void> _handleGoogleLogin() async {
     setState(() => _isLoading = true);
 
@@ -497,57 +532,75 @@ class _LoginScreenState extends State<LoginScreen> {
         listen: false,
       );
 
-      // Launch native Google Sign-In
-      final success = await authProvider.signInWithGoogle();
+      final useOAuth = kIsWeb || 
+          defaultTargetPlatform == TargetPlatform.windows || 
+          defaultTargetPlatform == TargetPlatform.linux || 
+          defaultTargetPlatform == TargetPlatform.macOS;
 
-      if (!mounted) return;
+      if (useOAuth) {
+        // --- Web & Desktop Flow (OAuth Redirect/Popup) ---
+        final launched = await authProvider.signInWithGoogle();
 
-      if (success) {
-        SnackBarHelper.showSuccess(
-          context,
-          '✅ تم تسجيل الدخول بواسطة جوجل بنجاح!',
-        );
-
-        // Navigate based on user role
-        await authProvider.refreshProfile();
         if (!mounted) return;
 
-        final userRole = authProvider.currentProfile?.role;
-        switch (userRole) {
-          case UserRole.admin:
-            Navigator.pushReplacementNamed(
-              context,
-              AppRoutes.adminDashboard,
-            );
-            break;
-          case UserRole.deliveryCompanyAdmin:
-            Navigator.pushReplacementNamed(
-              context,
-              AppRoutes.deliveryCompanyDashboard,
-            );
-            break;
-          case UserRole.merchant:
-            Navigator.pushReplacementNamed(
-              context,
-              AppRoutes.merchantDashboard,
-            );
-            break;
-          case UserRole.captain:
-            Navigator.pushReplacementNamed(
-              context,
-              AppRoutes.captainDashboard,
-            );
-            break;
-          case UserRole.client:
-          default:
-            Navigator.pushReplacementNamed(context, AppRoutes.home);
-            break;
+        if (launched) {
+          // Browser opened successfully - show message and wait for callback
+          SnackBarHelper.showInfo(
+            context,
+            '🔄 يرجى إكمال تسجيل الدخول في المتصفح...',
+          );
+
+          // Set up a one-time listener for auth state changes
+          StreamSubscription<User?>? subscription;
+          subscription = authProvider.authStateChanges.listen((user) {
+            if (user != null && mounted) {
+              subscription?.cancel();
+
+              SnackBarHelper.showSuccess(
+                context,
+                '✅ تم تسجيل الدخول بواسطة جوجل بنجاح!',
+              );
+
+              authProvider.refreshProfile().then((_) {
+                if (!mounted) return;
+                _navigateBasedOnRole(authProvider.currentProfile?.role);
+              });
+            }
+          });
+
+          // Cancel subscription after 60 seconds (timeout)
+          Future.delayed(const Duration(seconds: 60), () {
+            subscription?.cancel();
+          });
+        } else {
+          SnackBarHelper.showError(
+            context,
+            authProvider.errorMessage ?? '❌ فشل فتح متصفح تسجيل دخول Google',
+          );
         }
       } else {
-        SnackBarHelper.showError(
-          context,
-          authProvider.errorMessage ?? '❌ فشل تسجيل الدخول بجوجل',
-        );
+        // --- Mobile Flow (Native Dialog) ---
+        final success = await authProvider.signInWithGoogle();
+
+        if (!mounted) return;
+
+        if (success) {
+          SnackBarHelper.showSuccess(
+            context,
+            '✅ تم تسجيل الدخول بواسطة جوجل بنجاح!',
+          );
+
+          // Navigate based on user role
+          await authProvider.refreshProfile();
+          if (!mounted) return;
+
+          _navigateBasedOnRole(authProvider.currentProfile?.role);
+        } else {
+          SnackBarHelper.showError(
+            context,
+            authProvider.errorMessage ?? '❌ فشل تسجيل الدخول بجوجل',
+          );
+        }
       }
     } catch (e) {
       if (!mounted) return;

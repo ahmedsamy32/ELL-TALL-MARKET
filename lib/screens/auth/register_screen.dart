@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -441,25 +442,64 @@ class _RegisterScreenState extends State<RegisterScreen> {
         listen: false,
       );
 
-      // Launch native Google Sign-In
-      final success = await authProvider.signInWithGoogle();
-      if (!mounted) return;
+      final useOAuth = kIsWeb || 
+          defaultTargetPlatform == TargetPlatform.windows || 
+          defaultTargetPlatform == TargetPlatform.linux || 
+          defaultTargetPlatform == TargetPlatform.macOS;
 
-      AppLogger.info("نتيجة تسجيل دخول Google: $success");
+      if (useOAuth) {
+        // --- Web & Desktop Flow (OAuth Redirect/Popup) ---
+        final launched = await authProvider.signInWithGoogle();
+        if (!mounted) return;
 
-      if (success) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        SnackBarHelper.showSuccess(
-          context,
-          '✅ تم التسجيل بواسطة جوجل بنجاح!',
-        );
-        Navigator.pushReplacementNamed(context, AppRoutes.home);
+        if (launched) {
+          SnackBarHelper.showInfo(context, '🔄 يرجى إكمال التسجيل في المتصفح...');
+
+          // Set up a one-time listener for auth state changes
+          StreamSubscription<User?>? subscription;
+          subscription = authProvider.authStateChanges.listen((user) {
+            if (user != null && mounted) {
+              subscription?.cancel();
+              ScaffoldMessenger.of(context).clearSnackBars();
+              SnackBarHelper.showSuccess(
+                context,
+                '✅ تم التسجيل بواسطة جوجل بنجاح!',
+              );
+              Navigator.pushReplacementNamed(context, AppRoutes.home);
+            }
+          });
+
+          // Cancel subscription after 60 seconds (timeout)
+          Future.delayed(const Duration(seconds: 60), () {
+            subscription?.cancel();
+          });
+        } else {
+          SnackBarHelper.showError(
+            context,
+            authProvider.errorMessage ?? '❌ فشل فتح متصفح تسجيل دخول Google',
+          );
+        }
       } else {
-        AppLogger.warning("فشل تسجيل دخول Google");
-        SnackBarHelper.showError(
-          context,
-          authProvider.errorMessage ?? '❌ فشل التسجيل بواسطة جوجل',
-        );
+        // --- Mobile Flow (Native Dialog) ---
+        final success = await authProvider.signInWithGoogle();
+        if (!mounted) return;
+
+        AppLogger.info("نتيجة تسجيل دخول Google: $success");
+
+        if (success) {
+          ScaffoldMessenger.of(context).clearSnackBars();
+          SnackBarHelper.showSuccess(
+            context,
+            '✅ تم التسجيل بواسطة جوجل بنجاح!',
+          );
+          Navigator.pushReplacementNamed(context, AppRoutes.home);
+        } else {
+          AppLogger.warning("فشل تسجيل دخول Google");
+          SnackBarHelper.showError(
+            context,
+            authProvider.errorMessage ?? '❌ فشل التسجيل بواسطة جوجل',
+          );
+        }
       }
     } catch (e) {
       AppLogger.error("خطأ في Google", e);

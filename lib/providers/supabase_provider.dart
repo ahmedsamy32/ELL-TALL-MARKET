@@ -545,38 +545,64 @@ class SupabaseProvider with ChangeNotifier {
     }
   }
 
-  /// Sign in with Google using Supabase Auth (Native flow inside the app)
+  /// Sign in with Google using Supabase Auth (Native flow on Mobile, OAuth on Web/Desktop)
   Future<bool> signInWithGoogle({String userType = 'client'}) async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
-      AppLogger.info('🔄 Starting Native Google Sign In for userType: $userType');
+      final useOAuth = kIsWeb || 
+          defaultTargetPlatform == TargetPlatform.windows || 
+          defaultTargetPlatform == TargetPlatform.linux || 
+          defaultTargetPlatform == TargetPlatform.macOS;
 
-      // 1. استدعاء خدمة تسجيل الدخول الأصلية من جوجل
-      final authResponse = await GoogleSignInService.instance.signInWithGoogle();
-
-      if (authResponse == null || authResponse.user == null) {
-        _error = 'تم إلغاء تسجيل الدخول أو فشل الاتصال بجوجل';
-        AppLogger.warning('Native Google Sign In failed or was cancelled');
+      if (useOAuth) {
+        AppLogger.info('🔄 Starting OAuth Google Sign In for userType: $userType on $defaultTargetPlatform');
+        
+        final launched = await Supabase.instance.client.auth.signInWithOAuth(
+          OAuthProvider.google,
+          // Redirect callback URL configured on Supabase Dashboard
+          redirectTo: kIsWeb
+              ? '${Uri.base.origin}/market/auth/callback'
+              : 'elltallmarket://auth/callback',
+          authScreenLaunchMode: kIsWeb
+              ? LaunchMode.platformDefault
+              : LaunchMode.externalApplication,
+          queryParams: {'access_type': 'offline', 'prompt': 'consent'},
+        );
+        
+        // Clear loading since the browser popup/redirect will take over
         _isLoading = false;
         notifyListeners();
-        return false;
+        return launched;
+      } else {
+        AppLogger.info('🔄 Starting Native Google Sign In for userType: $userType');
+
+        // 1. استدعاء خدمة تسجيل الدخول الأصلية من جوجل (الموبايل)
+        final authResponse = await GoogleSignInService.instance.signInWithGoogle();
+
+        if (authResponse == null || authResponse.user == null) {
+          _error = 'تم إلغاء تسجيل الدخول أو فشل الاتصال بجوجل';
+          AppLogger.warning('Native Google Sign In failed or was cancelled');
+          _isLoading = false;
+          notifyListeners();
+          return false;
+        }
+
+        AppLogger.info('✅ Native Google Sign In completed successfully: ${authResponse.user!.email}');
+        
+        // تحديث الحالة المحلية للمستخدم الحالي
+        _currentUser = authResponse.user;
+        
+        // تحميل الملف الشخصي محلياً
+        await _loadProfile();
+
+        _isLoading = false;
+        _error = null;
+        notifyListeners();
+        return true;
       }
-
-      AppLogger.info('✅ Native Google Sign In completed successfully: ${authResponse.user!.email}');
-      
-      // تحديث الحالة المحلية للمستخدم الحالي
-      _currentUser = authResponse.user;
-      
-      // تحميل الملف الشخصي محلياً
-      await _loadProfile();
-
-      _isLoading = false;
-      _error = null;
-      notifyListeners();
-      return true;
     } catch (e, st) {
       _error = 'حدث خطأ في تسجيل الدخول بواسطة Google: $e';
       AppLogger.error('Google Sign In error', e, st);
