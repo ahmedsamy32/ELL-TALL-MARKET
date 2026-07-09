@@ -154,19 +154,27 @@ Future<void> main() async {
     // 1. Initialization: Load Environments
     await dotenv.load(fileName: ".env");
 
-    // 2. Initialization: Firebase Services
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    // 2. Initialization: Firebase Services (Only on mobile and web platforms)
+    final isMobileOrWeb = kIsWeb || 
+        defaultTargetPlatform == TargetPlatform.android || 
+        defaultTargetPlatform == TargetPlatform.iOS;
 
-    if (!kIsWeb) {
-      // تسجيل background handler فقط هنا
-      // باقي الإعدادات (permission, token, listeners) تتم في NotificationServiceEnhanced.initialize()
-      FirebaseMessaging.onBackgroundMessage(
-        _firebaseMessagingBackgroundHandler,
+    if (isMobileOrWeb) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
       );
+
+      if (!kIsWeb) {
+        // تسجيل background handler فقط هنا
+        // باقي الإعدادات (permission, token, listeners) تتم في NotificationServiceEnhanced.initialize()
+        FirebaseMessaging.onBackgroundMessage(
+          _firebaseMessagingBackgroundHandler,
+        );
+      } else {
+        AppLogger.info('Running on Web: Skipping FCM setup for now');
+      }
     } else {
-      AppLogger.info('Running on Web: Skipping FCM setup for now');
+      AppLogger.info('Running on Desktop/Unsupported Platform: Skipping Firebase initialization');
     }
 
     // 3. Initialization: App Services & Managers

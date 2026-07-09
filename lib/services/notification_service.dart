@@ -25,7 +25,7 @@ class NotificationServiceEnhanced {
   NotificationServiceEnhanced._internal();
 
   // ===== Core Dependencies =====
-  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
+  FirebaseMessaging get _firebaseMessaging => FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
   final SupabaseClient _supabase = Supabase.instance.client;
@@ -51,6 +51,15 @@ class NotificationServiceEnhanced {
   /// Initialize the notification service with comprehensive setup
   Future<bool> initialize() async {
     try {
+      final isSupported = kIsWeb || 
+          defaultTargetPlatform == TargetPlatform.android || 
+          defaultTargetPlatform == TargetPlatform.iOS;
+      if (!isSupported) {
+        AppLogger.warning('⚠️ NotificationService: Platform not supported. Skipping initialization.');
+        _isInitialized = true;
+        return false;
+      }
+
       if (_isInitialized) return true;
 
       AppLogger.info('Initializing enhanced notification service...');
@@ -1109,6 +1118,13 @@ class NotificationServiceEnhanced {
   /// Retrieve the FCM token safely, supporting VAPID key on Web
   Future<String?> _getFcmToken() async {
     try {
+      final isSupported = kIsWeb || 
+          defaultTargetPlatform == TargetPlatform.android || 
+          defaultTargetPlatform == TargetPlatform.iOS;
+      if (!isSupported) {
+        return null;
+      }
+
       if (kIsWeb) {
         final vapidKey = dotenv.env['FCM_VAPID_KEY'];
         if (vapidKey != null && vapidKey.trim().isNotEmpty) {
