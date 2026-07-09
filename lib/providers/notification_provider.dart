@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import '../core/logger.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/models/notification_model.dart';
+import '../services/notification_service.dart';
 
 class NotificationProvider with ChangeNotifier {
   final _supabase = Supabase.instance.client;
@@ -380,6 +381,13 @@ class NotificationProvider with ChangeNotifier {
       _unreadCount++;
     }
     notifyListeners();
+
+    // عرض إشعار منبثق للمستخدم مباشرة على منصات التشغيل (بما فيها الويندوز عبر Realtime)
+    NotificationServiceEnhanced.instance.showLocalNotificationDirectly(
+      title: notification.title,
+      body: notification.body,
+      payloadData: notification.data,
+    );
   }
 
   void _handleNotificationUpdate(Map<String, dynamic> data) {

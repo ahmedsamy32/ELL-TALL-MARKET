@@ -1353,6 +1353,49 @@ class NotificationServiceEnhanced {
     }
   }
 
+  /// عرض إشعار محلي مباشرة (يستخدم للويندوز والمنصات الأخرى عند استلام إشعار Realtime)
+  Future<void> showLocalNotificationDirectly({
+    required String title,
+    required String body,
+    Map<String, dynamic>? payloadData,
+  }) async {
+    if (kIsWeb) return;
+    try {
+      final notifId = (title + body).hashCode & 0x7FFFFFFF;
+
+      const androidDetails = AndroidNotificationDetails(
+        'ell_tall_market',
+        'Ell Tall Market',
+        channelDescription: 'إشعارات سوق التل',
+        importance: Importance.high,
+        priority: Priority.high,
+        playSound: true,
+        enableVibration: true,
+      );
+
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+
+      const details = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      await _localNotifications.show(
+        id: notifId,
+        title: title,
+        body: body,
+        notificationDetails: details,
+        payload: payloadData != null ? jsonEncode(payloadData) : null,
+      );
+    } catch (e) {
+      AppLogger.error('❌ Failed to show direct local notification', e);
+    }
+  }
+
   /// Handle background message tap
   void _handleBackgroundMessageTap(RemoteMessage message) {
     AppLogger.info('🔄 Background message tap: ${message.notification?.title}');
