@@ -1599,7 +1599,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 28),
                   const Center(
                     child: Text(
-                      'التل ماركت',
+                      'سوق التل',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 34,

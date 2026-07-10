@@ -86,7 +86,7 @@ class RoleBasedDrawer extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'أهلاً بك في التل ماركت',
+                          'أهلاً بك في سوق التل',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 18,

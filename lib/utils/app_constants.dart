@@ -1,5 +1,5 @@
 class AppConstants {
-  static const String appName = 'التل ماركت';
+  static const String appName = 'سوق التل';
   static const String appVersion = '1.0.0';
 
   // Collections

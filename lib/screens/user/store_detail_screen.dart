@@ -336,7 +336,7 @@ ${store.isOpen ? '✅ مفتوح الآن' : '❌ مغلق حالياً'}
 📍 ${store.address}
 ${store.phone != null ? '📞 ${store.phone}' : ''}
 
-حمل تطبيق التل ماركت الآن! 🚀
+حمل تطبيق سوق التل الآن! 🚀
     ''';
 
     final renderBox = context.findRenderObject() as RenderBox?;
@@ -1618,7 +1618,7 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
                         onPressed: () {
                           final shareText =
                               '''
-🎁 كوبون خصم من ${_store?.name ?? "التل ماركت"}
+🎁 كوبون خصم من ${_store?.name ?? "سوق التل"}
 كود الخصم: ${coupon.code}
 قيمة الخصم: ${coupon.discountValueFormatted}
                           ''';
