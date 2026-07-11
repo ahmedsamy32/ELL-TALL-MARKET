@@ -116,6 +116,11 @@ class AuthDeepLinkHandler {
     }
   }
 
+  /// معالجة رابط المصادقة الوارد (نسخة عامة تُستدعى من خارج الملف مثل الويندوز)
+  static Future<void> handleAuthDeepLinkPublic(String url) async {
+    await _handleAuthDeepLink(url);
+  }
+
   /// معالجة Deep Links الواردة من النظام
   static Future<dynamic> _handleMethodCall(MethodCall call) async {
     try {

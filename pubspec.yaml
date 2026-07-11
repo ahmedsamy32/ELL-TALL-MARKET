@@ -92,6 +92,7 @@ dependencies:
   # Product Import
   excel: ^4.0.6
   file_picker: ^12.0.0-beta.7
+  windows_single_instance: ^1.2.0
 
 dev_dependencies:
   flutter_test:

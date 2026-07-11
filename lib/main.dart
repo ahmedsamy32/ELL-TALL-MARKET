@@ -21,6 +21,8 @@ import 'config/supabase_config.dart';
 import 'config/production_config.dart';
 import 'firebase_options.dart';
 
+import 'package:windows_single_instance/windows_single_instance.dart';
+
 // Core & Utils
 import 'core/logger.dart';
 import 'utils/app_routes.dart';
@@ -131,7 +133,7 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 // MAIN ENTRY POINT
 // -----------------------------------------------------------------------------
 
-Future<void> main() async {
+Future<void> main([List<String> args = const []]) async {
   // Global Error Handling: Capture Flutter-specific errors
   FlutterError.onError = (details) {
     FlutterError.presentError(details);
@@ -150,6 +152,39 @@ Future<void> main() async {
 
   try {
     WidgetsFlutterBinding.ensureInitialized();
+
+    // Windows Single Instance: prevent opening multiple windows and handle deep link arguments
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
+      await WindowsSingleInstance.ensureSingleInstance(
+        args,
+        "ell_tall_market_instance_id",
+        onSecondWindow: (secondArgs) {
+          AppLogger.info('🔄 Windows Single Instance: Received args from second window - $secondArgs');
+          if (secondArgs.isNotEmpty) {
+            final link = secondArgs.firstWhere(
+              (arg) => arg.contains('elltallmarket://'),
+              orElse: () => '',
+            );
+            if (link.isNotEmpty) {
+              AppLogger.info('🔄 Windows Single Instance: Routing deep link to handler - $link');
+              AuthDeepLinkHandler.handleAuthDeepLinkPublic(link);
+            }
+          }
+        },
+      );
+
+      // Handle launch arguments if the app was opened via deep link from closed state
+      if (args.isNotEmpty) {
+        final link = args.firstWhere(
+          (arg) => arg.contains('elltallmarket://'),
+          orElse: () => '',
+        );
+        if (link.isNotEmpty) {
+          AppLogger.info('🔄 Windows Single Instance: App launched with deep link - $link');
+          AuthDeepLinkHandler.handleAuthDeepLinkPublic(link);
+        }
+      }
+    }
 
     // 1. Initialization: Load Environments
     await dotenv.load(fileName: ".env");
