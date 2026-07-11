@@ -736,45 +736,137 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
             Expanded(
               child: Directionality(
                 textDirection: TextDirection.rtl,
-                child: ListView.builder(
+                child: ListView(
                   padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: items.length,
-                  itemBuilder: (context, index) {
-                    final isSelected = _selectedIndex == index;
-                    return Container(
-                      margin: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
+                  children: [
+                    // علامات التبويب الرئيسية للوحة التحكم
+                    ...List.generate(items.length, (index) {
+                      final isSelected = _selectedIndex == index;
+                      return Container(
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        child: ListTile(
+                          leading: Icon(
+                            isSelected ? items[index].$2 : items[index].$1,
+                            color: isSelected
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant,
+                            size: 22,
+                          ),
+                          title: Text(
+                            items[index].$3,
+                            style: TextStyle(
+                              fontWeight: isSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                              color: isSelected ? colorScheme.primary : null,
+                              fontSize: 14,
+                            ),
+                          ),
+                          selected: isSelected,
+                          selectedTileColor: colorScheme.primary.withValues(
+                            alpha: 0.1,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          onTap: () => setState(() => _selectedIndex = index),
+                        ),
+                      );
+                    }),
+                    
+                    const Divider(height: 24, indent: 16, endIndent: 16),
+                    
+                    // عنوان قسم الأدوات الإضافية للمتجر
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
+                      child: Text(
+                        'أدوات التاجر',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
+                    ),
+
+                    // المحفظة
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       child: ListTile(
                         leading: Icon(
-                          isSelected ? items[index].$2 : items[index].$1,
-                          color: isSelected
-                              ? colorScheme.primary
-                              : colorScheme.onSurfaceVariant,
+                          Icons.account_balance_wallet_outlined,
+                          color: colorScheme.onSurfaceVariant,
                           size: 22,
                         ),
-                        title: Text(
-                          items[index].$3,
-                          style: TextStyle(
-                            fontWeight: isSelected
-                                ? FontWeight.w600
-                                : FontWeight.w500,
-                            color: isSelected ? colorScheme.primary : null,
-                            fontSize: 14,
-                          ),
-                        ),
-                        selected: isSelected,
-                        selectedTileColor: colorScheme.primary.withValues(
-                          alpha: 0.1,
+                        title: const Text(
+                          'المحفظة',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
                         ),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        onTap: () => setState(() => _selectedIndex = index),
+                        onTap: () {
+                          Navigator.pushNamed(context, AppRoutes.merchantWallet);
+                        },
                       ),
-                    );
-                  },
+                    ),
+
+                    // الكوبونات
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      child: ListTile(
+                        leading: Icon(
+                          Icons.local_offer_outlined,
+                          color: colorScheme.onSurfaceVariant,
+                          size: 22,
+                        ),
+                        title: const Text(
+                          'الكوبونات',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const MerchantCouponsScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+
+                    // المساعدة والتعليمات
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      child: ListTile(
+                        leading: Icon(
+                          Icons.help_outline,
+                          color: colorScheme.onSurfaceVariant,
+                          size: 22,
+                        ),
+                        title: const Text(
+                          'المساعدة والتعليمات',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const MerchantHelpScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
