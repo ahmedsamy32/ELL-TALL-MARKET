@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'dart:io';
 import '../core/logger.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
@@ -56,12 +57,62 @@ class AuthDeepLinkHandler {
       if (!kIsWeb) {
         // مراقبة Deep Links من النظام (للموبايل فقط)
         _channel.setMethodCallHandler(_handleMethodCall);
+        
+        // تسجيل بروتوكول الويندوز عند التشغيل
+        registerWindowsScheme();
       }
 
       _isInitialized = true;
       AppLogger.info('✅ AuthDeepLinkHandler: تم تفعيل الخدمة الأساسية بنجاح');
     } catch (e) {
       AppLogger.error('❌ AuthDeepLinkHandler: خطأ في التفعيل', e);
+    }
+  }
+
+  /// تسجيل بروتوكول elltallmarket:// في ريجستري الويندوز
+  static Future<void> registerWindowsScheme() async {
+    if (kIsWeb) return;
+    try {
+      final isWindows = defaultTargetPlatform == TargetPlatform.windows;
+      if (!isWindows) return;
+
+      // Platform.resolvedExecutable يعطيك المسار الكامل لملف الـ .exe الحالي
+      final exePath = Platform.resolvedExecutable;
+      
+      // 1. تسجيل البروتوكول الرئيسي
+      await Process.run('reg', [
+        'add',
+        'HKCU\\Software\\Classes\\elltallmarket',
+        '/ve',
+        '/d',
+        'URL:elltallmarket Protocol',
+        '/f'
+      ]);
+      
+      // 2. تفعيل خيار URL Protocol
+      await Process.run('reg', [
+        'add',
+        'HKCU\\Software\\Classes\\elltallmarket',
+        '/v',
+        'URL Protocol',
+        '/d',
+        '',
+        '/f'
+      ]);
+      
+      // 3. تحديد المسار التنفيذي لفتح التطبيق وتمرير الرابط كـ Argument
+      await Process.run('reg', [
+        'add',
+        'HKCU\\Software\\Classes\\elltallmarket\\shell\\open\\command',
+        '/ve',
+        '/d',
+        '"$exePath" "%1"',
+        '/f'
+      ]);
+      
+      AppLogger.info('✅ Windows deep link protocol (elltallmarket://) registered to: $exePath');
+    } catch (e) {
+      AppLogger.error('❌ Failed to register Windows deep link protocol', e);
     }
   }
 
