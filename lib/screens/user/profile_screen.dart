@@ -5,6 +5,7 @@ import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
+import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/providers/banner_provider.dart';
 import 'package:ell_tall_market/providers/app_settings_provider.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
@@ -123,11 +124,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           localContext,
                           listen: false,
                         );
+                        final notificationProvider = Provider.of<NotificationProvider>(
+                          localContext,
+                          listen: false,
+                        );
 
                         await authProvider.signOut(
                           merchantProvider: merchantProvider,
                           productProvider: productProvider,
                           orderProvider: orderProvider,
+                          notificationProvider: notificationProvider,
                         );
 
                         if (!localContext.mounted) return;
@@ -1186,11 +1192,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           context,
                           listen: false,
                         );
+                        final notificationProvider = Provider.of<NotificationProvider>(
+                          context,
+                          listen: false,
+                        );
 
                         await authProvider.signOut(
                           merchantProvider: merchantProvider,
                           productProvider: productProvider,
                           orderProvider: orderProvider,
+                          notificationProvider: notificationProvider,
                         );
                         if (!context.mounted) return;
                         if (Navigator.canPop(context)) Navigator.pop(context);

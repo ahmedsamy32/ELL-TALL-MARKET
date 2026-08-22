@@ -25,6 +25,7 @@ import 'package:ell_tall_market/models/delivery_zone_pricing_model.dart';
 import 'package:ell_tall_market/services/notification_service.dart';
 import 'package:ell_tall_market/services/permission_service.dart';
 import 'package:ell_tall_market/services/store_service.dart';
+import 'package:ell_tall_market/services/supabase_service.dart';
 
 /// شاشة تسجيل التاجر
 ///
@@ -875,41 +876,86 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
       );
 
       final userId = authResponse.user!.id;
-      final session = Supabase.instance.client.auth.currentSession;
-      if (session != null && _logoImageBytes != null) {
+      if (_logoImageBytes != null) {
         try {
           AppLogger.info("[RegisterMerchant] 🔄 جاري محاولة رفع شعار المتجر...");
-          final storeData = await Supabase.instance.client
-              .from('stores')
-              .select('id')
-              .eq('merchant_id', userId)
-              .maybeSingle();
+          var currentSession = Supabase.instance.client.auth.currentSession ?? authResponse.session;
+          if (currentSession == null) {
+            try {
+              final loginRes = await Supabase.instance.client.auth.signInWithPassword(
+                email: email,
+                password: password,
+              );
+              currentSession = loginRes.session;
+            } catch (_) {}
+          }
 
-          if (storeData != null) {
+          // انتظار إنشاء المتجر بواسطة الـ trigger مع retry
+          Map<String, dynamic>? storeData;
+          for (int attempt = 0; attempt < 5; attempt++) {
+            storeData = await Supabase.instance.client
+                .from('stores')
+                .select('id')
+                .eq('merchant_id', userId)
+                .maybeSingle();
+            if (storeData != null) break;
+            await Future.delayed(const Duration(milliseconds: 600));
+          }
+
+          String? uploadedUrl;
+          final fileName = _logoImage?.name ?? 'logo.jpg';
+
+          if (storeData != null && currentSession != null) {
             final storeId = storeData['id'] as String;
-            final fileName = _logoImage?.name ?? 'logo.jpg';
-            final uploadedUrl = await StoreService.uploadStoreImageV2(
-              storeId: storeId,
-              bytes: _logoImageBytes!,
-              fileName: fileName,
-              type: 'logo',
-            );
+            try {
+              uploadedUrl = await StoreService.uploadStoreImageV2(
+                storeId: storeId,
+                bytes: _logoImageBytes!,
+                fileName: fileName,
+                type: 'logo',
+              );
+            } catch (e) {
+              AppLogger.warning("[RegisterMerchant] فشل uploadStoreImageV2، تجربة الرفع العام: $e");
+            }
+          }
 
-            if (uploadedUrl != null) {
+          // Fallback في حال تعذر الرفع عبر مسار المتجر الخاص
+          uploadedUrl ??= await SupabaseService.uploadAvatarBytes(
+            imageBytes: _logoImageBytes!,
+            fileName: fileName,
+            userId: userId,
+          );
+
+          if (uploadedUrl != null) {
+            // تحديث رابط الصورة في جدول stores
+            if (storeData != null) {
+              final storeId = storeData['id'] as String;
               await StoreService.updateStoreFieldsV2(
                 storeId: storeId,
                 imageUrl: uploadedUrl,
               );
-              AppLogger.info("[RegisterMerchant] ✅ تم رفع شعار المتجر وتحديثه بنجاح: $uploadedUrl");
+            } else {
+              await Supabase.instance.client
+                  .from('stores')
+                  .update({'image_url': uploadedUrl})
+                  .eq('merchant_id', userId);
             }
+
+            // تحديث بروفايل التاجر
+            await Supabase.instance.client
+                .from('profiles')
+                .update({'avatar_url': uploadedUrl})
+                .eq('id', userId);
+
+            AppLogger.info("[RegisterMerchant] ✅ تم رفع شعار المتجر وتحديثه بنجاح: $uploadedUrl");
           } else {
-            AppLogger.warning("[RegisterMerchant] ⚠️ لم يتم العثور على متجر للتاجر لرفع الشعار له");
+            AppLogger.warning("[RegisterMerchant] ⚠️ تعذر الحصول على رابط الشعار بعد الرفع");
           }
         } catch (e, st) {
-          AppLogger.error("[RegisterMerchant] ⚠️ فشل رفع الشعار (قد يكون بسبب انتظار تأكيد البريد)", e, st);
+          AppLogger.error("[RegisterMerchant] ⚠️ فشل رفع الشعار", e, st);
         }
       } else {
-        AppLogger.info("[RegisterMerchant] ℹ️ تخطي رفع الشعار (لا توجد جلسة نشطة أو لم يتم اختيار صورة)");
+        AppLogger.info("[RegisterMerchant] ℹ️ تخطي رفع الشعار (لم يتم اختيار صورة)");
       }
 
       try {

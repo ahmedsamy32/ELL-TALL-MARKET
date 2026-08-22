@@ -2,6 +2,7 @@ import 'dart:convert';
 // Removed dart:io for Web compatibility
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -12,6 +13,7 @@ import 'package:uuid/uuid.dart';
 import '../core/logger.dart';
 import '../utils/navigation_service.dart';
 import '../utils/app_routes.dart';
+import '../utils/sound_helper.dart';
 
 /// Enhanced NotificationService with comprehensive smart features
 class NotificationServiceEnhanced {
@@ -53,12 +55,16 @@ class NotificationServiceEnhanced {
     try {
       final isSupported = kIsWeb || 
           defaultTargetPlatform == TargetPlatform.android || 
-          defaultTargetPlatform == TargetPlatform.iOS;
+          defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.windows;
       if (!isSupported) {
         AppLogger.warning('⚠️ NotificationService: Platform not supported. Skipping initialization.');
         _isInitialized = true;
         return false;
       }
+
+      // Request Web/Desktop notification permissions
+      requestNotificationPermissions();
 
       if (_isInitialized) return true;
 
@@ -1359,38 +1365,106 @@ class NotificationServiceEnhanced {
     required String body,
     Map<String, dynamic>? payloadData,
   }) async {
-    if (kIsWeb) return;
     try {
-      final notifId = (title + body).hashCode & 0x7FFFFFFF;
+      // 1. Show in-app banner toast ONLY on Web and Desktop (disabled on Mobile to avoid duplicate alerts with status bar notifications)
+      final isMobile = !kIsWeb &&
+          (defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.iOS);
+      final context = NavigationService.navigatorKey.currentContext;
+      if (!isMobile && context != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                Icon(
+                  Icons.notifications_active_rounded,
+                  color: Theme.of(context).colorScheme.onPrimary,
+                  size: 28,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Theme.of(context).colorScheme.onPrimary,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        body,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onPrimary.withAlpha(220),
+                          fontSize: 12,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            duration: const Duration(seconds: 6),
+            action: SnackBarAction(
+              label: 'عرض',
+              textColor: Theme.of(context).colorScheme.onPrimary,
+              onPressed: () {
+                if (payloadData != null) {
+                  handleNotificationAction(payloadData);
+                }
+              },
+            ),
+          ),
+        );
+      }
 
-      const androidDetails = AndroidNotificationDetails(
-        'ell_tall_market',
-        'Ell Tall Market',
-        channelDescription: 'إشعارات سوق التل',
-        importance: Importance.high,
-        priority: Priority.high,
-        playSound: true,
-        enableVibration: true,
-      );
+      // 2. Play alert notification sound (uses Web Audio API / JS Audio on Web, Windows system sound on Desktop)
+      playNotificationSound();
 
-      const iosDetails = DarwinNotificationDetails(
-        presentAlert: true,
-        presentBadge: true,
-        presentSound: true,
-      );
+      // 3. Show native OS desktop notification toast (WhatsApp Web/Desktop style)
+      showPlatformDesktopNotification(title: title, body: body);
 
-      const details = NotificationDetails(
-        android: androidDetails,
-        iOS: iosDetails,
-      );
+      // 3. For mobile devices, show native local notification popup in status bar
+      if (!kIsWeb) {
+        final notifId = (title + body).hashCode & 0x7FFFFFFF;
 
-      await _localNotifications.show(
-        id: notifId,
-        title: title,
-        body: body,
-        notificationDetails: details,
-        payload: payloadData != null ? jsonEncode(payloadData) : null,
-      );
+        const androidDetails = AndroidNotificationDetails(
+          'ell_tall_market',
+          'Ell Tall Market',
+          channelDescription: 'إشعارات سوق التل',
+          importance: Importance.high,
+          priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
+        );
+
+        const iosDetails = DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        );
+
+        const details = NotificationDetails(
+          android: androidDetails,
+          iOS: iosDetails,
+        );
+
+        await _localNotifications.show(
+          id: notifId,
+          title: title,
+          body: body,
+          notificationDetails: details,
+          payload: payloadData != null ? jsonEncode(payloadData) : null,
+        );
+      }
     } catch (e) {
       AppLogger.error('❌ Failed to show direct local notification', e);
     }

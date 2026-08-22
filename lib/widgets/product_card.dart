@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:ell_tall_market/models/product_model.dart';
-import 'package:ell_tall_market/widgets/rating_star.dart';
 
 class ProductCard extends StatelessWidget {
   final ProductModel product;
@@ -227,10 +226,29 @@ class ProductCard extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 4),
                       child: Row(
                         children: [
-                          RatingBar(
-                            rating: product.rating,
-                            totalReviews: product.reviewCount,
-                            showReviewsCount: product.reviewCount > 0,
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.star_rounded, size: 14, color: Colors.amber),
+                              const SizedBox(width: 2),
+                              Text(
+                                product.rating.toStringAsFixed(1),
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  height: 1.1,
+                                ),
+                              ),
+                              if (product.reviewCount > 0)
+                                Text(
+                                  ' (${product.reviewCount})',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: colorScheme.outline,
+                                    height: 1.1,
+                                  ),
+                                ),
+                            ],
                           ),
                           const Spacer(),
                           if (onBuyPressed != null)

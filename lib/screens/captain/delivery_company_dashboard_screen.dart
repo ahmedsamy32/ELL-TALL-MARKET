@@ -183,9 +183,38 @@ class _DeliveryCompanyDashboardScreenState
         ascending: false,
         deliveryCompanyId: deliveryCompanyId,
       );
+
+      // فحص وتصحيح الكباتن المعلقين بحالة مشغول بدون وجود طلبات نشطة لهم
+      final updatedCaptains = <CaptainModel>[];
+      for (final cap in captains) {
+        if (cap.status == 'busy') {
+          try {
+            final activeOrders = await _supabase
+                .from('orders')
+                .select('id')
+                .eq('captain_id', cap.id)
+                .or(
+                  'status.eq.pending,status.eq.confirmed,status.eq.preparing,status.eq.ready,status.eq.picked_up,status.eq.in_transit',
+                )
+                .limit(1);
+            if ((activeOrders as List).isEmpty) {
+              AppLogger.info('🔄 تصحيح حالة الكابتن ${cap.id} من مشغول إلى متصل لعدم وجود طلبات نشطة');
+              await SupabaseService.updateCaptainStatus(cap.id, 'online');
+              updatedCaptains.add(cap.copyWith(
+                status: 'online',
+                isOnline: true,
+                isAvailable: true,
+              ));
+              continue;
+            }
+          } catch (_) {}
+        }
+        updatedCaptains.add(cap);
+      }
+
       if (!mounted) return;
       setState(() {
-        _captains = captains;
+        _captains = updatedCaptains;
         _isCaptainsLoading = false;
       });
     } catch (e) {
@@ -1582,47 +1611,50 @@ class _DeliveryCompanyDashboardScreenState
     final offline = offlineCaptains.length;
 
     if (isCompact) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            _buildCaptainStateCard(
+      return Row(
+        children: [
+          Expanded(
+            child: _buildCaptainStateCard(
               'متصل',
               online,
               Colors.green,
-              width: 100,
+              width: null,
               onTap: () => _showCaptainsByStateSheet(
                 title: 'الكباتن المتصلون',
                 captains: onlineCaptains,
                 accentColor: Colors.green,
               ),
             ),
-            const SizedBox(width: 10),
-            _buildCaptainStateCard(
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _buildCaptainStateCard(
               'مشغول',
               busy,
               Colors.orange,
-              width: 100,
+              width: null,
               onTap: () => _showCaptainsByStateSheet(
                 title: 'الكباتن المشغولون',
                 captains: busyCaptains,
                 accentColor: Colors.orange,
               ),
             ),
-            const SizedBox(width: 10),
-            _buildCaptainStateCard(
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: _buildCaptainStateCard(
               'غير متصل',
               offline,
               Colors.grey,
-              width: 100,
+              width: null,
               onTap: () => _showCaptainsByStateSheet(
                 title: 'الكباتن غير المتصلين',
                 captains: offlineCaptains,
                 accentColor: Colors.grey,
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       );
     }
 
@@ -1748,13 +1780,54 @@ class _DeliveryCompanyDashboardScreenState
         subtitle: Text(
           '$phone\n${captain.vehicleTypeDisplayName} • ⭐ ${captain.rating.toStringAsFixed(1)} • $status',
         ),
-        isThreeLine: true,
-        trailing: IconButton(
-          tooltip: phone == 'بدون هاتف' ? 'لا يوجد رقم هاتف' : 'اتصال مباشر',
-          onPressed: phone == 'بدون هاتف'
-              ? null
-              : () => _launchPhoneCall(phone),
-          icon: const Icon(Icons.phone_rounded),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: phone == 'بدون هاتف' ? 'لا يوجد رقم هاتف' : 'اتصال مباشر',
+              onPressed: phone == 'بدون هاتف'
+                  ? null
+                  : () => _launchPhoneCall(phone),
+              icon: const Icon(Icons.phone_rounded),
+            ),
+            if (_canManageCaptains)
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert_rounded),
+                tooltip: 'خيارات الكابتن',
+                onSelected: (action) {
+                  switch (action) {
+                    case 'edit':
+                      _showEditCaptainSheet(captain);
+                      break;
+                    case 'delete':
+                      _confirmDeleteCaptain(captain);
+                      break;
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit_outlined, size: 20, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Text('تعديل الكابتن'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline_rounded, size: 20, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('حذف الكابتن', style: TextStyle(color: Colors.red)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+          ],
         ),
       ),
     );
@@ -1764,10 +1837,10 @@ class _DeliveryCompanyDashboardScreenState
     String label,
     int count,
     Color color, {
-    double width = 110,
+    double? width = 110,
     VoidCallback? onTap,
   }) {
-    final isNarrow = width <= 120;
+    final isNarrow = (width ?? 100) <= 120;
 
     return Material(
       color: Colors.transparent,
@@ -1960,18 +2033,61 @@ class _DeliveryCompanyDashboardScreenState
                             '$phone\n${captain.vehicleTypeDisplayName} • ⭐ ${captain.rating.toStringAsFixed(1)} • $status',
                           ),
                           isThreeLine: true,
-                          trailing: IconButton(
-                            tooltip: hasPhone
-                                ? 'اتصال مباشر'
-                                : 'لا يوجد رقم هاتف',
-                            onPressed: hasPhone
-                                ? () => _launchPhoneCall(
-                                    captain.contactPhone ??
-                                        captain.profilePhone ??
-                                        '',
-                                  )
-                                : null,
-                            icon: const Icon(Icons.phone_rounded),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: hasPhone
+                                    ? 'اتصال مباشر'
+                                    : 'لا يوجد رقم هاتف',
+                                onPressed: hasPhone
+                                    ? () => _launchPhoneCall(
+                                        captain.contactPhone ??
+                                            captain.profilePhone ??
+                                            '',
+                                      )
+                                    : null,
+                                icon: const Icon(Icons.phone_rounded),
+                              ),
+                              if (_canManageCaptains)
+                                PopupMenuButton<String>(
+                                  icon: const Icon(Icons.more_vert_rounded),
+                                  tooltip: 'خيارات الكابتن',
+                                  onSelected: (action) {
+                                    Navigator.pop(sheetContext);
+                                    switch (action) {
+                                      case 'edit':
+                                        _showEditCaptainSheet(captain);
+                                        break;
+                                      case 'delete':
+                                        _confirmDeleteCaptain(captain);
+                                        break;
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    const PopupMenuItem(
+                                      value: 'edit',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.edit_outlined, size: 20, color: Colors.blue),
+                                          SizedBox(width: 8),
+                                          Text('تعديل الكابتن'),
+                                        ],
+                                      ),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'delete',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.delete_outline_rounded, size: 20, color: Colors.red),
+                                          SizedBox(width: 8),
+                                          Text('حذف الكابتن', style: TextStyle(color: Colors.red)),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            ],
                           ),
                         );
                       },
@@ -3808,6 +3924,604 @@ class _DeliveryCompanyDashboardScreenState
                                 }
                               },
                         child: const Text('إضافة كابتن'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Future<void> _confirmDeleteCaptain(CaptainModel captain) async {
+    if (!_canManageCaptains || !mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            SizedBox(width: 8),
+            Text('تأكيد حذف الكابتن'),
+          ],
+        ),
+        content: Text(
+          'هل أنت متأكد من حذف الكابتن "${_captainDisplayName(captain)}" نهائياً؟\nلن يمكن التراجع عن هذا الإجراء.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
+            child: const Text('حذف نهائي'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final authProvider = context.read<SupabaseProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+
+    // التحقق من وجود طلبات نشطة للكابتن قبل الحذف
+    try {
+      final activeOrders = await _supabase
+          .from('orders')
+          .select('id')
+          .eq('captain_id', captain.id)
+          .not('status', 'in', [
+            OrderStatus.delivered.value,
+            OrderStatus.cancelled.value,
+          ]);
+
+      if (activeOrders.isNotEmpty) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('لا يمكن حذف الكابتن لوجود طلبات نشطة مسندة إليه حالياً'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+    } catch (e) {
+      AppLogger.error('Error checking active orders before deleting captain', e);
+    }
+
+    try {
+      final deleteResult = await authProvider.deleteUser(captain.id);
+      if (!mounted) return;
+
+      if (deleteResult.success) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('✅ تم حذف الكابتن بنجاح'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        await _refreshAll();
+      } else {
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(deleteResult.message ?? 'فشل في حذف الكابتن'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      AppLogger.error('Delete captain error', e);
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('خطأ أثناء الحذف: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _showEditCaptainSheet(CaptainModel captain) async {
+    if (!_canManageCaptains || !mounted) return;
+    final rootOverlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (rootOverlay == null) return;
+
+    final initialEmail = captain.email ?? '';
+    String initialUsername = initialEmail;
+    if (initialEmail.contains('@')) {
+      initialUsername = initialEmail.split('@').first;
+    }
+
+    final nameController = TextEditingController(
+      text: captain.fullName ?? _captainDisplayName(captain),
+    );
+    final emailController = TextEditingController(text: initialUsername);
+    final phoneController = TextEditingController(
+      text: captain.contactPhone ?? captain.profilePhone ?? '',
+    );
+    final passwordController = TextEditingController();
+    final vehicleNumberController = TextEditingController(
+      text: captain.vehicleNumber ?? '',
+    );
+    String selectedVehicleType = captain.vehicleType.isNotEmpty
+        ? captain.vehicleType
+        : 'motorcycle';
+    String selectedStatus = ['online', 'busy', 'offline'].contains(captain.status)
+        ? captain.status
+        : (captain.isOnline ? 'online' : 'offline');
+    bool isActive = captain.isActive;
+
+    final rootMessenger = ScaffoldMessenger.of(context);
+    final imagePicker = ImagePicker();
+    XFile? pickedImage;
+    Uint8List? pickedImageBytes;
+    bool isSubmitting = false;
+    bool obscurePassword = true;
+    bool showValidationErrors = false;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          OverlayEntry? overlayEntry;
+
+          void showAboveSheetSnackBar(
+            String message, {
+            Color? backgroundColor,
+          }) {
+            if (!mounted || !rootOverlay.mounted) return;
+
+            overlayEntry?.remove();
+            overlayEntry = OverlayEntry(
+              builder: (overlayContext) => Positioned(
+                left: 16,
+                right: 16,
+                bottom: MediaQuery.viewInsetsOf(overlayContext).bottom + 24,
+                child: Material(
+                  color: Colors.transparent,
+                  child: SafeArea(
+                    minimum: const EdgeInsets.only(bottom: 8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: backgroundColor ?? Colors.black87,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Text(
+                        message,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+
+            rootOverlay.insert(overlayEntry!);
+            Timer(const Duration(seconds: 3), () {
+              overlayEntry?.remove();
+              overlayEntry = null;
+            });
+          }
+
+          Future<void> pickAvatarImage() async {
+            try {
+              final file = await imagePicker.pickImage(
+                source: ImageSource.gallery,
+                imageQuality: 85,
+                maxWidth: 1024,
+              );
+
+              if (file == null) return;
+
+              final bytes = await file.readAsBytes();
+              if (!context.mounted) return;
+              setSheetState(() {
+                pickedImage = file;
+                pickedImageBytes = bytes;
+              });
+            } catch (e) {
+              AppLogger.error('Pick captain avatar error', e);
+              if (!context.mounted) return;
+              showAboveSheetSnackBar('فشل اختيار الصورة، حاول مرة أخرى');
+            }
+          }
+
+          var domainSource = (_companyNameEn != null && _companyNameEn!.trim().isNotEmpty)
+              ? _companyNameEn!
+              : (_companyName ?? 'company');
+          var domain = domainSource
+              .trim()
+              .toLowerCase()
+              .replaceAll(RegExp(r'\s+'), '')
+              .replaceAll(RegExp(r'[^a-z0-9]'), '');
+          if (domain.isEmpty) domain = 'eltal';
+
+          return SafeArea(
+            child: Padding(
+              padding: EdgeInsets.only(
+                left: 16,
+                right: 16,
+                top: 12,
+                bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
+              ),
+              child: SingleChildScrollView(
+                keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        const Icon(Icons.edit_outlined, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        Text(
+                          'تعديل بيانات الكابتن',
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 30,
+                            backgroundColor: Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerHighest,
+                            backgroundImage: pickedImageBytes != null
+                                ? MemoryImage(pickedImageBytes!)
+                                : (captain.profileImageUrl != null &&
+                                        captain.profileImageUrl!.isNotEmpty
+                                    ? NetworkImage(captain.profileImageUrl!)
+                                    : null) as ImageProvider?,
+                            child: pickedImageBytes == null &&
+                                    (captain.profileImageUrl == null ||
+                                        captain.profileImageUrl!.isEmpty)
+                                ? const Icon(Icons.person_outline, size: 30)
+                                : null,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: isSubmitting ? null : pickAvatarImage,
+                              icon: const Icon(Icons.photo_camera_outlined),
+                              label: Text(
+                                pickedImage == null
+                                    ? 'تغيير صورة الكابتن'
+                                    : 'تم اختيار صورة جديدة',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: nameController,
+                      decoration: InputDecoration(
+                        labelText: 'الاسم الكامل *',
+                        prefixIcon: const Icon(Icons.person_outline),
+                        border: const OutlineInputBorder(),
+                        errorText: showValidationErrors &&
+                                nameController.text.trim().isEmpty
+                            ? 'الاسم الكامل مطلوب'
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: emailController,
+                      decoration: InputDecoration(
+                        labelText: 'اسم المستخدم *',
+                        prefixIcon: const Icon(Icons.person_pin_outlined),
+                        suffixIcon: Padding(
+                          padding: const EdgeInsets.only(left: 12, right: 8),
+                          child: Text(
+                            '@$domain.com',
+                            style: TextStyle(
+                              color: Theme.of(context).colorScheme.primary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                        suffixIconConstraints:
+                            const BoxConstraints(minWidth: 0, minHeight: 0),
+                        border: const OutlineInputBorder(),
+                        errorText: showValidationErrors &&
+                                emailController.text.trim().isEmpty
+                            ? 'اسم المستخدم مطلوب'
+                            : null,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: phoneController,
+                      decoration: InputDecoration(
+                        labelText: 'رقم الهاتف *',
+                        prefixIcon: const Icon(Icons.phone_outlined),
+                        border: const OutlineInputBorder(),
+                        errorText: showValidationErrors &&
+                                phoneController.text.trim().isEmpty
+                            ? 'رقم الهاتف مطلوب'
+                            : null,
+                      ),
+                      keyboardType: TextInputType.phone,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: passwordController,
+                      obscureText: obscurePassword,
+                      decoration: InputDecoration(
+                        labelText: 'كلمة المرور الجديدة (اختياري)',
+                        hintText: 'اتركها فارغة إذا لم ترغب بالتغيير',
+                        prefixIcon: const Icon(Icons.lock_outlined),
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            obscurePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined,
+                          ),
+                          onPressed: () => setSheetState(
+                            () => obscurePassword = !obscurePassword,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: ['motorcycle', 'car', 'bicycle', 'truck'].contains(selectedVehicleType)
+                          ? selectedVehicleType
+                          : 'motorcycle',
+                      decoration: const InputDecoration(
+                        labelText: 'نوع المركبة',
+                        prefixIcon: Icon(Icons.two_wheeler_outlined),
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'motorcycle',
+                          child: Text('دراجة نارية (موتوسيكل)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'car',
+                          child: Text('سيارة'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'bicycle',
+                          child: Text('دراجة هوائية (عجلة)'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'truck',
+                          child: Text('شاحنة / تروسيكل'),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) {
+                          setSheetState(() => selectedVehicleType = val);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: vehicleNumberController,
+                      decoration: const InputDecoration(
+                        labelText: 'رقم اللوحة / المركبة (اختياري)',
+                        prefixIcon: Icon(Icons.pin_outlined),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedStatus,
+                      decoration: const InputDecoration(
+                        labelText: 'حالة التوفر والاتصال',
+                        prefixIcon: Icon(Icons.sensors_outlined),
+                        border: OutlineInputBorder(),
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'online',
+                          child: Row(
+                            children: [
+                              Icon(Icons.circle, color: Colors.green, size: 12),
+                              SizedBox(width: 8),
+                              Text('متصل ومتاح للطلبات'),
+                            ],
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: 'busy',
+                          child: Row(
+                            children: [
+                              Icon(Icons.circle, color: Colors.orange, size: 12),
+                              SizedBox(width: 8),
+                              Text('مشغول في توصيل طلب'),
+                            ],
+                          ),
+                        ),
+                        DropdownMenuItem(
+                          value: 'offline',
+                          child: Row(
+                            children: [
+                              Icon(Icons.circle, color: Colors.grey, size: 12),
+                              SizedBox(width: 8),
+                              Text('غير متصل'),
+                            ],
+                          ),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        if (val != null) {
+                          setSheetState(() => selectedStatus = val);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    SwitchListTile(
+                      title: const Text('حساب الكابتن نشط'),
+                      subtitle: Text(
+                        isActive ? 'الكابتن متاح لاستقبال الطلبات' : 'الكابتن موقوف مؤقتاً',
+                      ),
+                      value: isActive,
+                      onChanged: (val) => setSheetState(() => isActive = val),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: isSubmitting
+                            ? null
+                            : () async {
+                                if (nameController.text.trim().isEmpty ||
+                                    emailController.text.trim().isEmpty ||
+                                    phoneController.text.trim().isEmpty) {
+                                  setSheetState(() {
+                                    showValidationErrors = true;
+                                  });
+                                  showAboveSheetSnackBar(
+                                    'يرجى ملء جميع الحقول الإلزامية المطلوبة',
+                                    backgroundColor: Colors.red,
+                                  );
+                                  return;
+                                }
+
+                                if (passwordController.text.trim().isNotEmpty &&
+                                    passwordController.text.trim().length < 6) {
+                                  showAboveSheetSnackBar(
+                                    'كلمة المرور يجب أن لا تقل عن 6 أحرف',
+                                    backgroundColor: Colors.red,
+                                  );
+                                  return;
+                                }
+
+                                setSheetState(() => isSubmitting = true);
+
+                                final authProvider = context.read<SupabaseProvider>();
+                                final navigator = Navigator.of(sheetContext);
+
+                                final username = emailController.text
+                                    .trim()
+                                    .toLowerCase()
+                                    .replaceAll(RegExp(r'\s+'), '');
+                                final fullEmail = '$username@$domain.com';
+
+                                final updateOk = await authProvider.updateUserByAdmin(
+                                  userId: captain.id,
+                                  fullName: nameController.text.trim(),
+                                  email: fullEmail,
+                                  phone: phoneController.text.trim(),
+                                  role: UserRole.captain,
+                                  password: passwordController.text.trim().isNotEmpty
+                                      ? passwordController.text.trim()
+                                      : null,
+                                );
+
+                                if (!updateOk) {
+                                  setSheetState(() => isSubmitting = false);
+                                  showAboveSheetSnackBar(
+                                    authProvider.error ?? 'فشل في تحديث بيانات الكابتن',
+                                    backgroundColor: Colors.red,
+                                  );
+                                  return;
+                                }
+
+                                String? newImageUrl;
+                                if (pickedImageBytes != null) {
+                                  try {
+                                    newImageUrl = await SupabaseService.uploadAvatarBytes(
+                                      imageBytes: pickedImageBytes!,
+                                      fileName: pickedImage?.name ?? 'avatar.jpg',
+                                      userId: captain.id,
+                                    );
+
+                                    if (newImageUrl != null) {
+                                      await _supabase
+                                          .from('profiles')
+                                          .update({'avatar_url': newImageUrl})
+                                          .eq('id', captain.id);
+                                    }
+                                  } catch (e) {
+                                    AppLogger.error('Update avatar error', e);
+                                  }
+                                }
+
+                                try {
+                                  await CaptainService.updateCaptain(
+                                    captainId: captain.id,
+                                    vehicleType: selectedVehicleType,
+                                    vehicleNumber: vehicleNumberController.text.trim().isNotEmpty
+                                        ? vehicleNumberController.text.trim()
+                                        : null,
+                                    contactPhone: phoneController.text.trim(),
+                                    isActive: isActive,
+                                    profileImageUrl: newImageUrl ?? captain.profileImageUrl,
+                                  );
+
+                                  // تحديث حالة الاتصال والتوفر
+                                  await SupabaseService.updateCaptainStatus(
+                                    captain.id,
+                                    selectedStatus,
+                                  );
+                                } catch (e) {
+                                  AppLogger.error('Update captain details error', e);
+                                }
+
+                                navigator.pop();
+                                await _refreshAll();
+                                rootMessenger.showSnackBar(
+                                  const SnackBar(
+                                    content: Text('✅ تم تحديث بيانات الكابتن بنجاح'),
+                                    backgroundColor: Colors.green,
+                                  ),
+                                );
+                              },
+                        child: const Text('حفظ التعديلات'),
                       ),
                     ),
                   ],

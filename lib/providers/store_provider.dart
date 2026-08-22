@@ -2,6 +2,7 @@ import 'dart:async';
 // Removed dart:io for Web compatibility
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:ell_tall_market/models/store_model.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -42,6 +43,43 @@ class StoreProvider with ChangeNotifier {
 
   List<StoreModel> _filterStoresWithAddress(Iterable<StoreModel> stores) {
     return stores.where(_hasDisplayableAddress).toList(growable: false);
+  }
+
+  // ===== Helper to validate merchant subscription dynamic check =====
+  bool _isMerchantSubscribed(Map<String, dynamic> data) {
+    // If the query didn't even attempt to join 'merchants' (like real-time stream),
+    // do not affect 'isOpen' status (default to true/whatever is in DB).
+    if (!data.containsKey('merchants')) return true;
+    final merchantData = data['merchants'];
+    if (merchantData == null) return false;
+
+    Map<String, dynamic> mData;
+    if (merchantData is Map) {
+      mData = Map<String, dynamic>.from(merchantData);
+    } else if (merchantData is List && merchantData.isNotEmpty) {
+      mData = Map<String, dynamic>.from(merchantData.first);
+    } else {
+      return false;
+    }
+
+    final currentTierId = mData['current_tier_id'];
+    final remainingOrders = mData['remaining_orders'] as int? ?? 0;
+    final expiryDateRaw = mData['package_expiry_date'];
+
+    if (expiryDateRaw == null) return false;
+
+    final expiryDate = DateTime.tryParse(expiryDateRaw.toString());
+    if (expiryDate == null) return false;
+
+    if (expiryDate.isBefore(DateTime.now())) return false;
+
+    if (currentTierId == null) {
+      return true;
+    }
+
+    if (remainingOrders <= 0 && remainingOrders != -1) return false;
+
+    return true;
   }
 
   // ===== Getters =====
@@ -94,13 +132,16 @@ class StoreProvider with ChangeNotifier {
 
       final response = await _supabase
           .from('stores')
-          .select('*')
+          .select('*, merchants(current_tier_id, package_expiry_date, remaining_orders)')
           .eq('is_active', true)
           .order('created_at', ascending: false);
 
-      final fetchedStores = (response as List)
-          .map((data) => StoreModel.fromSupabaseMap(Map<String, dynamic>.from(data)))
-          .toList();
+      final fetchedStores = (response as List).map((data) {
+        final storeMap = Map<String, dynamic>.from(data);
+        final store = StoreModel.fromSupabaseMap(storeMap);
+        final isSubscribed = _isMerchantSubscribed(storeMap);
+        return isSubscribed ? store : store.copyWith(isOpen: false);
+      }).toList();
 
       // لا نعرض متاجر بدون عنوان (العنوان مشتق من الحقول التفصيلية أيضاً).
       _stores = _filterStoresWithAddress(fetchedStores);
@@ -160,6 +201,66 @@ class StoreProvider with ChangeNotifier {
           List<Map<String, dynamic>>.from(response ?? []);
 
       if (nearbyData.isEmpty) {
+        AppLogger.info('ℹ️ لم ترجع الدالة متاجر عبر PostGIS، جلب المتاجر النشطة واحتساب المسافة محلياً...');
+        try {
+          final allStoresResponse = await _supabase
+              .from('stores')
+              .select('*, merchants(current_tier_id, package_expiry_date, remaining_orders)')
+              .eq('is_active', true)
+              .order('created_at', ascending: false);
+
+          final allStores = (allStoresResponse as List).map((row) {
+            final storeMap = Map<String, dynamic>.from(row);
+            final store = StoreModel.fromSupabaseMap(storeMap);
+            final isSubscribed = _isMerchantSubscribed(storeMap);
+            return isSubscribed ? store : store.copyWith(isOpen: false);
+          }).toList();
+
+          final fallbackNearby = <StoreModel>[];
+          for (final store in allStores) {
+            if (categoryFilter != null &&
+                categoryFilter.trim().isNotEmpty &&
+                store.category != categoryFilter.trim()) {
+              continue;
+            }
+
+            // المرحلة 1: لا نضيف إلا المتاجر التي تملك إحداثيات GPS حقيقية فقط
+            if (store.latitude != null && store.longitude != null) {
+              final distanceMeters = Geolocator.distanceBetween(
+                latitude,
+                longitude,
+                store.latitude!,
+                store.longitude!,
+              );
+              final distanceKm = distanceMeters / 1000;
+              final maxRadius = store.deliveryRadiusKm > 0
+                  ? store.deliveryRadiusKm
+                  : (maxDistanceKm > 0 ? maxDistanceKm : 15.0);
+
+              // التحقق الصارم من النطاق الحقيقي بدون زيادة عشوائية (ضمن نطاق التوصيل الفعلي)
+              if (distanceKm <= maxRadius) {
+                fallbackNearby.add(store);
+              }
+            }
+          }
+
+          // لا نعرض كل المتاجر أبداً إذا كانت النتيجة فارغة (تظل فارغة لتنبيه العميل بعدم وجود تغطية)
+          final filteredFallback = _filterStoresWithAddress(fallbackNearby);
+
+          if (filteredFallback.isNotEmpty) {
+            _nearbyStores = filteredFallback;
+            _stores = List.from(_nearbyStores);
+            _featuredStores = List.from(_nearbyStores);
+            _filteredStores = List.from(_nearbyStores);
+            _updateStoresByCategory();
+            AppLogger.info('✅ تم استرجاع ${_nearbyStores.length} متجر متاح عبر الفحص المحلي');
+            notifyListeners();
+            return;
+          }
+        } catch (e) {
+          AppLogger.warning('فشل الفحص المحلي للمتاجر النشطة: $e');
+        }
+
         _nearbyStores = [];
         _featuredStores = [];
         _filteredStores = [];
@@ -180,15 +281,18 @@ class StoreProvider with ChangeNotifier {
 
       final fullRows = await _supabase
           .from('stores')
-          .select('*')
+          .select('*, merchants(current_tier_id, package_expiry_date, remaining_orders)')
           .inFilter('id', nearbyIds);
 
       final fullById = <String, StoreModel>{
         for (final row in (fullRows as List))
           if ((row as Map)['id'] != null)
-            (row['id'].toString()): StoreModel.fromSupabaseMap(
-              Map<String, dynamic>.from(row),
-            ),
+            (row['id'].toString()): () {
+              final storeMap = Map<String, dynamic>.from(row);
+              final store = StoreModel.fromSupabaseMap(storeMap);
+              final isSubscribed = _isMerchantSubscribed(storeMap);
+              return isSubscribed ? store : store.copyWith(isOpen: false);
+            }(),
       };
 
       // دمج بيانات RPC (المسافة/الوقت المتوقع/… إلخ) مع بيانات المتجر الكاملة.
@@ -307,7 +411,8 @@ class StoreProvider with ChangeNotifier {
           .select(
             'id, merchant_id, name, description, phone, governorate, city, area, street, landmark, address, '
             'latitude, longitude, delivery_time, is_open, delivery_fee, min_order, delivery_mode, delivery_radius_km, '
-            'rating, review_count, category, opening_hours, image_url, cover_url, is_active, created_at, updated_at',
+            'rating, review_count, category, opening_hours, image_url, cover_url, is_active, created_at, updated_at, '
+            'merchants(current_tier_id, package_expiry_date, remaining_orders)',
           )
           .eq('is_active', true)
           .eq('city', cityValue);
@@ -322,11 +427,12 @@ class StoreProvider with ChangeNotifier {
 
       final rows = await query;
 
-      final scopedStores = (rows as List)
-          .map(
-            (row) => StoreModel.fromSupabaseMap(Map<String, dynamic>.from(row)),
-          )
-          .toList(growable: false);
+      final scopedStores = (rows as List).map((row) {
+        final storeMap = Map<String, dynamic>.from(row);
+        final store = StoreModel.fromSupabaseMap(storeMap);
+        final isSubscribed = _isMerchantSubscribed(storeMap);
+        return isSubscribed ? store : store.copyWith(isOpen: false);
+      }).toList();
 
       _nearbyStores = _filterStoresWithAddress(scopedStores);
       _stores = List.from(_nearbyStores);
@@ -348,6 +454,136 @@ class StoreProvider with ChangeNotifier {
     } finally {
       _setLoading(false);
     }
+  }
+
+  /// جلب المتاجر بناءً على عنوان العميل المسجل (المدينة + المنطقة + الإحداثيات إن وجدت)
+  /// للمرحلة 2 (بعد تسجيل العميل لعنوانه أو اختياره لعنوان محفوظ)
+  Future<void> fetchStoresByAddress({
+    required String city,
+    String? governorate,
+    String? area,
+    double? latitude,
+    double? longitude,
+    double maxDistanceKm = 15,
+    String? categoryFilter,
+  }) async {
+    final cityValue = city.trim();
+    final governorateValue = (governorate ?? '').trim();
+    final areaValue = (area ?? '').trim();
+
+    if (cityValue.isEmpty && latitude == null) {
+      _nearbyModeEnabled = true;
+      _nearbyStores = [];
+      _featuredStores = [];
+      _filteredStores = [];
+      _stores = [];
+      _updateStoresByCategory();
+      notifyListeners();
+      return;
+    }
+
+    // إذا كانت الإحداثيات متوفرة في العنوان المسجل، ندمج بين فحص المدينة وحساب المسافة بدقة
+    if (latitude != null && longitude != null) {
+      _nearbyModeEnabled = true;
+      _setLoading(true);
+      _setError(null);
+
+      try {
+        AppLogger.info(
+          '📍 جلب متاجر العنوان المسجل ($cityValue - $governorateValue) عند ($latitude, $longitude)...',
+        );
+
+        final allStoresResponse = await _supabase
+            .from('stores')
+            .select('*, merchants(current_tier_id, package_expiry_date, remaining_orders)')
+            .eq('is_active', true)
+            .order('created_at', ascending: false);
+
+        final allStores = (allStoresResponse as List).map((row) {
+          final storeMap = Map<String, dynamic>.from(row);
+          final store = StoreModel.fromSupabaseMap(storeMap);
+          final isSubscribed = _isMerchantSubscribed(storeMap);
+          return isSubscribed ? store : store.copyWith(isOpen: false);
+        }).toList();
+
+        final matchedStores = <StoreModel>[];
+        for (final store in allStores) {
+          if (categoryFilter != null &&
+              categoryFilter.trim().isNotEmpty &&
+              store.category != categoryFilter.trim()) {
+            continue;
+          }
+
+          bool isMatch = false;
+
+          // 1. فحص المسافة الجغرافية لنطاق توصيل المتجر
+          if (store.latitude != null && store.longitude != null) {
+            final distanceMeters = Geolocator.distanceBetween(
+              latitude,
+              longitude,
+              store.latitude!,
+              store.longitude!,
+            );
+            final distanceKm = distanceMeters / 1000;
+            final maxRadius = store.deliveryRadiusKm > 0
+                ? store.deliveryRadiusKm
+                : (maxDistanceKm > 0 ? maxDistanceKm : 15.0);
+
+            if (distanceKm <= maxRadius) {
+              isMatch = true;
+            }
+          }
+
+          // 2. فحص تطابق المدينة أو المحافظة أو المنطقة
+          if (!isMatch && cityValue.isNotEmpty && store.city != null) {
+            final storeCity = store.city!.trim();
+            if (storeCity.isNotEmpty) {
+              if (storeCity.toLowerCase() == cityValue.toLowerCase() ||
+                  storeCity.contains(cityValue) ||
+                  cityValue.contains(storeCity)) {
+                if (governorateValue.isEmpty ||
+                    store.governorate == null ||
+                    store.governorate!.trim().toLowerCase() == governorateValue.toLowerCase()) {
+                  isMatch = true;
+                }
+              }
+            }
+          }
+
+          if (!isMatch && areaValue.isNotEmpty && store.area != null) {
+            final storeArea = store.area!.trim();
+            if (storeArea.isNotEmpty && (storeArea.toLowerCase() == areaValue.toLowerCase() || storeArea.contains(areaValue))) {
+              isMatch = true;
+            }
+          }
+
+          if (isMatch) {
+            matchedStores.add(store);
+          }
+        }
+
+        _nearbyStores = _filterStoresWithAddress(matchedStores);
+        _stores = List.from(_nearbyStores);
+        _featuredStores = List.from(_nearbyStores);
+        _filteredStores = List.from(_nearbyStores);
+        _updateStoresByCategory();
+
+        AppLogger.info('✅ تم العثور على ${_nearbyStores.length} متجر يغطي عنوان العميل');
+        notifyListeners();
+        return;
+      } catch (e) {
+        AppLogger.error('❌ خطأ في جلب متاجر العنوان المسجل', e);
+      } finally {
+        _setLoading(false);
+      }
+    }
+
+    // إذا لم تكن هناك إحداثيات، نعتمد على استعلام المدينة مباشرة
+    await fetchStoresByCity(
+      city: cityValue,
+      governorate: governorateValue.isNotEmpty ? governorateValue : null,
+      categoryFilter: categoryFilter,
+    );
   }
 
   /// تحديث المتاجر المميزة بناءً على موقع العميل

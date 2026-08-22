@@ -10,6 +10,7 @@ import '../core/logger.dart';
 import 'merchant_provider.dart';
 import 'product_provider.dart';
 import 'order_provider.dart';
+import 'notification_provider.dart';
 import '../services/notification_service.dart';
 import '../services/google_signin_service.dart';
 
@@ -414,6 +415,7 @@ class SupabaseProvider with ChangeNotifier {
     MerchantProvider? merchantProvider,
     ProductProvider? productProvider,
     OrderProvider? orderProvider,
+    NotificationProvider? notificationProvider,
   }) async {
     _isLoading = true;
     notifyListeners();
@@ -435,6 +437,7 @@ class SupabaseProvider with ChangeNotifier {
       merchantProvider?.clearData();
       productProvider?.clearProducts();
       orderProvider?.clearOrders();
+      notificationProvider?.clearData();
 
       AppLogger.info('✅ Signed out and cleared all provider data');
     } catch (e) {
@@ -582,13 +585,18 @@ class SupabaseProvider with ChangeNotifier {
         // 1. استدعاء خدمة تسجيل الدخول الأصلية من جوجل (الموبايل)
         final authResponse = await GoogleSignInService.instance.signInWithGoogle();
 
-        if (authResponse == null || authResponse.user == null) {
-          _error = 'تم إلغاء تسجيل الدخول أو فشل الاتصال بجوجل';
-          AppLogger.warning('Native Google Sign In failed or was cancelled');
-          _isLoading = false;
-          notifyListeners();
-          return false;
-        }
+          if (authResponse == null || authResponse.user == null) {
+            // تحديد ما إذا كان الإلغاء أم فشل الاتصال
+            if (authResponse == null) {
+              _error = 'تم إلغاء تسجيل الدخول عبر جوجل';
+            } else {
+              _error = 'فشل الاتصال بجوجل، يرجى المحاولة لاحقاً';
+            }
+            AppLogger.warning('Native Google Sign In failed or was cancelled');
+            _isLoading = false;
+            notifyListeners();
+            return false;
+          }
 
         AppLogger.info('✅ Native Google Sign In completed successfully: ${authResponse.user!.email}');
         

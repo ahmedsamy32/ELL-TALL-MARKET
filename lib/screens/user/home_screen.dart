@@ -1,3 +1,4 @@
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -162,54 +163,101 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       listen: false,
     );
 
-    // الحصول على الموقع إذا لم يكن متاحاً
-    if (!locationProvider.hasLocation) {
-      final gotLocation = await locationProvider.getCurrentLocation();
-      debugPrint('📍 محاولة الحصول على الموقع: $gotLocation');
+    if (!_isLoadingDeals) {
+      if (!mounted) return;
+      setState(() => _isLoadingDeals = true);
+    }
+
+    bool loadedStores = false;
+
+    // المرحلة 2: التحقق أولاً إذا كان العميل مسجل دخول ولديه عنوان محفوظ
+    final authUser = Supabase.instance.client.auth.currentUser;
+    if (authUser != null) {
+      try {
+        final addressRes = await Supabase.instance.client
+            .from('addresses')
+            .select()
+            .eq('client_id', authUser.id)
+            .order('is_default', ascending: false)
+            .order('created_at', ascending: false)
+            .limit(1);
+
+        if (addressRes.isNotEmpty) {
+          final defaultAddress = Map<String, dynamic>.from(addressRes.first);
+          final city = (defaultAddress['city'] as String? ?? '').trim();
+          final governorate = (defaultAddress['governorate'] as String? ?? '').trim();
+          final area = (defaultAddress['area'] as String? ?? '').trim();
+          final lat = (defaultAddress['latitude'] as num?)?.toDouble();
+          final lng = (defaultAddress['longitude'] as num?)?.toDouble();
+
+          if (city.isNotEmpty || (lat != null && lng != null)) {
+            debugPrint('📍 استخدام العنوان المسجل للعميل (المرحلة 2): $city - $governorate');
+            await storeProvider.fetchStoresByAddress(
+              city: city,
+              governorate: governorate.isNotEmpty ? governorate : null,
+              area: area.isNotEmpty ? area : null,
+              latitude: lat,
+              longitude: lng,
+              maxDistanceKm: 15,
+            );
+            loadedStores = true;
+          }
+        }
+      } catch (e) {
+        debugPrint('Note: Error checking saved addresses: $e');
+      }
+    }
+
+    // المرحلة 1: إذا لم يكن هناك عنوان مسجل بعد — نعتمد على إحداثيات GPS الحالية للجهاز
+    if (!loadedStores) {
+      if (!locationProvider.hasLocation) {
+        final gotLocation = await locationProvider.getCurrentLocation();
+        debugPrint('📍 محاولة الحصول على الموقع عبر GPS (المرحلة 1): $gotLocation');
+      }
+
+      if (!mounted) return;
+
+      if (locationProvider.hasLocation) {
+        debugPrint(
+          '📍 الموقع عبر GPS: ${locationProvider.latitude}, ${locationProvider.longitude}',
+        );
+        await storeProvider.fetchNearbyStores(
+          latitude: locationProvider.latitude!,
+          longitude: locationProvider.longitude!,
+          maxDistanceKm: 15,
+        );
+        loadedStores = true;
+      }
     }
 
     if (!mounted) return;
 
-    // إذا تم الحصول على الموقع، جلب المتاجر القريبة
-    if (locationProvider.hasLocation) {
-      // نفعّل تحميل العروض مبكراً لتجنب فجوة بين الشيمرين
-      if (!_isLoadingDeals) {
-        if (!mounted) return;
-        setState(() => _isLoadingDeals = true);
-      }
-      debugPrint(
-        '📍 الموقع: ${locationProvider.latitude}, ${locationProvider.longitude}',
-      );
-      await storeProvider.fetchNearbyStores(
-        latitude: locationProvider.latitude!,
-        longitude: locationProvider.longitude!,
-        maxDistanceKm: 15, // نطاق البحث الافتراضي
-      );
-      debugPrint('🏪 المتاجر القريبة: ${storeProvider.nearbyStores.length}');
+    if (loadedStores && storeProvider.nearbyStores.isNotEmpty) {
+      debugPrint('🏪 المتاجر المتاحة في النطاق: ${storeProvider.nearbyStores.length}');
       debugPrint('🏪 المتاجر المميزة: ${storeProvider.featuredStores.length}');
 
       final allowedStoreIds = storeProvider.nearbyStores
           .map((s) => s.id)
           .toList(growable: false);
 
-      // تحميل كل البيانات دفعة واحدة
+      // تحميل الأقسام والمنتجات المتاحة في هذه المتاجر فقط
       await Future.wait([
         categoryProvider.fetchCategories(),
         productProvider.fetchProducts(allowedStoreIds: allowedStoreIds),
       ]);
 
-      // تطبيق نطاق التوفر على الأقسام
       await categoryProvider.applyAvailabilityScope(
         allowedStoreIds: allowedStoreIds,
       );
 
-      // جلب عروض اليوم
       _loadTodayDeals();
     } else {
-      // في حالة عدم توفر الموقع، نعرض رسالة ولا نجلب أي متاجر
-      debugPrint('⚠️ لم يتم الحصول على الموقع - لن تظهر متاجر');
+      debugPrint('⚠️ لا توجد متاجر تغطي هذه المنطقة حالياً');
       productProvider.clearProducts();
       await categoryProvider.applyAvailabilityScope(allowedStoreIds: const []);
+      if (mounted) {
+        setState(() => _isLoadingDeals = false);
+      }
     }
   }
 

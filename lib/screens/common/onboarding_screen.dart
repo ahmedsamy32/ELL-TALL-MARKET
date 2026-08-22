@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
 
+// Flag to temporarily hide/show onboarding Title and Description text
+const bool _showOnboardingText = false;
+
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
 
@@ -17,17 +20,17 @@ class OnboardingScreenState extends State<OnboardingScreen> {
     {
       'title': 'مرحباً بك في سوق التل',
       'description': 'منصة تسوق متكاملة تقدم لك أفضل المنتجات بأفضل الأسعار',
-      'image': 'assets/images/onboarding1.jpg',
+      'image': 'assets/images/onboarding1.png',
     },
     {
       'title': 'تسوق بسهولة',
       'description': 'تصفح الآلاف من المنتجات وأضفها إلى سلة التسوق بضغطة زر',
-      'image': 'assets/images/onboarding2.jpg',
+      'image': 'assets/images/onboarding2.png',
     },
     {
       'title': 'توصيل سريع',
       'description': 'استلم طلباتك في أسرع وقت مع خدمة التوصيل المميزة',
-      'image': 'assets/images/onboarding3.jpg',
+      'image': 'assets/images/onboarding3.png',
     },
   ];
 
@@ -76,7 +79,15 @@ class OnboardingScreenState extends State<OnboardingScreen> {
       body: Row(
         children: [
           // الصورة - اليسار
-          Expanded(child: Image.asset(image, fit: BoxFit.cover)),
+          Expanded(
+            child: SafeArea(
+              top: false,
+              bottom: true,
+              left: true,
+              right: true,
+              child: Image.asset(image, fit: BoxFit.cover),
+            ),
+          ),
           // النص والأزرار - اليمين
           Expanded(
             child: Container(
@@ -88,31 +99,33 @@ class OnboardingScreenState extends State<OnboardingScreen> {
                     child: Center(
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 60),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              title,
-                              style: const TextStyle(
-                                fontSize: 40,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF1A237E),
-                                height: 1.2,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 24),
-                            Text(
-                              description,
-                              style: const TextStyle(
-                                fontSize: 18,
-                                color: Color(0xFF718096),
-                                height: 1.6,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          ],
-                        ),
+                        child: _showOnboardingText
+                            ? Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    title,
+                                    style: const TextStyle(
+                                      fontSize: 40,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF1A237E),
+                                      height: 1.2,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 24),
+                                  Text(
+                                    description,
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      color: Color(0xFF718096),
+                                      height: 1.6,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ],
+                              )
+                            : const SizedBox.shrink(),
                       ),
                     ),
                   ),
@@ -357,8 +370,15 @@ class OnboardingPage extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // الصورة الخلفية
-        Positioned.fill(child: Image.asset(image, fit: BoxFit.cover)),
+        Positioned.fill(
+          child: SafeArea(
+            top: false,
+            bottom: true,
+            left: true,
+            right: true,
+            child: Image.asset(image, fit: BoxFit.cover),
+          ),
+        ),
 
         // طبقة تظليل
         Container(
@@ -387,39 +407,41 @@ class OnboardingPage extends StatelessWidget {
                     wide: 60.0,
                   ),
                 ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: context.responsive(
-                          mobile: 32.0,
-                          tablet: 40.0,
-                          wide: 48.0,
-                        ),
-                        fontWeight: FontWeight.bold,
-                        height: 1.2,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      description,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: context.responsive(
-                          mobile: 18.0,
-                          tablet: 22.0,
-                          wide: 24.0,
-                        ),
-                        height: 1.5,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
+                child: _showOnboardingText
+                    ? Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            title,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: context.responsive(
+                                mobile: 32.0,
+                                tablet: 40.0,
+                                wide: 48.0,
+                              ),
+                              fontWeight: FontWeight.bold,
+                              height: 1.2,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 20),
+                          Text(
+                            description,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: context.responsive(
+                                mobile: 18.0,
+                                tablet: 22.0,
+                                wide: 24.0,
+                              ),
+                              height: 1.5,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      )
+                    : const SizedBox.shrink(),
               ),
             ),
           ),

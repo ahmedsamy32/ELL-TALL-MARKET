@@ -4,6 +4,7 @@ import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
+import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/utils/app_colors.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
@@ -786,11 +787,16 @@ class RoleBasedDrawer extends StatelessWidget {
                 context,
                 listen: false,
               );
+              final notificationProvider = Provider.of<NotificationProvider>(
+                context,
+                listen: false,
+              );
 
               await authProvider.signOut(
                 merchantProvider: merchantProvider,
                 productProvider: productProvider,
                 orderProvider: orderProvider,
+                notificationProvider: notificationProvider,
               );
 
               if (context.mounted) {

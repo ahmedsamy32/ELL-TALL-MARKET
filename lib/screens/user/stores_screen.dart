@@ -1,3 +1,4 @@
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:geolocator/geolocator.dart';
@@ -65,20 +66,55 @@ class _StoresScreenState extends State<StoresScreen> {
         listen: false,
       );
 
-      // جلب المتاجر القريبة بناءً على GPS فقط
-      if (!locationProvider.hasLocation) {
-        await locationProvider.getCurrentLocation();
+      bool loadedStores = false;
+      final authUser = Supabase.instance.client.auth.currentUser;
+      if (authUser != null) {
+        try {
+          final addressRes = await Supabase.instance.client
+              .from('addresses')
+              .select()
+              .eq('client_id', authUser.id)
+              .order('is_default', ascending: false)
+              .order('created_at', ascending: false)
+              .limit(1);
+
+          if (addressRes.isNotEmpty) {
+            final defaultAddress = Map<String, dynamic>.from(addressRes.first);
+            final city = (defaultAddress['city'] as String? ?? '').trim();
+            final governorate = (defaultAddress['governorate'] as String? ?? '').trim();
+            final area = (defaultAddress['area'] as String? ?? '').trim();
+            final lat = (defaultAddress['latitude'] as num?)?.toDouble();
+            final lng = (defaultAddress['longitude'] as num?)?.toDouble();
+
+            if (city.isNotEmpty || (lat != null && lng != null)) {
+              await storeProvider.fetchStoresByAddress(
+                city: city,
+                governorate: governorate.isNotEmpty ? governorate : null,
+                area: area.isNotEmpty ? area : null,
+                latitude: lat,
+                longitude: lng,
+                maxDistanceKm: 15,
+              );
+              loadedStores = true;
+            }
+          }
+        } catch (_) {}
       }
 
-      if (locationProvider.hasLocation) {
-        await storeProvider.fetchNearbyStores(
-          latitude: locationProvider.latitude!,
-          longitude: locationProvider.longitude!,
-          maxDistanceKm: 15,
-        );
-      } else {
-        // في حالة عدم توفر الموقع، لا نعرض متاجر (لا يمكن تحديد النطاق)
-        storeProvider.clear();
+      if (!loadedStores) {
+        if (!locationProvider.hasLocation) {
+          await locationProvider.getCurrentLocation();
+        }
+
+        if (locationProvider.hasLocation) {
+          await storeProvider.fetchNearbyStores(
+            latitude: locationProvider.latitude!,
+            longitude: locationProvider.longitude!,
+            maxDistanceKm: 15,
+          );
+        } else {
+          storeProvider.clear();
+        }
       }
 
       if (!mounted) return;

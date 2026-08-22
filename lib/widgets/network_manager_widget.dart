@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/services/network_manager.dart';
 import '../core/logger.dart';
+import '../utils/app_colors.dart';
 import 'dart:async';
 
 /// 🌐 Widget احترافي لمراقبة حالة الاتصال بالإنترنت
@@ -48,15 +49,16 @@ class _ConnectionStatusWidgetState extends State<ConnectionStatusWidget> {
             _isConnected = isConnected;
           });
 
-          // عرض إشعار واحد فقط عند القطع
-          if (!isConnected && !networkManager.hasShownDisconnectionNotice) {
-            networkManager.hasShownDisconnectionNotice = true;
-            _showDisconnectionNotice();
-          }
-
-          // إعادة تعيين العلم عند الاتصال
-          if (isConnected) {
+          if (!isConnected) {
+            // عرض إشعار واحد فقط عند القطع
+            if (!networkManager.hasShownDisconnectionNotice) {
+              networkManager.hasShownDisconnectionNotice = true;
+              _showDisconnectionNotice();
+            }
+          } else {
+            // إعادة تعيين العلم عند الاتصال وعرض رسالة نجاح الاتصال
             networkManager.resetDisconnectionNotice();
+            _showConnectionRestoredNotice();
           }
 
           AppLogger.info("حالة الاتصال: ${isConnected ? '✅ متصل' : '❌ منقطع'}");
@@ -70,6 +72,9 @@ class _ConnectionStatusWidgetState extends State<ConnectionStatusWidget> {
 
   void _showDisconnectionNotice() {
     if (!mounted) return;
+
+    // إخفاء أي رسالة حالية لتجنب تراكم الإشعارات
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -85,8 +90,36 @@ class _ConnectionStatusWidgetState extends State<ConnectionStatusWidget> {
             ),
           ],
         ),
-        backgroundColor: Colors.red.shade400,
+        backgroundColor: AppColors.danger,
         duration: const Duration(seconds: 5),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
+  void _showConnectionRestoredNotice() {
+    if (!mounted) return;
+
+    // إخفاء أي رسالة حالية
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.wifi, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'تمت استعادة الاتصال بالإنترنت بنجاح.',
+                style: TextStyle(color: Colors.white, fontSize: 14),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: AppColors.success,
+        duration: const Duration(seconds: 3),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
@@ -111,7 +144,7 @@ class _ConnectionStatusWidgetState extends State<ConnectionStatusWidget> {
             left: 0,
             right: 0,
             child: Material(
-              color: Colors.red.shade400,
+              color: AppColors.danger,
               child: SafeArea(
                 bottom: false,
                 child: Padding(

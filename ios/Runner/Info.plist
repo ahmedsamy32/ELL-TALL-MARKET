@@ -109,5 +109,10 @@
 	<string>نحتاج لاستخدام الكاميرا لتصوير منتجاتك ورفعها للمتجر.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>نحتاج للوصول لمعرض الصور لاختيار صور المنتجات التي ترغب في عرضها.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<false/>
+	</dict>
 </dict>
 </plist>

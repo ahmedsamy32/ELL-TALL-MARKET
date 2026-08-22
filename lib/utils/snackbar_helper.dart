@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'validators.dart';
+import 'app_colors.dart';
 
 /// مساعد عرض رسائل SnackBar محسنة
 class SnackBarHelper {
@@ -10,6 +11,7 @@ class SnackBarHelper {
     Duration? duration,
     SnackBarAction? action,
   }) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -27,7 +29,7 @@ class SnackBarHelper {
             ),
           ],
         ),
-        backgroundColor: Colors.green[600],
+        backgroundColor: AppColors.success,
         duration: duration ?? const Duration(seconds: 4),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -44,6 +46,7 @@ class SnackBarHelper {
     Duration? duration,
     SnackBarAction? action,
   }) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -61,7 +64,7 @@ class SnackBarHelper {
             ),
           ],
         ),
-        backgroundColor: Colors.red[600],
+        backgroundColor: AppColors.danger,
         duration: duration ?? const Duration(seconds: 5),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -78,6 +81,7 @@ class SnackBarHelper {
     Duration? duration,
     SnackBarAction? action,
   }) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -95,7 +99,7 @@ class SnackBarHelper {
             ),
           ],
         ),
-        backgroundColor: Colors.orange[600],
+        backgroundColor: AppColors.warning,
         duration: duration ?? const Duration(seconds: 4),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -112,6 +116,7 @@ class SnackBarHelper {
     Duration? duration,
     SnackBarAction? action,
   }) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -129,7 +134,7 @@ class SnackBarHelper {
             ),
           ],
         ),
-        backgroundColor: Colors.blue[600],
+        backgroundColor: AppColors.info,
         duration: duration ?? const Duration(seconds: 3),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -145,6 +150,7 @@ class SnackBarHelper {
     String message, {
     Duration? duration,
   }) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
@@ -169,7 +175,7 @@ class SnackBarHelper {
             ),
           ],
         ),
-        backgroundColor: Colors.grey[700],
+        backgroundColor: AppColors.dark,
         duration: duration ?? const Duration(seconds: 2),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),

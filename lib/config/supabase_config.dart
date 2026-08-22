@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
+import '../core/secure_local_storage.dart';
 
 /// تهيئة Supabase الشاملة حسب الوثائق الرسمية
 /// https://supabase.com/docs/reference/dart/introduction
@@ -60,6 +61,7 @@ class SupabaseConfig {
               authFlowType: AuthFlowType.pkce,
               autoRefreshToken: true,
               detectSessionInUri: true,
+              localStorage: SecureLocalStorage(),
             ),
 
             // خيارات Realtime مع مهلة أطول

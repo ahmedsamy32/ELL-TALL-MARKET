@@ -588,12 +588,11 @@ class AppRoutes {
           );
         }
 
-        // OAuth PKCE: Supabase يستبدل الكود تلقائياً على الويب
-        // نعرض شاشة انتظار ونستمع لـ onAuthStateChange
+        // OAuth PKCE: Supabase يستبدل الكود تلقائياً على الويب، ولكن نحتاجه يدوياً على ويندوز والمنصات الأخرى
         AppLogger.info(
-          '✅ OAuth PKCE callback - في انتظار معالجة Supabase للكود تلقائياً',
+          '✅ OAuth PKCE callback - في انتظار معالجة الكود',
         );
-        return MaterialPageRoute(builder: (_) => const _OAuthCallbackScreen());
+        return MaterialPageRoute(builder: (_) => _OAuthCallbackScreen(code: code));
       }
 
       // معالجة تأكيد البريد من النوع القديم (type=signup)
@@ -1236,7 +1235,8 @@ class _CallbackScreenState extends State<_CallbackScreen> {
 
 /// شاشة انتظار OAuth Callback - تستمع لـ onAuthStateChange وتنتقل حسب الدور
 class _OAuthCallbackScreen extends StatefulWidget {
-  const _OAuthCallbackScreen();
+  final String? code;
+  const _OAuthCallbackScreen({this.code});
 
   @override
   State<_OAuthCallbackScreen> createState() => _OAuthCallbackScreenState();
@@ -1272,39 +1272,37 @@ class _OAuthCallbackScreenState extends State<_OAuthCallbackScreen> {
       return;
     }
 
-    // ② على الويب: نستبدل الكود يدوياً من URL (PKCE لا يعالجه SDK تلقائياً)
-    if (kIsWeb) {
-      final code = Uri.base.queryParameters['code'];
-      if (code != null && code.isNotEmpty) {
-        try {
-          AppLogger.info('🔄 OAuth PKCE: جاري استبدال الكود...');
-          await Supabase.instance.client.auth.exchangeCodeForSession(code);
-          AppLogger.info('✅ تم استبدال الكود بنجاح');
+    // ② استبدال الكود يدوياً (مطلوب على الويندوز والمنصات الأخرى التي لا تلتقط الرابط تلقائياً، وكذلك الويب كـ fallback)
+    final codeToExchange = widget.code ?? (kIsWeb ? Uri.base.queryParameters['code'] : null);
+    if (codeToExchange != null && codeToExchange.isNotEmpty) {
+      try {
+        AppLogger.info('🔄 OAuth PKCE: جاري استبدال الكود...');
+        await Supabase.instance.client.auth.exchangeCodeForSession(codeToExchange);
+        AppLogger.info('✅ تم استبدال الكود بنجاح');
+        if (mounted && !_navigated) _navigateAfterSignIn();
+        return;
+      } catch (e) {
+        AppLogger.warning('⚠️ exchangeCodeForSession: $e');
+        // الكود ربما استُهلك بالفعل من SDK، نفحص الجلسة مرة أخرى
+        if (Supabase.instance.client.auth.currentUser != null) {
           if (mounted && !_navigated) _navigateAfterSignIn();
           return;
-        } catch (e) {
-          AppLogger.warning('⚠️ exchangeCodeForSession: $e');
-          // الكود ربما استُهلك بالفعل من SDK، نفحص الجلسة مرة أخرى
-          if (Supabase.instance.client.auth.currentUser != null) {
-            if (mounted && !_navigated) _navigateAfterSignIn();
-            return;
-          }
-          // خطأ حقيقي
-          if (mounted) {
-            Navigator.of(
-              context,
-            ).pushNamedAndRemoveUntil(AppRoutes.login, (r) => false);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  '❌ فشل تسجيل الدخول: ${e.toString().split('\n').first}',
-                ),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-          return;
         }
+        // خطأ حقيقي
+        if (mounted) {
+          Navigator.of(
+            context,
+          ).pushNamedAndRemoveUntil(AppRoutes.login, (r) => false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '❌ فشل تسجيل الدخول: ${e.toString().split('\n').first}',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
       }
     }
 

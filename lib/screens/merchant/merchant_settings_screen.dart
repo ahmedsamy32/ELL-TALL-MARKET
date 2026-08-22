@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'dart:math' as math;
 import 'package:image_picker/image_picker.dart';
@@ -455,7 +456,36 @@ class _MerchantSettingsScreenState extends State<MerchantSettingsScreen>
       if (!mounted) return;
       if (file == null) return;
 
-      // القص إلزامي - إذا لم يتم القص، لا يتم رفع الصورة
+      // إلغاء قص الصور على الويب والوندوز فقط
+      if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) {
+        final bytes = await file.readAsBytes();
+        if (!mounted) return;
+        final pathParts = file.path.replaceAll('\\', '/').split('/');
+        final fileName = file.name.isNotEmpty ? file.name : pathParts.last;
+
+        setState(() {
+          if (type == 'logo') {
+            _pendingLogoBytes = bytes;
+            _pendingLogoFileName = fileName;
+          } else {
+            _pendingCoverBytes = bytes;
+            _pendingCoverFileName = fileName;
+          }
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              type == 'logo'
+                  ? 'تم تعيين الشعار. اضغط "حفظ التغييرات" لإتمام الرفع'
+                  : 'تم تعيين الغلاف. اضغط "حفظ التغييرات" لإتمام الرفع',
+            ),
+          ),
+        );
+        return;
+      }
+
+      // القص إلزامي - إذا لم يتم القص، لا يتم رفع الصورة (للموبايل Android / iOS)
       final bool isLogo = type == 'logo';
 
       try {

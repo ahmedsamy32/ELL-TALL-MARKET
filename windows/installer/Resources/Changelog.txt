@@ -1,0 +1,34 @@
+سجل التغييرات لتطبيق سوق التل (Ell Tall Market Changelog)
+======================================================
+
+الإصدار 1.1.8 (13 يوليو 2026)
+-----------------------------
+* إضافة دعم كامل للغة العربية والإنجليزية في تطبيق تثبيت ويندوز.
+* تحسين أداء استهلاك الذاكرة وسرعة استجابة الواجهات.
+* إصلاح مشكلة التحقق من حزمة إعادة توزيع Visual C++.
+* تحديث واجهات لوحة التحكم للمتاجر وقباطنة التوصيل.
+
+الإصدار 1.0.1 (10 فبراير 2026)
+-----------------------------
+* إطلاق النسخة التجريبية الأولى للتطبيق على منصة ويندوز وأندرويد.
+* دعم تسجيل الدخول عبر Supabase وتصفح المنتجات في الماركت.
+* تفعيل نظام الإشعارات وسلة المشتريات.
+
+
+--------------------------------------------------------------------------------
+
+Changelog for Ell Tall Market
+============================
+
+Version 1.1.8 (July 13, 2026)
+-----------------------------
+* Added full Arabic and English support in the Windows Installer.
+* Optimized memory footprint and UI responsiveness.
+* Fixed Visual C++ Redistributable check during setup.
+* Updated store management and driver dashboard screens.
+
+Version 1.0.1 (February 10, 2026)
+-----------------------------
+* Initial beta release for Windows and Android platforms.
+* Supabase auth integration and product catalog browsing.
+* Implemented shopping cart and notification system.

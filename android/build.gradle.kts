@@ -17,8 +17,15 @@ val newBuildDir: Directory =
 rootProject.layout.buildDirectory.value(newBuildDir)
 
 subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
+    val projectDir = project.projectDir.absolutePath
+    val buildDir = newBuildDir.asFile.absolutePath
+    val projectDrive = if (projectDir.contains(":\\")) projectDir.substringBefore(":\\").uppercase() else ""
+    val buildDrive = if (buildDir.contains(":\\")) buildDir.substringBefore(":\\").uppercase() else ""
+
+    if (projectDrive == buildDrive) {
+        val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
+        project.layout.buildDirectory.value(newSubprojectBuildDir)
+    }
 
     // Force all Android modules to use compileSdk 36 using reflection to avoid type issues
     afterEvaluate {

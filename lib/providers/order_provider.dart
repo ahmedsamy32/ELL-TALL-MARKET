@@ -491,6 +491,8 @@ class OrderProvider with ChangeNotifier {
         _setError('رصيد محفظة المتجر غير كافٍ لإتمام الطلب حالياً');
       } else if (errorText.contains('STORE_NOT_FOUND')) {
         _setError('تعذر العثور على بيانات المتجر');
+      } else if (errorText.contains('التاجر غير مشترك في أي باقة') || errorText.contains('غير مشترك في أي باقة')) {
+        _setError('عذراً، هذا المتجر غير متاح لاستقبال الطلبات حالياً بسبب انتهاء باقة اشتراكه');
       } else {
         _setError(_friendlyMessageFromException(e));
       }

@@ -2,15 +2,32 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class Env {
   // إعدادات قاعدة البيانات
-  static String get supabaseUrl => dotenv.env['SUPABASE_URL'] ?? '';
-  static String get supabaseAnonKey => dotenv.env['SUPABASE_ANON_KEY'] ?? '';
+  static String get supabaseUrl =>
+      dotenv.env['SUPABASE_URL']?.isNotEmpty == true
+          ? dotenv.env['SUPABASE_URL']!
+          : 'https://ebbkdhmwaawzxbidjynz.supabase.co';
+
+  static String get supabaseAnonKey =>
+      dotenv.env['SUPABASE_ANON_KEY']?.isNotEmpty == true
+          ? dotenv.env['SUPABASE_ANON_KEY']!
+          : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImViYmtkaG13YWF3enhiaWRqeW56Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjAxMDI3MTMsImV4cCI6MjA3NTY3ODcxM30.lv_wB9miMcNL3HBg7hXviL3cPaIng2C8x_3rIHzdhF8';
 
   // إعدادات المصادقة الاجتماعية
-  static String get googleClientId => dotenv.env['GOOGLE_CLIENT_ID'] ?? '';
-  static String get facebookClientId => dotenv.env['FACEBOOK_CLIENT_ID'] ?? '';
+  static String get googleClientId =>
+      dotenv.env['GOOGLE_CLIENT_ID']?.isNotEmpty == true
+          ? dotenv.env['GOOGLE_CLIENT_ID']!
+          : '941471556278-7hngn6n5kqno7of3bu3hgplmibh16dce.apps.googleusercontent.com';
+
+  static String get facebookClientId =>
+      dotenv.env['FACEBOOK_CLIENT_ID']?.isNotEmpty == true
+          ? dotenv.env['FACEBOOK_CLIENT_ID']!
+          : '1282194797038347';
 
   // إعدادات Google Maps و Places
-  static String get googleMapsApiKey => dotenv.env['GOOGLE_MAPS_API_KEY'] ?? '';
+  static String get googleMapsApiKey =>
+      dotenv.env['GOOGLE_MAPS_API_KEY']?.isNotEmpty == true
+          ? dotenv.env['GOOGLE_MAPS_API_KEY']!
+          : 'AIzaSyA5q1yifwlqadIZPs4KttQgSH8-ow2G1js';
 
   // إعدادات Stripe للمدفوعات
   static String get stripePublishableKey =>

@@ -26,19 +26,31 @@ class MainActivity: FlutterActivity() {
         handleIntent(intent)
     }
 
+    private fun sanitizeUrl(url: String?): String {
+        if (url == null) return ""
+        return try {
+            val uri = Uri.parse(url)
+            val builder = uri.buildUpon().clearQuery()
+            builder.fragment(null)
+            builder.build().toString() + "?..."
+        } catch (e: Exception) {
+            "[رابط غير آمن]"
+        }
+    }
+
     private fun handleIntent(intent: Intent?) {
         if (intent?.action == Intent.ACTION_VIEW) {
             val data: Uri? = intent.data
             data?.let { uri ->
                 val url = uri.toString()
-                println("📱 Android: Deep Link مستقبل: $url")
+                println("📱 Android: Deep Link مستقبل: ${sanitizeUrl(url)}")
                 
                 // التحقق من أن الرابط خاص بالمصادقة
                 if (isAuthDeepLink(url)) {
                     // إرسال الرابط إلى Flutter
                     methodChannel.invokeMethod("handleDeepLink", url)
                 } else {
-                    println("⚠️ Android: رابط غير متعرف عليه: $url")
+                    println("⚠️ Android: رابط غير متعرف عليه: ${sanitizeUrl(url)}")
                 }
             }
         }

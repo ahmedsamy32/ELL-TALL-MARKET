@@ -186,8 +186,12 @@ Future<void> main([List<String> args = const []]) async {
       }
     }
 
-    // 1. Initialization: Load Environments
-    await dotenv.load(fileName: ".env");
+    // 1. Initialization: Load Environments safely (supports Web asset fallback)
+    try {
+      await dotenv.load(fileName: ".env", isOptional: true);
+    } catch (e) {
+      AppLogger.warning('⚠️ Could not load .env file: $e');
+    }
 
     // 2. Initialization: Firebase Services (Only on mobile and web platforms)
     final isMobileOrWeb = kIsWeb || 

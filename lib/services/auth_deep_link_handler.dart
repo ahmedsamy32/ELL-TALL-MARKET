@@ -184,15 +184,25 @@ class AuthDeepLinkHandler {
     }
   }
 
+  static String _sanitizeUrl(String url) {
+    try {
+      final uri = Uri.parse(url);
+      final cleanUri = uri.replace(queryParameters: {}, fragment: '');
+      return '$cleanUri?...';
+    } catch (_) {
+      return '[رابط غير صالح للطباعة]';
+    }
+  }
+
   /// معالجة رابط المصادقة الوارد
   static Future<void> _handleAuthDeepLink(String url) async {
     try {
-      AppLogger.info('🔗 استقبال Deep Link: $url');
+      AppLogger.info('🔗 استقبال Deep Link: ${_sanitizeUrl(url)}');
 
       final uri = Uri.parse(url);
 
       if (!_isAuthCallbackUri(uri)) {
-        AppLogger.warning('⚠️ Deep Link غير متعرف عليه: $url');
+        AppLogger.warning('⚠️ Deep Link غير متعرف عليه: ${_sanitizeUrl(url)}');
         return;
       }
 

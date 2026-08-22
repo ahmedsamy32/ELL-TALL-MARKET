@@ -57,7 +57,18 @@ class GoogleSignInService {
       }
 
       // الخطوة 1: تسجيل الدخول مع Google (استخدام authenticate في الإصدار الجديد)
-      final GoogleSignInAccount googleUser = await _googleSignIn.authenticate();
+      final GoogleSignInAccount googleUser;
+      try {
+        googleUser = await _googleSignIn.authenticate();
+      } on GoogleSignInException catch (e) {
+        if (e.code == GoogleSignInExceptionCode.canceled) {
+          AppLogger.warning('❌ تم إلغاء تسجيل الدخول بالمستخدم');
+          return null;
+        } else {
+          AppLogger.error('❌ فشل تسجيل الدخول مع Google: $e', e);
+          return null;
+        }
+      }
 
       AppLogger.info('✅ تم الحصول على بيانات Google: ${googleUser.email}');
 

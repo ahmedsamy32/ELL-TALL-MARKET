@@ -7,6 +7,7 @@ import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/providers/merchant_provider.dart';
 import 'package:ell_tall_market/providers/product_provider.dart';
 import 'package:ell_tall_market/providers/order_provider.dart';
+import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/models/profile_model.dart';
 import 'package:ell_tall_market/utils/validators.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
@@ -798,6 +799,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           return;
         }
 
+        final notificationProvider = Provider.of<NotificationProvider>(
+          context,
+          listen: false,
+        );
+
         final deleteResult = await authProvider.deleteUser(currentUser.id);
         if (!deleteResult.success) {
           _showErrorSnackBar(
@@ -810,6 +816,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           merchantProvider: merchantProvider,
           productProvider: productProvider,
           orderProvider: orderProvider,
+          notificationProvider: notificationProvider,
         );
         if (mounted) {
           _showSuccessSnackBar('تم تسجيل الخروج بنجاح');

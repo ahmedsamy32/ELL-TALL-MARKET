@@ -42,8 +42,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
-            isShrinkResources = false
+            isMinifyEnabled = true
+            isShrinkResources = true
 
             // IMPORTANT:
             // - For local testing, sign release with debug key if no key.properties is configured.

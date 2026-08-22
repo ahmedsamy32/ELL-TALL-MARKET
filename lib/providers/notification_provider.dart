@@ -354,11 +354,38 @@ class NotificationProvider with ChangeNotifier {
     }
   }
 
+  /// إلغاء الاشتراكات وتفريغ الإشعارات لمنع تسرب البيانات والتنبيهات الخاطئة عند الخروج
+  void clearData() {
+    _notificationsChannel?.unsubscribe();
+    _notificationsChannel = null;
+    _notifications.clear();
+    _unreadCount = 0;
+    _activeRole = null;
+    notifyListeners();
+    AppLogger.info('🧹 تم إلغاء اشتراكات الإشعارات وتفريغ البيانات لـ NotificationProvider');
+  }
+
   // ===== معالجة الإشعارات في الوقت الحقيقي =====
   void _handleNewNotification(Map<String, dynamic> data) {
     final notification = NotificationModel.fromMap(data);
 
-    // تجاهل الإشعار إذا لم يكن من نفس الدور المحمّل حالياً
+    // 1. التحقق من وجود مستخدم حالي مسجل الدخول
+    final currentUserId = _supabase.auth.currentUser?.id;
+    if (currentUserId == null) {
+      AppLogger.info('🔕 تجاهل إشعار realtime: لا يوجد مستخدم مسجل الدخول حالياً');
+      return;
+    }
+
+    // 2. التحقق من مطابقة معرف المستخدم (User ID)
+    // إذا كان الإشعار مخصصاً لمستخدم محدد في العمود user_id ولم يكن للمستخدم الحالي، يتم تجاهله فوراً
+    if (notification.userId != null && notification.userId != currentUserId) {
+      AppLogger.info(
+        '🔕 تجاهل إشعار realtime (موجه للمستخدم ${notification.userId} بينما المستخدم الحالي هو $currentUserId)',
+      );
+      return;
+    }
+
+    // 3. تجاهل الإشعار إذا لم يكن من نفس الدور المحمّل حالياً
     if (_activeRole != null) {
       final audience = notification.data?['audience'] as String?;
       bool isMatch = notification.targetRole == _activeRole || audience == _activeRole;
