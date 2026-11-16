@@ -50,6 +50,19 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
+  // State & Controllers - نوع النشاط والبيانات المالية
+  String _merchantType = 'supplier'; // 'supplier' or 'restaurant'
+  String _payoutMethod = 'instapay'; // 'instapay', 'vodafone_cash', 'bank_account', 'cash'
+  String _supplyAgreementType = 'consignment'; // 'consignment' or 'wholesale'
+
+  final _payoutDetailsController = TextEditingController();
+  final _workingHoursController = TextEditingController();
+  final _estimatedPrepTimeController = TextEditingController();
+
+  final _payoutDetailsFocus = FocusNode();
+  final _workingHoursFocus = FocusNode();
+  final _estimatedPrepTimeFocus = FocusNode();
+
   // Controllers - بيانات المتجر
   final _storeNameController = TextEditingController();
   final _storeAddressController = TextEditingController();
@@ -148,6 +161,9 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
     _storeNameController.addListener(_scheduleDraftSave);
     _storeAddressController.addListener(_scheduleDraftSave);
     _storeDescriptionController.addListener(_scheduleDraftSave);
+    _payoutDetailsController.addListener(_scheduleDraftSave);
+    _workingHoursController.addListener(_scheduleDraftSave);
+    _estimatedPrepTimeController.addListener(_scheduleDraftSave);
 
     // Store structured address listeners
     _storeGovernorateController.addListener(_scheduleDraftSave);
@@ -309,6 +325,13 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
         '${_firstNameController.text.trim()} ${_middleNameController.text.trim()} ${_lastNameController.text.trim()}'
             .trim();
     final draft = MerchantDraft(
+      merchantType: _merchantType,
+      payoutMethod: _payoutMethod,
+      payoutAccountDetails: _payoutDetailsController.text.trim(),
+      supplyAgreementType: _supplyAgreementType,
+      estimatedPrepTimeMinutes:
+          int.tryParse(_estimatedPrepTimeController.text.trim()),
+      workingHours: _workingHoursController.text.trim(),
       fullName: fullName.isEmpty ? null : fullName,
       email: _emailController.text.trim(),
       phone: _phoneController.text.trim(),
@@ -331,6 +354,27 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
   Future<void> _restoreDraftIfAny() async {
     final draft = await MerchantDraftService.load();
     if (!mounted || draft == null) return;
+
+    if (draft.merchantType?.isNotEmpty == true) {
+      _merchantType = draft.merchantType!;
+    }
+    if (draft.payoutMethod?.isNotEmpty == true) {
+      _payoutMethod = draft.payoutMethod!;
+    }
+    if (draft.payoutAccountDetails?.isNotEmpty == true) {
+      _payoutDetailsController.text = draft.payoutAccountDetails!;
+    }
+    if (draft.supplyAgreementType?.isNotEmpty == true) {
+      _supplyAgreementType = draft.supplyAgreementType!;
+    }
+    if (draft.estimatedPrepTimeMinutes != null) {
+      _estimatedPrepTimeController.text =
+          draft.estimatedPrepTimeMinutes.toString();
+    }
+    if (draft.workingHours?.isNotEmpty == true) {
+      _workingHoursController.text = draft.workingHours!;
+    }
+
     // بيانات شخصية
     if (draft.fullName?.isNotEmpty == true) {
       // تقسيم الاسم الكامل إلى 3 أجزاء
@@ -514,6 +558,14 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
         scrollToKey(_storeCategorySectionKey);
         return false;
       }
+
+      if (_payoutMethod != 'cash' &&
+          _payoutDetailsController.text.trim().isEmpty) {
+        _showWarningMessage('يرجى إدخال تفاصيل حساب سداد المستحقات');
+        enableAutovalidate();
+        _payoutDetailsFocus.requestFocus();
+        return false;
+      }
       return true;
     } else {
       // خطوة 3: الأمان (للتسجيل اليدوي فقط)
@@ -605,6 +657,12 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
   @override
   void dispose() {
     _draftSaveTimer?.cancel();
+    _payoutDetailsController.dispose();
+    _workingHoursController.dispose();
+    _estimatedPrepTimeController.dispose();
+    _payoutDetailsFocus.dispose();
+    _workingHoursFocus.dispose();
+    _estimatedPrepTimeFocus.dispose();
     _firstNameController.dispose();
     _middleNameController.dispose();
     _lastNameController.dispose();
@@ -862,6 +920,19 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
             : _storeDescriptionController.text.trim(),
         category: _selectedCategory, // إرسال الفئة المختارة
         storeLogoUrl: null, // سنرفع الصورة بعد نجاح التسجيل
+        merchantType: _merchantType,
+        payoutMethod: _payoutMethod,
+        payoutAccountDetails: _payoutDetailsController.text.trim().isEmpty
+            ? null
+            : _payoutDetailsController.text.trim(),
+        supplyAgreementType:
+            _merchantType == 'supplier' ? _supplyAgreementType : null,
+        estimatedPrepTimeMinutes: _merchantType == 'restaurant'
+            ? int.tryParse(_estimatedPrepTimeController.text.trim())
+            : null,
+        workingHours: _workingHoursController.text.trim().isEmpty
+            ? null
+            : _workingHoursController.text.trim(),
       );
 
       if (authResponse?.user == null) {
@@ -1092,413 +1163,12 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                         // ═══════════════════════════════════════════
                         // خطوة 1: البيانات الشخصية أولاً
                         // ═══════════════════════════════════════════
-                        if (_currentStep == 0) ...[
-                          _buildSectionHeader(
-                            theme,
-                            Icons.person_outline_rounded,
-                            'البيانات الشخصية',
-                            Colors.blue,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'أدخل بياناتك الشخصية أولاً',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          // الاسم الأول والأوسط في صف واحد
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Container(
-                                  key: _firstNameFieldKey,
-                                  child: CustomTextField(
-                                    controller: _firstNameController,
-                                    label: 'الاسم الأول',
-                                    hintText: 'مثال: أحمد',
-                                    prefixIcon: const Icon(
-                                      Icons.person_outline,
-                                    ),
-                                    focusNode: _firstNameFocus,
-                                    textInputAction: TextInputAction.next,
-                                    onFieldSubmitted: (_) =>
-                                        _middleNameFocus.requestFocus(),
-                                    validator: (value) {
-                                      if (value == null ||
-                                          value.trim().isEmpty) {
-                                        return 'مطلوب';
-                                      }
-                                      return null;
-                                    },
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Container(
-                                  key: _middleNameFieldKey,
-                                  child: CustomTextField(
-                                    controller: _middleNameController,
-                                    label: 'الاسم الأوسط',
-                                    hintText: 'مثال: سامي',
-                                    prefixIcon: const Icon(
-                                      Icons.person_outline,
-                                    ),
-                                    focusNode: _middleNameFocus,
-                                    textInputAction: TextInputAction.next,
-                                    onFieldSubmitted: (_) =>
-                                        _lastNameFocus.requestFocus(),
-                                    validator: (value) {
-                                      if (value == null ||
-                                          value.trim().isEmpty) {
-                                        return 'مطلوب';
-                                      }
-                                      return null;
-                                    },
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          Container(
-                            key: _lastNameFieldKey,
-                            child: CustomTextField(
-                              controller: _lastNameController,
-                              label: 'اسم العائلة',
-                              hintText: 'مثال: عبد الهادي',
-                              prefixIcon: const Icon(Icons.badge_outlined),
-                              focusNode: _lastNameFocus,
-                              textInputAction: TextInputAction.next,
-                              onFieldSubmitted: (_) =>
-                                  _emailFocus.requestFocus(),
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'اسم العائلة مطلوب';
-                                }
-                                return null;
-                              },
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          Container(
-                            key: _emailFieldKey,
-                            child: CustomTextField(
-                              controller: _emailController,
-                              label: 'البريد الإلكتروني',
-                              hintText: 'example@gmail.com',
-                              prefixIcon: const Icon(Icons.email_outlined),
-                              keyboardType: TextInputType.emailAddress,
-                              focusNode: _emailFocus,
-                              textInputAction: TextInputAction.next,
-                              onFieldSubmitted: (_) =>
-                                  _phoneFocus.requestFocus(),
-                              validator: Validators.validateEmail,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          Container(
-                            key: _phoneFieldKey,
-                            child: CustomTextField(
-                              controller: _phoneController,
-                              label: 'رقم الهاتف',
-                              hintText: '*********01',
-                              prefixIcon: const Icon(Icons.phone_outlined),
-                              prefixText: '+20 ',
-                              keyboardType: TextInputType.phone,
-                              maxLength: 11,
-                              focusNode: _phoneFocus,
-                              textInputAction: TextInputAction.done,
-                              onFieldSubmitted: (_) {
-                                if (_validateStep(0)) {
-                                  FocusScope.of(context).unfocus();
-                                  setState(() => _currentStep = 1);
-                                }
-                              },
-                              validator: Validators.validatePhone,
-                              inputFormatters: [
-                                FilteringTextInputFormatter.digitsOnly,
-                              ],
-                            ),
-                          ),
-
-                          const SizedBox(height: 24),
-                        ],
+                        if (_currentStep == 0) _buildStep0Content(theme),
 
                         // ═══════════════════════════════════════════
-                        // خطوة 2: بيانات المتجر
+                        // خطوة 2: بيانات المتجر والنشاط والسداد
                         // ═══════════════════════════════════════════
-                        if (_currentStep == 1) ...[
-                          _buildSectionHeader(
-                            theme,
-                            Icons.store_outlined,
-                            'بيانات المتجر',
-                            Colors.green,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'أخبرنا عن متجرك',
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          Container(
-                            key: _storeNameFieldKey,
-                            child: CustomTextField(
-                              controller: _storeNameController,
-                              label: 'اسم المتجر',
-                              hintText: 'أدخل اسم متجرك',
-                              prefixIcon: const Icon(Icons.storefront_outlined),
-                              focusNode: _storeNameFocus,
-                              textInputAction: TextInputAction.next,
-                              onFieldSubmitted: (_) =>
-                                  _storeGovernorateFocus.requestFocus(),
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'اسم المتجر مطلوب';
-                                }
-                                if (value.trim().length < 3) {
-                                  return 'اسم المتجر يجب أن يكون 3 أحرف على الأقل';
-                                }
-                                return null;
-                              },
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          if (_isLoadingZones) ...[
-                            Row(
-                              children: [
-                                const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'جاري تحميل مناطق التوصيل...',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                          ] else if (!_hasOwnerZoneOptions) ...[
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.info_outline,
-                                  size: 16,
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'لا توجد مناطق توصيل متاحة حالياً، يمكنك إدخال العنوان يدوياً.',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                          ],
-                          Container(
-                            key: _storeMapSectionKey,
-                            child: AddressLocationFormSection(
-                              userType: MapUserType.merchant,
-                              formType: AddressFormType.store,
-                              formKey: _storeAddressSectionFormKey,
-                              // IMPORTANT: this screen already has a parent Form.
-                              wrapInForm: false,
-                              governorateController:
-                                  _storeGovernorateController,
-                              cityController: _storeCityController,
-                              areaController: _storeAreaController,
-                              streetController: _storeStreetController,
-                              landmarkController: _storeLandmarkController,
-                              governorateFocus: _storeGovernorateFocus,
-                              cityFocus: _storeCityFocus,
-                              streetFocus: _storeStreetFocus,
-                              position: _storePosition,
-                              requirePosition: true,
-                              showMapPicker: true,
-                              onPositionChanged: (pos) {
-                                setState(() {
-                                  _storePosition = pos;
-                                });
-                              },
-                              onGovernorateChanged:
-                                  _handleStoreGovernorateSelection,
-                              onCityChanged: _handleStoreCitySelection,
-                              summaryCity: _storeSummaryCity,
-                              summaryGovernorate: _storeSummaryGovernorate,
-                              governorateOptions: _hasOwnerZoneOptions
-                                  ? _governorateOptions
-                                  : null,
-                              cityOptions: _hasOwnerZoneOptions
-                                  ? _cityOptions
-                                  : null,
-                              areaOptions: _hasOwnerZoneOptions
-                                  ? _areaOptions
-                                  : null,
-                              updateLocationProvider: false,
-                              refreshNearbyStores: false,
-                              autofillAllFieldsFromMap: false,
-                              autofillGovernorateCityFromMap: false,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          CustomTextField(
-                            controller: _storeDescriptionController,
-                            label: 'وصف المتجر',
-                            hintText: 'اكتب نبذة مختصرة عن متجرك',
-                            prefixIcon: const Icon(Icons.description_outlined),
-                            focusNode: _storeDescriptionFocus,
-                            textInputAction: TextInputAction.done,
-                            maxLines: 3,
-                            keyboardType: TextInputType.multiline,
-                          ),
-
-                           const SizedBox(height: 16),
-
-                           _buildStoreLogoPicker(theme),
-                           const SizedBox(height: 16),
-
-                           // Category Dropdown
-                           Container(
-                            key: _storeCategorySectionKey,
-                            child: DropdownButtonFormField<String>(
-                              key: ValueKey<String>(
-                                'mobile-store-category-${_selectedCategory ?? 'none'}-${_categories.length}',
-                              ),
-                              initialValue: _selectedCategory,
-                              decoration: InputDecoration(
-                                labelText: 'فئة المتجر',
-                                hintText: _isLoadingCategories
-                                    ? 'جاري التحميل...'
-                                    : _categories.isEmpty
-                                    ? 'لا توجد فئات متاحة'
-                                    : 'اختر فئة المتجر',
-                                prefixIcon: const Icon(Icons.category_outlined),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey.shade300,
-                                  ),
-                                ),
-                                focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(16),
-                                  borderSide: BorderSide(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.primary,
-                                    width: 2,
-                                  ),
-                                ),
-                              ),
-                              menuMaxHeight: 300,
-                              items: [
-                                const DropdownMenuItem<String>(
-                                  value: null,
-                                  child: Text(
-                                    'اختر فئة المتجر',
-                                    style: TextStyle(color: Colors.grey),
-                                  ),
-                                ),
-                                ..._categories.map((category) {
-                                  final iconName = category['icon']?.toString();
-                                  IconData iconData = Icons.store;
-
-                                  if (iconName != null) {
-                                    switch (iconName) {
-                                      case 'restaurant':
-                                        iconData = Icons.restaurant;
-                                        break;
-                                      case 'local_grocery_store':
-                                        iconData = Icons.local_grocery_store;
-                                        break;
-                                      case 'devices':
-                                        iconData = Icons.devices;
-                                        break;
-                                      case 'checkroom':
-                                        iconData = Icons.checkroom;
-                                        break;
-                                      case 'spa':
-                                        iconData = Icons.spa;
-                                        break;
-                                      case 'home':
-                                        iconData = Icons.home;
-                                        break;
-                                      case 'sports':
-                                        iconData = Icons.sports;
-                                        break;
-                                      case 'menu_book':
-                                        iconData = Icons.menu_book;
-                                        break;
-                                      case 'toys':
-                                        iconData = Icons.toys;
-                                        break;
-                                      case 'pets':
-                                        iconData = Icons.pets;
-                                        break;
-                                      case 'room_service':
-                                        iconData = Icons.room_service;
-                                        break;
-                                      default:
-                                        iconData = Icons.store;
-                                    }
-                                  }
-
-                                  return DropdownMenuItem<String>(
-                                    value: category['name']?.toString() ?? '',
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          iconData,
-                                          size: 20,
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.primary,
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Text(
-                                          category['name']?.toString() ??
-                                              'غير محدد',
-                                          style: const TextStyle(fontSize: 14),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }),
-                              ],
-                              onChanged: _isLoadingCategories
-                                  ? null
-                                  : (value) {
-                                      setState(() => _selectedCategory = value);
-                                      _scheduleDraftSave();
-                                    },
-                              validator: (value) {
-                                if (value == null || value.isEmpty) {
-                                  return 'يرجى اختيار فئة المتجر';
-                                }
-                                return null;
-                              },
-                            ),
-                          ),
-
-                          const SizedBox(height: 24),
-                        ],
+                        if (_currentStep == 1) _buildStep1Content(theme),
 
                         // تمت إزالة بطاقة معلومات OAuth لعدم استخدامها للتجار
 
@@ -2383,6 +2053,8 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
 
   // خطوة 1: البيانات الشخصية
   Widget _buildStep0Content(ThemeData theme) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2394,121 +2066,562 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          'أدخل بياناتك الشخصية أولاً',
+          'أدخل بياناتك الشخصية للتوثيق والتواصل',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 20),
-        // الاسم الأول + الأوسط + العائلة في صف واحد
-        Row(
-          children: [
-            Expanded(
-              child: Container(
-                key: _firstNameFieldKey,
-                child: CustomTextField(
-                  controller: _firstNameController,
-                  label: 'الاسم الأول',
-                  hintText: 'مثال: أحمد',
-                  prefixIcon: const Icon(Icons.person_outline),
-                  focusNode: _firstNameFocus,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) => _middleNameFocus.requestFocus(),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'الاسم الأول مطلوب';
-                    }
-                    return null;
-                  },
+        if (isMobile) ...[
+          // على الشاشات الصغير: الاسم الأول والأوسط في صف، والعائلة سطر مستقل
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  key: _firstNameFieldKey,
+                  child: CustomTextField(
+                    controller: _firstNameController,
+                    label: 'الاسم الأول',
+                    hintText: 'مثال: أحمد',
+                    prefixIcon: const Icon(Icons.person_outline),
+                    focusNode: _firstNameFocus,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) => _middleNameFocus.requestFocus(),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'الاسم الأول مطلوب';
+                      }
+                      return null;
+                    },
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Container(
-                key: _middleNameFieldKey,
-                child: CustomTextField(
-                  controller: _middleNameController,
-                  label: 'الاسم الأوسط',
-                  hintText: 'مثال: سامي',
-                  prefixIcon: const Icon(Icons.person_outline),
-                  focusNode: _middleNameFocus,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) => _lastNameFocus.requestFocus(),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'الاسم الأوسط مطلوب';
-                    }
-                    return null;
-                  },
+              const SizedBox(width: 12),
+              Expanded(
+                child: Container(
+                  key: _middleNameFieldKey,
+                  child: CustomTextField(
+                    controller: _middleNameController,
+                    label: 'الاسم الأوسط',
+                    hintText: 'مثال: سامي',
+                    prefixIcon: const Icon(Icons.person_outline),
+                    focusNode: _middleNameFocus,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) => _lastNameFocus.requestFocus(),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'الاسم الأوسط مطلوب';
+                      }
+                      return null;
+                    },
+                  ),
                 ),
               ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            key: _lastNameFieldKey,
+            child: CustomTextField(
+              controller: _lastNameController,
+              label: 'اسم العائلة',
+              hintText: 'مثال: عبد الهادي',
+              prefixIcon: const Icon(Icons.badge_outlined),
+              focusNode: _lastNameFocus,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _emailFocus.requestFocus(),
+              validator: (value) {
+                if (value == null || value.trim().isEmpty) {
+                  return 'اسم العائلة مطلوب';
+                }
+                return null;
+              },
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Container(
-                key: _lastNameFieldKey,
-                child: CustomTextField(
-                  controller: _lastNameController,
-                  label: 'اسم العائلة',
-                  hintText: 'مثال: عبد الهادي',
-                  prefixIcon: const Icon(Icons.badge_outlined),
-                  focusNode: _lastNameFocus,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) => _emailFocus.requestFocus(),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'اسم العائلة مطلوب';
-                    }
-                    return null;
-                  },
+          ),
+          const SizedBox(height: 16),
+          Container(
+            key: _emailFieldKey,
+            child: CustomTextField(
+              controller: _emailController,
+              label: 'البريد الإلكتروني',
+              hintText: 'example@gmail.com',
+              prefixIcon: const Icon(Icons.email_outlined),
+              keyboardType: TextInputType.emailAddress,
+              focusNode: _emailFocus,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _phoneFocus.requestFocus(),
+              validator: Validators.validateEmail,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            key: _phoneFieldKey,
+            child: CustomTextField(
+              controller: _phoneController,
+              label: 'رقم الهاتف',
+              hintText: '*********01',
+              prefixIcon: const Icon(Icons.phone_outlined),
+              prefixText: '+20 ',
+              keyboardType: TextInputType.phone,
+              maxLength: 11,
+              focusNode: _phoneFocus,
+              textInputAction: TextInputAction.done,
+              validator: Validators.validatePhone,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            ),
+          ),
+        ] else ...[
+          // على الشاشات الواسعة: الأسماء في صف، والبريد + الهاتف في صف
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  key: _firstNameFieldKey,
+                  child: CustomTextField(
+                    controller: _firstNameController,
+                    label: 'الاسم الأول',
+                    hintText: 'مثال: أحمد',
+                    prefixIcon: const Icon(Icons.person_outline),
+                    focusNode: _firstNameFocus,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) => _middleNameFocus.requestFocus(),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'الاسم الأول مطلوب';
+                      }
+                      return null;
+                    },
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        // البريد + الهاتف في صف
-        Row(
-          children: [
-            Expanded(
-              child: Container(
-                key: _emailFieldKey,
-                child: CustomTextField(
-                  controller: _emailController,
-                  label: 'البريد الإلكتروني',
-                  hintText: 'example@gmail.com',
-                  prefixIcon: const Icon(Icons.email_outlined),
-                  keyboardType: TextInputType.emailAddress,
-                  focusNode: _emailFocus,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) => _phoneFocus.requestFocus(),
-                  validator: Validators.validateEmail,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Container(
+                  key: _middleNameFieldKey,
+                  child: CustomTextField(
+                    controller: _middleNameController,
+                    label: 'الاسم الأوسط',
+                    hintText: 'مثال: سامي',
+                    prefixIcon: const Icon(Icons.person_outline),
+                    focusNode: _middleNameFocus,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) => _lastNameFocus.requestFocus(),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'الاسم الأوسط مطلوب';
+                      }
+                      return null;
+                    },
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Container(
-                key: _phoneFieldKey,
-                child: CustomTextField(
-                  controller: _phoneController,
-                  label: 'رقم الهاتف',
-                  hintText: '*********01',
-                  prefixIcon: const Icon(Icons.phone_outlined),
-                  prefixText: '+20 ',
-                  keyboardType: TextInputType.phone,
-                  maxLength: 11,
-                  focusNode: _phoneFocus,
-                  textInputAction: TextInputAction.done,
-                  validator: Validators.validatePhone,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Container(
+                  key: _lastNameFieldKey,
+                  child: CustomTextField(
+                    controller: _lastNameController,
+                    label: 'اسم العائلة',
+                    hintText: 'مثال: عبد الهادي',
+                    prefixIcon: const Icon(Icons.badge_outlined),
+                    focusNode: _lastNameFocus,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) => _emailFocus.requestFocus(),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'اسم العائلة مطلوب';
+                      }
+                      return null;
+                    },
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  key: _emailFieldKey,
+                  child: CustomTextField(
+                    controller: _emailController,
+                    label: 'البريد الإلكتروني',
+                    hintText: 'example@gmail.com',
+                    prefixIcon: const Icon(Icons.email_outlined),
+                    keyboardType: TextInputType.emailAddress,
+                    focusNode: _emailFocus,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) => _phoneFocus.requestFocus(),
+                    validator: Validators.validateEmail,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Container(
+                  key: _phoneFieldKey,
+                  child: CustomTextField(
+                    controller: _phoneController,
+                    label: 'رقم الهاتف',
+                    hintText: '*********01',
+                    prefixIcon: const Icon(Icons.phone_outlined),
+                    prefixText: '+20 ',
+                    keyboardType: TextInputType.phone,
+                    maxLength: 11,
+                    focusNode: _phoneFocus,
+                    textInputAction: TextInputAction.done,
+                    validator: Validators.validatePhone,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  Widget _buildMerchantTypeSelector(ThemeData theme) {
+    final cs = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'نوع الشراكة والنشاط التجاري',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'حدد النموذج الذي يناسب طبيعة متجرك ونشاطك',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: cs.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            // Option 1: Supplier (مورّد بضائع ومخازن)
+            Expanded(
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    _merchantType = 'supplier';
+                    _scheduleDraftSave();
+                  });
+                },
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _merchantType == 'supplier'
+                        ? cs.primaryContainer
+                        : cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: _merchantType == 'supplier'
+                          ? cs.primary
+                          : cs.outlineVariant,
+                      width: _merchantType == 'supplier' ? 2 : 1,
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.inventory_2_outlined,
+                        size: 28,
+                        color: _merchantType == 'supplier'
+                            ? cs.onPrimaryContainer
+                            : cs.onSurfaceVariant,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '🛒 مورّد بضائع',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: _merchantType == 'supplier'
+                              ? cs.onPrimaryContainer
+                              : cs.onSurface,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'بضائع تورد لمستودع سوق التل',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: _merchantType == 'supplier'
+                              ? cs.onPrimaryContainer.withValues(alpha: 0.8)
+                              : cs.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Option 2: Restaurant (مطعم / مأكولات)
+            Expanded(
+              child: InkWell(
+                onTap: () {
+                  setState(() {
+                    _merchantType = 'restaurant';
+                    _scheduleDraftSave();
+                  });
+                },
+                borderRadius: BorderRadius.circular(16),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _merchantType == 'restaurant'
+                        ? cs.primaryContainer
+                        : cs.surfaceContainerHighest.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: _merchantType == 'restaurant'
+                          ? cs.primary
+                          : cs.outlineVariant,
+                      width: _merchantType == 'restaurant' ? 2 : 1,
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.restaurant_outlined,
+                        size: 28,
+                        color: _merchantType == 'restaurant'
+                            ? cs.onPrimaryContainer
+                            : cs.onSurfaceVariant,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '🍔 مطعم / مأكولات',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: _merchantType == 'restaurant'
+                              ? cs.onPrimaryContainer
+                              : cs.onSurface,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'وجبات طازجة تجهز فورياً',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: _merchantType == 'restaurant'
+                              ? cs.onPrimaryContainer.withValues(alpha: 0.8)
+                              : cs.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMerchantTypeSpecificFields(ThemeData theme) {
+    if (_merchantType == 'supplier') {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          DropdownButtonFormField<String>(
+            initialValue: _supplyAgreementType,
+            isExpanded: true,
+            isDense: true,
+            decoration: InputDecoration(
+              labelText: 'نوع نموذج التوريد',
+              prefixIcon: const Icon(Icons.assignment_outlined),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+            ),
+            items: const [
+              DropdownMenuItem(
+                value: 'consignment',
+                child: Text(
+                  'بضاعة أمانة (نسبة عمولة تسويق وتوصيل)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              DropdownMenuItem(
+                value: 'wholesale',
+                child: Text(
+                  'توريد بسعر الجملة (Wholesale Price)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+            onChanged: (val) {
+              if (val != null) {
+                setState(() {
+                  _supplyAgreementType = val;
+                  _scheduleDraftSave();
+                });
+              }
+            },
+          ),
+        ],
+      );
+    } else {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CustomTextField(
+            controller: _workingHoursController,
+            label: 'ساعات عمل المطبخ',
+            hintText: 'مثال: 10:00 صباحاً - 11:30 مساءً',
+            prefixIcon: const Icon(Icons.access_time_outlined),
+            focusNode: _workingHoursFocus,
+            textInputAction: TextInputAction.next,
+          ),
+          const SizedBox(height: 16),
+          CustomTextField(
+            controller: _estimatedPrepTimeController,
+            label: 'متوسط وقت الطهي والتجهيز (بالدقائق)',
+            hintText: 'مثال: 25',
+            prefixIcon: const Icon(Icons.timer_outlined),
+            focusNode: _estimatedPrepTimeFocus,
+            keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.next,
+          ),
+        ],
+      );
+    }
+  }
+
+  Widget _buildPayoutSection(ThemeData theme) {
+    final cs = theme.colorScheme;
+    String detailsHint = 'أدخل العنوان اللحظي IPA أو رقم الهاتف المرتبط';
+    String detailsLabel = 'تفاصيل حساب InstaPay';
+    TextInputType keyType = TextInputType.text;
+
+    if (_payoutMethod == 'vodafone_cash') {
+      detailsLabel = 'رقم المحفظة الإلكترونية';
+      detailsHint = 'مثال: 01012345678';
+      keyType = TextInputType.phone;
+    } else if (_payoutMethod == 'bank_account') {
+      detailsLabel = 'تفاصيل الحساب البنكي';
+      detailsHint = 'اسم البنك، اسم صاحب الحساب، رقم IBAN';
+      keyType = TextInputType.multiline;
+    } else if (_payoutMethod == 'cash') {
+      detailsLabel = 'ملاحظات الاستلام الكاش';
+      detailsHint = 'الاستلام المباشر نقداً من مقر مستودع سوق التل';
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'طريقة استلام الأرباح والمستحقات',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'حدد وسيلة سداد أرباح المبيعات المفضلة لديك',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: cs.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        DropdownButtonFormField<String>(
+          initialValue: _payoutMethod,
+          isExpanded: true,
+          isDense: true,
+          decoration: InputDecoration(
+            labelText: 'وسيلة التحويل/السداد',
+            prefixIcon: const Icon(Icons.payments_outlined),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+          ),
+          items: const [
+            DropdownMenuItem(
+              value: 'instapay',
+              child: Text(
+                '⚡ InstaPay (إنستاباي)',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            DropdownMenuItem(
+              value: 'vodafone_cash',
+              child: Text(
+                '📱 محفظة إلكترونية (فودافون/أورنج/اتصالات/وي)',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            DropdownMenuItem(
+              value: 'bank_account',
+              child: Text(
+                '🏦 حساب بنكي (IBAN)',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            DropdownMenuItem(
+              value: 'cash',
+              child: Text(
+                '💵 نقداً (من مقر المستودع)',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+          onChanged: (val) {
+            if (val != null) {
+              setState(() {
+                _payoutMethod = val;
+                _scheduleDraftSave();
+              });
+            }
+          },
+        ),
+        if (_payoutMethod != 'cash') ...[
+          const SizedBox(height: 12),
+          CustomTextField(
+            controller: _payoutDetailsController,
+            label: detailsLabel,
+            hintText: detailsHint,
+            prefixIcon: const Icon(Icons.account_balance_wallet_outlined),
+            focusNode: _payoutDetailsFocus,
+            keyboardType: keyType,
+            textInputAction: TextInputAction.next,
+            validator: (value) {
+              if (value == null || value.trim().isEmpty) {
+                return 'تفاصيل حساب السداد مطلوبة';
+              }
+              return null;
+            },
+          ),
+        ],
       ],
     );
   }
@@ -2521,17 +2634,21 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
         _buildSectionHeader(
           theme,
           Icons.store_outlined,
-          'بيانات المتجر',
+          'بيانات المتجر والنشاط',
           Colors.green,
         ),
         const SizedBox(height: 8),
         Text(
-          'أخبرنا عن متجرك',
+          'أخبرنا عن نشاطك ونموذج عملك وشراكتك معنا',
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
+        _buildMerchantTypeSelector(theme),
+        const SizedBox(height: 16),
+        _buildMerchantTypeSpecificFields(theme),
+        const SizedBox(height: 16),
         Container(
           key: _storeNameFieldKey,
           child: CustomTextField(
@@ -2650,13 +2767,15 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
               'web-store-category-${_selectedCategory ?? 'none'}-${_categories.length}',
             ),
             initialValue: _selectedCategory,
+            isExpanded: true,
+            isDense: true,
             decoration: InputDecoration(
-              labelText: 'فئة المتجر',
+              labelText: 'فئة المتجر والنشاط',
               hintText: _isLoadingCategories
                   ? 'جاري التحميل...'
                   : _categories.isEmpty
                   ? 'لا توجد فئات متاحة'
-                  : 'اختر فئة المتجر',
+                  : 'اختر الفئة',
               prefixIcon: const Icon(Icons.category_outlined),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
@@ -2678,14 +2797,21 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
               const DropdownMenuItem<String>(
                 value: null,
                 child: Text(
-                  'اختر فئة المتجر',
+                  'اختر الفئة المناسبة',
                   style: TextStyle(color: Colors.grey),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               ..._categories.map((category) {
+                final catName = category['name']?.toString() ?? '';
                 return DropdownMenuItem<String>(
-                  value: category['name']?.toString() ?? '',
-                  child: Text(category['name']?.toString() ?? ''),
+                  value: catName,
+                  child: Text(
+                    catName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 );
               }),
             ],
@@ -2697,12 +2823,14 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
                   },
             validator: (value) {
               if (value == null || value.isEmpty) {
-                return 'يرجى اختيار فئة المتجر';
+                return 'يرجى اختيار الفئة';
               }
               return null;
             },
           ),
         ),
+        const SizedBox(height: 16),
+        _buildPayoutSection(theme),
         const SizedBox(height: 24),
       ],
     );
@@ -2710,6 +2838,8 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
 
   // خطوة 3: الأمان
   Widget _buildStep2Content(ThemeData theme) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2727,48 +2857,82 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
           ),
         ),
         const SizedBox(height: 20),
-        // كلمة المرور + تأكيد كلمة المرور جنباً إلى جنب
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Container(
-                key: _passwordFieldKey,
-                child: CustomTextField(
-                  controller: _passwordController,
-                  label: 'كلمة المرور',
-                  hintText: 'أدخل كلمة مرور قوية',
-                  prefixIcon: const Icon(Icons.lock_outline),
-                  isPasswordField: true,
-                  focusNode: _passwordFocus,
-                  textInputAction: TextInputAction.next,
-                  onFieldSubmitted: (_) => _confirmPasswordFocus.requestFocus(),
-                  validator: Validators.validatePassword,
-                ),
+        if (isMobile) ...[
+          Container(
+            key: _passwordFieldKey,
+            child: CustomTextField(
+              controller: _passwordController,
+              label: 'كلمة المرور',
+              hintText: 'أدخل كلمة مرور قوية',
+              prefixIcon: const Icon(Icons.lock_outline),
+              isPasswordField: true,
+              focusNode: _passwordFocus,
+              textInputAction: TextInputAction.next,
+              onFieldSubmitted: (_) => _confirmPasswordFocus.requestFocus(),
+              validator: Validators.validatePassword,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Container(
+            key: _confirmPasswordFieldKey,
+            child: CustomTextField(
+              controller: _confirmPasswordController,
+              label: 'تأكيد كلمة المرور',
+              hintText: 'أعد إدخال كلمة المرور',
+              prefixIcon: const Icon(Icons.lock),
+              isPasswordField: true,
+              focusNode: _confirmPasswordFocus,
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _registerMerchant(),
+              validator: (v) => Validators.validateConfirmPassword(
+                v,
+                _passwordController.text,
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Container(
-                key: _confirmPasswordFieldKey,
-                child: CustomTextField(
-                  controller: _confirmPasswordController,
-                  label: 'تأكيد كلمة المرور',
-                  hintText: 'أعد إدخال كلمة المرور',
-                  prefixIcon: const Icon(Icons.lock),
-                  isPasswordField: true,
-                  focusNode: _confirmPasswordFocus,
-                  textInputAction: TextInputAction.done,
-                  onFieldSubmitted: (_) => _registerMerchant(),
-                  validator: (v) => Validators.validateConfirmPassword(
-                    v,
-                    _passwordController.text,
+          ),
+        ] else ...[
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Container(
+                  key: _passwordFieldKey,
+                  child: CustomTextField(
+                    controller: _passwordController,
+                    label: 'كلمة المرور',
+                    hintText: 'أدخل كلمة مرور قوية',
+                    prefixIcon: const Icon(Icons.lock_outline),
+                    isPasswordField: true,
+                    focusNode: _passwordFocus,
+                    textInputAction: TextInputAction.next,
+                    onFieldSubmitted: (_) => _confirmPasswordFocus.requestFocus(),
+                    validator: Validators.validatePassword,
                   ),
                 ),
               ),
-            ),
-          ],
-        ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Container(
+                  key: _confirmPasswordFieldKey,
+                  child: CustomTextField(
+                    controller: _confirmPasswordController,
+                    label: 'تأكيد كلمة المرور',
+                    hintText: 'أعد إدخال كلمة المرور',
+                    prefixIcon: const Icon(Icons.lock),
+                    isPasswordField: true,
+                    focusNode: _confirmPasswordFocus,
+                    textInputAction: TextInputAction.done,
+                    onFieldSubmitted: (_) => _registerMerchant(),
+                    validator: (v) => Validators.validateConfirmPassword(
+                      v,
+                      _passwordController.text,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 12),
         PasswordStrengthIndicator(password: _currentPassword),
         const SizedBox(height: 20),

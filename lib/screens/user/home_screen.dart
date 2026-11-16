@@ -139,11 +139,45 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       listen: false,
     );
 
+    // 1. إذا كانت الصلاحية مرفوضة نهائياً، نفتح إعدادات التطبيق
+    if (LocationUiText.isDeniedForever(locationProvider)) {
+      await Geolocator.openAppSettings();
+    }
+    // 2. إذا كانت خدمة الموقع (GPS) مغلقة، نفتح إعدادات الموقع
+    else if (LocationUiText.isServiceOff(locationProvider)) {
+      await Geolocator.openLocationSettings();
+    }
+
+    // 3. جلب الموقع وتحديث المتاجر
     final gotLocation = await locationProvider.getCurrentLocation();
     if (!mounted) return;
 
     if (gotLocation) {
       await _loadNearbyStores();
+    } else {
+      // إذا فشل وكانت خدمة الموقع مغلقة، نفتح إعدادات الموقع للمستخدم
+      if (LocationUiText.isServiceOff(locationProvider)) {
+        await Geolocator.openLocationSettings();
+        if (!mounted) return;
+        final retried = await locationProvider.getCurrentLocation();
+        if (retried && mounted) {
+          await _loadNearbyStores();
+          return;
+        }
+      }
+
+      // إظهار تنبيه واضح بالسبب عند الفشل
+      final errorMsg = locationProvider.error;
+      if (errorMsg != null && errorMsg.isNotEmpty && mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMsg),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
     }
   }
 
@@ -622,9 +656,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       message: message,
       actions: [
         FilledButton.icon(
-          onPressed: isDeniedForever
-              ? () => Geolocator.openAppSettings()
-              : _requestLocationAndReload,
+          onPressed: _requestLocationAndReload,
           icon: Icon(
             isDeniedForever
                 ? Icons.settings_rounded
@@ -634,7 +666,10 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
         if (isServiceOff)
           OutlinedButton.icon(
-            onPressed: () => Geolocator.openLocationSettings(),
+            onPressed: () async {
+              await Geolocator.openLocationSettings();
+              await _requestLocationAndReload();
+            },
             icon: const Icon(Icons.location_on_outlined),
             label: const Text(LocationUiText.secondaryButtonLabel),
           ),
@@ -1029,9 +1064,7 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     runSpacing: 8,
                     children: [
                       FilledButton.icon(
-                        onPressed: isDeniedForever
-                            ? () => Geolocator.openAppSettings()
-                            : _requestLocationAndReload,
+                        onPressed: _requestLocationAndReload,
                         icon: Icon(
                           isDeniedForever
                               ? Icons.settings_rounded
@@ -1043,7 +1076,10 @@ class HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       ),
                       if (isServiceOff)
                         OutlinedButton.icon(
-                          onPressed: () => Geolocator.openLocationSettings(),
+                          onPressed: () async {
+                            await Geolocator.openLocationSettings();
+                            await _requestLocationAndReload();
+                          },
                           icon: const Icon(Icons.location_on_outlined),
                           label: const Text(
                             LocationUiText.secondaryButtonLabel,

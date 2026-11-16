@@ -25,6 +25,7 @@ import 'package:ell_tall_market/utils/cart_helper.dart';
 import 'package:ell_tall_market/services/product_service.dart';
 import 'package:ell_tall_market/services/delivery_company_service.dart';
 import 'package:ell_tall_market/screens/user/product_detail_screen.dart';
+import 'package:ell_tall_market/widgets/safe_network_image.dart';
 
 
 class StoreDetailScreen extends StatefulWidget {
@@ -1747,16 +1748,16 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
                                       ClipRRect(
                                         borderRadius: BorderRadius.circular(8),
                                         child: product.imageUrl != null && product.imageUrl!.isNotEmpty
-                                            ? CachedNetworkImage(
+                                            ? SafeNetworkImage(
                                                 imageUrl: product.imageUrl!,
                                                 width: 50,
                                                 height: 50,
                                                 fit: BoxFit.cover,
-                                                placeholder: (context, url) => AppShimmer.wrap(
+                                                placeholder: AppShimmer.wrap(
                                                   context,
                                                   child: AppShimmer.box(context, width: 50, height: 50),
                                                 ),
-                                                errorWidget: (context, url, error) => Container(
+                                                errorWidget: Container(
                                                   width: 50,
                                                   height: 50,
                                                   color: Colors.grey[200],
@@ -2201,15 +2202,15 @@ ${store.phone != null ? '📞 ${store.phone}' : ''}
                 listen: false,
               );
 
-              // تحديث كل البيانات
+              // تحديث بيانات هذا المتجر فقط
+              // ملاحظة: لا نستدعي fetchStores لأنه يتجاوز فلترة الزون الجغرافي
               final results = await Future.wait([
-                productProvider.fetchProducts(),
+                productProvider.fetchProducts(allowedStoreIds: [store.id]),
                 storeProvider.fetchStoreSections(store.id),
                 storeProvider.fetchStoreDetailBundle(
                   store.id,
                   merchantId: store.merchantId,
                 ),
-                storeProvider.fetchStores(refresh: true),
               ]);
 
               if (mounted) {

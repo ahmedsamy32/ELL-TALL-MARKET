@@ -534,25 +534,27 @@ class StoreProvider with ChangeNotifier {
             }
           }
 
-          // 2. فحص تطابق المدينة أو المحافظة أو المنطقة
+          // 2. فحص تطابق المدينة بالضبط (exact match فقط لمنع المطابقة الخاطئة عبر المسافات)
+          // ملاحظة: يُستخدم هذا المسار الاحتياطي فقط إذا لم يكن المتجر يمتلك إحداثيات GPS
           if (!isMatch && cityValue.isNotEmpty && store.city != null) {
             final storeCity = store.city!.trim();
-            if (storeCity.isNotEmpty) {
-              if (storeCity.toLowerCase() == cityValue.toLowerCase() ||
-                  storeCity.contains(cityValue) ||
-                  cityValue.contains(storeCity)) {
-                if (governorateValue.isEmpty ||
-                    store.governorate == null ||
-                    store.governorate!.trim().toLowerCase() == governorateValue.toLowerCase()) {
-                  isMatch = true;
-                }
+            if (storeCity.isNotEmpty &&
+                storeCity.toLowerCase() == cityValue.toLowerCase()) {
+              // فحص المحافظة أيضاً للتأكد من عدم التداخل بين مدن متشابهة الاسم
+              final govMatch = governorateValue.isEmpty ||
+                  store.governorate == null ||
+                  store.governorate!.trim().toLowerCase() ==
+                      governorateValue.toLowerCase();
+              if (govMatch) {
+                isMatch = true;
               }
             }
           }
 
           if (!isMatch && areaValue.isNotEmpty && store.area != null) {
             final storeArea = store.area!.trim();
-            if (storeArea.isNotEmpty && (storeArea.toLowerCase() == areaValue.toLowerCase() || storeArea.contains(areaValue))) {
+            if (storeArea.isNotEmpty &&
+                storeArea.toLowerCase() == areaValue.toLowerCase()) {
               isMatch = true;
             }
           }
@@ -688,8 +690,11 @@ class StoreProvider with ChangeNotifier {
 
             _storeStreamSub?.cancel();
             _storeStreamSub = null;
-            // تحديث القائمة مرة واحدة بحيث يبقى المستخدم يرى أحدث البيانات
-            unawaited(fetchStores(refresh: true));
+            // تحديث القائمة فقط إذا لم يكن في وضع النطاق الجغرافي
+            // لأن fetchStores يجلب كل المتاجر بدون تصفية موقع
+            if (!_nearbyModeEnabled) {
+              unawaited(fetchStores(refresh: true));
+            }
             _handleRealtimeError(error);
           },
         );
@@ -733,9 +738,42 @@ class StoreProvider with ChangeNotifier {
 
   void _applyRealtimeStores(List<StoreModel> stores) {
     if (_nearbyModeEnabled) {
-      // لا نسمح للبث الفوري باستبدال القوائم عند الاعتماد على الموقع.
+      // في وضع الزون الجغرافي: نحدّث بيانات المتاجر الموجودة فقط بدون استبدال القائمة
+      // هذا يضمن تحديث حالة is_open وبيانات أخرى دون التأثير على فلترة الموقع
+      bool anyChange = false;
+      final updatedById = <String, StoreModel>{
+        for (final s in stores) s.id: s,
+      };
+      for (int i = 0; i < _nearbyStores.length; i++) {
+        final updated = updatedById[_nearbyStores[i].id];
+        if (updated != null) {
+          // نحتفظ فقط بالحقول التي تتغير في الوقت الفعلي
+          final merged = _nearbyStores[i].copyWith(
+            isOpen: updated.isOpen,
+            isActive: updated.isActive,
+            rating: updated.rating,
+            reviewCount: updated.reviewCount,
+            deliveryFee: updated.deliveryFee,
+            deliveryTime: updated.deliveryTime,
+          );
+          if (merged.isOpen != _nearbyStores[i].isOpen ||
+              merged.isActive != _nearbyStores[i].isActive) {
+            _nearbyStores[i] = merged;
+            anyChange = true;
+          }
+        }
+      }
+      if (anyChange) {
+        _stores = List.from(_nearbyStores);
+        _filteredStores = List.from(_nearbyStores);
+        _featuredStores = _nearbyStores.where((s) => s.isActive).toList();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          notifyListeners();
+        });
+      }
       return;
     }
+    // في الوضع العام: استبدال القائمة بالكامل
     // لا نعرض متاجر بدون عنوان.
     _stores = _filterStoresWithAddress(stores);
     _filteredStores = List.from(_stores);

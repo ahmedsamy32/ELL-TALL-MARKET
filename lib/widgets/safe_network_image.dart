@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
@@ -25,14 +27,40 @@ class SafeNetworkImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final trimmed = imageUrl.trim();
+
     // إذا كان الرابط فارغ أو يحتوي على via.placeholder.com، عرض widget افتراضي مباشرة
-    if (imageUrl.isEmpty || imageUrl.contains('via.placeholder.com')) {
+    if (trimmed.isEmpty || trimmed.contains('via.placeholder.com')) {
       return _buildDefaultWidget();
     }
 
-    // فقط إذا كان الرابط صحيح ولا يحتوي على via.placeholder.com
+    // دعم صور Data URL / Base64 (data:image/...)
+    if (trimmed.startsWith('data:image/') || trimmed.startsWith('data:')) {
+      try {
+        final commaIndex = trimmed.indexOf(',');
+        final base64String = commaIndex != -1 ? trimmed.substring(commaIndex + 1) : trimmed;
+        final cleanBase64 = base64String.replaceAll(RegExp(r'\s+'), '');
+        final Uint8List bytes = base64Decode(cleanBase64);
+        return Image.memory(
+          bytes,
+          width: width,
+          height: height,
+          fit: fit,
+          errorBuilder: (context, error, stackTrace) => errorWidget ?? _buildDefaultWidget(),
+        );
+      } catch (_) {
+        return errorWidget ?? _buildDefaultWidget();
+      }
+    }
+
+    // إذا لم يكن رابط شبكة صحيح (http / https)
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      return _buildDefaultWidget();
+    }
+
+    // رابط شبكة عادي
     return CachedNetworkImage(
-      imageUrl: imageUrl,
+      imageUrl: trimmed,
       width: width,
       height: height,
       fit: fit,

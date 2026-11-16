@@ -14,7 +14,7 @@ class StoreService {
   // 🏪 Store CRUD Operations
   // ================================
 
-  /// إنشاء متجر جديد
+  /// إنشاء متجر/نشاط تجاري جديد
   static Future<StoreModel?> createStore({
     required String merchantId,
     required String name,
@@ -22,9 +22,15 @@ class StoreService {
     String? location,
     String? logoUrl,
     bool isActive = true,
+    String? merchantType,
+    String? payoutMethod,
+    String? payoutAccountDetails,
+    int? estimatedPrepTimeMinutes,
+    String? supplyAgreementType,
+    String? workingHours,
   }) async {
     try {
-      final storeData = {
+      final storeData = <String, dynamic>{
         'merchant_id': merchantId,
         'name': name,
         'description': description,
@@ -32,6 +38,12 @@ class StoreService {
         'logo_url': logoUrl,
         'is_active': isActive,
         'delivery_mode': 'store',
+        'type': ?merchantType,
+        'payout_method': ?payoutMethod,
+        'payout_details': ?payoutAccountDetails,
+        'estimated_prep_time_minutes': ?estimatedPrepTimeMinutes,
+        'supply_agreement_type': ?supplyAgreementType,
+        'working_hours': ?workingHours,
       };
 
       final response = await _supabase

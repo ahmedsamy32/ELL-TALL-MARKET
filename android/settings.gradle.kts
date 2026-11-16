@@ -1,3 +1,20 @@
+try {
+    val envClass = Class.forName("java.lang.ProcessEnvironment")
+    val theEnvironmentField = envClass.getDeclaredField("theEnvironment")
+    theEnvironmentField.isAccessible = true
+    @Suppress("UNCHECKED_CAST")
+    val env = theEnvironmentField.get(null) as MutableMap<String, String>
+    env.remove("ANDROID_PREFS_ROOT")
+    env.remove("ANDROID_SDK_HOME")
+
+    val theCaseInsensitiveEnvironmentField = envClass.getDeclaredField("theCaseInsensitiveEnvironment")
+    theCaseInsensitiveEnvironmentField.isAccessible = true
+    @Suppress("UNCHECKED_CAST")
+    val caseInsensitiveEnv = theCaseInsensitiveEnvironmentField.get(null) as MutableMap<String, String>
+    caseInsensitiveEnv.remove("ANDROID_PREFS_ROOT")
+    caseInsensitiveEnv.remove("ANDROID_SDK_HOME")
+} catch (_: Exception) {}
+
 pluginManagement {
     // استرجاع تحديد مسار Flutter من local.properties وربط flutter_tools
     val flutterSdkPath = run {
@@ -21,9 +38,9 @@ pluginManagement {
 // الإضافات المتاحة لكل الوحدات
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    id("com.android.application") version "8.13.0" apply false
+    id("com.android.application") version "8.11.1" apply false
     id("com.google.gms.google-services") version "4.4.2" apply false
-    id("org.jetbrains.kotlin.android") version "2.3.10" apply false
+    id("org.jetbrains.kotlin.android") version "2.2.20" apply false
 }
 
 rootProject.name = "ell_tall_market"

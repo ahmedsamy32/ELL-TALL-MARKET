@@ -1,0 +1,817 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>سوق التل - لوحة الإدارة ونظام كاشير المستودع</title>
+
+  <!-- Google Fonts & FontAwesome -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <!--suppress JSUnresolvedLibraryURL -->
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+  <!--suppress JSUnresolvedLibraryURL -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" type="image/png" href="logo.png">
+
+  <!-- Supabase JS SDK v2 & HTML5 QR/Barcode Scanner -->
+  <!--suppress JSUnresolvedLibraryURL -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!--suppress JSUnresolvedLibraryURL -->
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <!-- JsBarcode library for Code 128 / EAN thermal barcode printing -->
+  <!--suppress JSUnresolvedLibraryURL -->
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+</head>
+<body>
+
+
+  <!-- Login Screen -->
+  <div id="loginSection" class="login-wrapper">
+    <div class="login-card">
+      <div class="login-header">
+        <img src="logo.png" alt="سوق التل" class="login-brand-logo">
+        <h2 class="login-title">سوق التل</h2>
+        <p class="login-subtitle">لوحة إدارة المستودع ونظام الكاشير</p>
+      </div>
+
+      <div id="loginAlert" class="login-alert hidden">
+        <i class="fa-solid fa-circle-exclamation"></i>
+        <span id="loginAlertText"></span>
+      </div>
+
+      <form id="loginForm">
+        <div class="login-form-group">
+          <label for="loginEmail"><i class="fa-solid fa-envelope"></i> البريد الإلكتروني</label>
+          <div class="login-input-wrapper">
+            <input type="email" id="loginEmail" placeholder="ahmed@admin.com" required autocomplete="email" autofocus>
+          </div>
+        </div>
+
+        <div class="login-form-group">
+          <label for="loginPassword"><i class="fa-solid fa-lock"></i> كلمة المرور</label>
+          <div class="login-input-wrapper">
+            <input type="password" id="loginPassword" placeholder="••••••••" required autocomplete="current-password">
+            <button type="button" class="btn-toggle-password" id="btnTogglePassword" onclick="togglePasswordVisibility()" title="إظهار/إخفاء كلمة المرور">
+              <i class="fa-solid fa-eye" id="togglePasswordIcon"></i>
+            </button>
+          </div>
+        </div>
+
+        <button type="submit" id="btnLoginSubmit" class="btn btn-primary btn-login-submit">
+          <i class="fa-solid fa-right-to-bracket"></i>
+          <span>تسجيل الدخول</span>
+        </button>
+      </form>
+
+      <div class="login-footer">
+        <i class="fa-solid fa-shield-halved"></i> لوحة الإدارة مخصصة لمدير النظام فقط (Admin Only)
+      </div>
+    </div>
+  </div>
+
+  <nav class="navbar hidden" id="mainNavbar">
+    <div class="brand">
+      <img src="logo.png" alt="سوق التل" class="brand-logo-img">
+      <span>سوق التل | مستودع التوريد والكاشير</span>
+    </div>
+
+    <div class="nav-tabs">
+      <button class="nav-tab active" data-tab="addProductTab">
+        <i class="fa-solid fa-barcode"></i>
+        <span>إدخال السلع والتوريد</span>
+      </button>
+      <button class="nav-tab" data-tab="posTab">
+        <i class="fa-solid fa-cash-register"></i>
+        <span>نظام الكاشير (POS)</span>
+      </button>
+      <button class="nav-tab" data-tab="inventoryTab">
+        <i class="fa-solid fa-warehouse"></i>
+        <span>جرد المخزون</span>
+      </button>
+      <button class="nav-tab" data-tab="fbnLabelsTab">
+        <i class="fa-solid fa-tags"></i>
+        <span>ملصقات التتبع (FBN)</span>
+      </button>
+    </div>
+    <div class="user-nav">
+      <div class="user-badge" title="المستخدم الحالي">
+        <i class="fa-solid fa-circle-user"></i>
+        <div class="user-details">
+          <span id="navUserName" class="user-name">…</span>
+          <span id="navUserRole" class="user-role-badge">…</span>
+        </div>
+      </div>
+      <button type="button" class="btn btn-logout" onclick="handleLogout()" title="تسجيل الخروج">
+        <i class="fa-solid fa-arrow-right-from-bracket"></i>
+        <span>خروج</span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Main Container -->
+  <div class="main-container hidden" id="mainContainer">
+
+    <!-- TAB 1: Add/Edit Product & Supplier Data -->
+    <div id="addProductTab" class="tab-content active">
+      <div class="card">
+        <!-- Edit Mode Banner -->
+        <div id="editModeBanner" class="edit-banner hidden">
+          <div class="edit-banner-info">
+            <i class="fa-solid fa-pen-to-square"></i>
+            <span id="editBannerText">أنت الآن في وضع تعديل السلعة</span>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="cancelEditMode()">
+            <i class="fa-solid fa-xmark"></i> إلغاء التعديل والعودة للإضافة
+          </button>
+        </div>
+
+        <div class="card-title">
+          <i class="fa-solid fa-cart-plus text-primary"></i>
+          <span id="addProductCardTitle">إدخال بيانات سلعة جديدة وسكان الباركود</span>
+        </div>
+
+        <form id="addProductForm">
+          <input type="hidden" id="editingProductId" value="">
+
+          <div class="form-grid">
+
+            <!-- Unified Barcode Field -->
+            <div class="form-group full-width">
+              <label for="productBarcode"><i class="fa-solid fa-barcode"></i> رقم الباركود (المحلي / الدولي / المصنع)</label>
+              <div class="input-with-action">
+                <input type="text" id="productBarcode" placeholder="امسح أو أدخل رقم الباركود (المحلي أو الدولي)..." autofocus required>
+                <button type="button" class="btn btn-secondary" onclick="openCameraModal('productBarcode')" title="مسح الباركود بالكاميرا">
+                  <i class="fa-solid fa-camera"></i> <span>الكاميرا</span>
+                </button>
+                <button type="button" class="btn btn-lookup" id="btnLookupMain" onclick="lookupBarcodeOnline('productBarcode')" title="جلب بيانات السلعة تلقائياً برقم الباركود">
+                  <i class="fa-solid fa-cloud-arrow-down"></i> <span>جلب البيانات</span>
+                </button>
+                <button type="button" class="btn btn-warning" onclick="generateLocalBarcode('productBarcode')" title="توليد باركود محلي تلقائي للسلعة">
+                  <i class="fa-solid fa-wand-magic-sparkles"></i> <span>توليد محلي</span>
+                </button>
+              </div>
+            </div>
+            <div id="lookupStatusMain" class="lookup-status-banner hidden full-width"></div>
+
+            <!-- Product Name -->
+            <div class="form-group">
+              <label for="productName"><i class="fa-solid fa-tag"></i> اسم السلعة/المنتج</label>
+              <input type="text" id="productName" placeholder="مثال: جبنة عبور لاند 500 جرام" required>
+            </div>
+
+            <!-- Category -->
+            <div class="form-group">
+              <label for="productCategory"><i class="fa-solid fa-layer-group"></i> القسم/الفئة</label>
+              <select id="productCategory" required title="القسم أو الفئة" aria-label="القسم أو الفئة">
+                <option value="">جاري تحميل الأقسام…</option>
+              </select>
+            </div>
+
+            <!-- Supplier / Merchant -->
+            <div class="form-group">
+              <label for="productSupplier"><i class="fa-solid fa-truck-field"></i> المورّد الشريك / التاجر</label>
+              <select id="productSupplier" title="المورد الشريك أو المتجر" aria-label="المورد الشريك أو المتجر">
+                <option value="">جاري تحميل الموردين…</option>
+              </select>
+            </div>
+
+            <!-- Wholesale/Cost Price -->
+            <div class="form-group">
+              <label for="productCostPrice"><i class="fa-solid fa-hand-holding-dollar"></i> سعر التوريد/الجملة (ج.م)</label>
+              <input type="number" id="productCostPrice" step="0.5" placeholder="مثال: 25.00">
+            </div>
+
+            <!-- Sale Price -->
+            <div class="form-group">
+              <label for="productPrice"><i class="fa-solid fa-money-bill-wave"></i> سعر البيع للجمهور (ج.م)</label>
+              <input type="number" id="productPrice" step="0.5" placeholder="مثال: 30.00" required>
+            </div>
+
+            <!-- Compare Price (Before discount) -->
+            <div class="form-group">
+              <label for="productComparePrice"><i class="fa-solid fa-tags"></i> السعر قبل الخصم (ج.م - اختياري)</label>
+              <input type="number" id="productComparePrice" step="0.5" placeholder="مثال: 35.00">
+            </div>
+
+            <!-- Stock Quantity -->
+            <div class="form-group">
+              <label for="productStock"><i class="fa-solid fa-boxes-stacked"></i> الكمية الموردة بالمستودع (بالقطعة)</label>
+              <input type="number" id="productStock" placeholder="مثال: 100" required>
+            </div>
+
+            <!-- Brand / Manufacturer -->
+            <div class="form-group">
+              <label for="productBrand"><i class="fa-solid fa-award"></i> البراند / الماركة (Brand)</label>
+              <input type="text" id="productBrand" placeholder="مثال: Samsung, Apple, Nike, المراعي...">
+            </div>
+
+            <!-- Size / Volume / Weight -->
+            <div class="form-group">
+              <label for="productSize"><i class="fa-solid fa-ruler-combined"></i> المقاس / الحجم / السعة (Size / Vol)</label>
+              <input type="text" id="productSize" placeholder="مثال: XL, 500 مل, 1 كجم, 128GB, 42...">
+            </div>
+
+            
+
+            <!-- Serial Number / Model (for Electronics & Appliances) -->
+            <div class="form-group">
+              <label for="productSerialNumber"><i class="fa-solid fa-microchip"></i> السيريال نمبر / الموديل (Serial No / Model)</label>
+              <div class="input-with-action">
+                <input type="text" id="productSerialNumber" placeholder="للأجهزة الإلكترونية: SN-XXXX أو رقم الموديل...">
+                <button type="button" class="btn btn-secondary" onclick="openCameraModal('productSerialNumber')" title="مسح السيريال بالكاميرا">
+                  <i class="fa-solid fa-camera"></i>
+                </button>
+              </div>
+            </div>
+
+            <!-- Color / Material -->
+            <div class="form-group">
+              <label for="productColor"><i class="fa-solid fa-palette"></i> اللون / المظهر (Color)</label>
+              <input type="text" id="productColor" placeholder="مثال: أسود، فضي، كحلي...">
+            </div>
+
+            <!-- Warranty Period -->
+            <div class="form-group">
+              <label for="productWarranty"><i class="fa-solid fa-shield-halved"></i> فترة الضمان (Warranty)</label>
+              <input type="text" id="productWarranty" placeholder="مثال: ضمان سنة، سنتين، بدون ضمان...">
+            </div>
+
+            <!-- Country of Origin -->
+            <div class="form-group full-width">
+              <label for="productOrigin"><i class="fa-solid fa-earth-americas"></i> بلد المنشأ / الصنع (Country of Origin)</label>
+              <input type="text" id="productOrigin" placeholder="مثال: مصر، الصين، ألمانيا، فيتنام...">
+            </div>
+
+            <!-- Product Image Upload, URL & Preview -->
+            <div class="form-group full-width">
+              <label for="productImageUrl"><i class="fa-solid fa-image"></i> صورة السلعة / المنتج (رفع من الجهاز أو إدخال رابط)</label>
+              <div class="image-preview-wrapper" id="productImagePreviewContainer">
+                <div class="image-preview-box" onclick="triggerImageUpload('productImageFile')" title="انقر لرفع صورة من جهازك، أو اسحب الصورة هنا">
+                  <img id="productImagePreview" src="logo.png" alt="معاينة صورة المنتج" class="product-preview-img hidden">
+                  <div id="productImagePlaceholder" class="image-preview-placeholder">
+                    <i class="fa-solid fa-cloud-arrow-up"></i>
+                    <span>اضغط هنا لاختيار أو رفع صورة من جهازك، أو اسحب الصورة هنا</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Hidden File Input for Product Image -->
+              <input type="file" id="productImageFile" accept="image/*" class="hidden" onchange="handleImageFileSelected(this, 'productImageUrl', 'productImagePreview', 'productImagePlaceholder')">
+              <input type="file" id="productCameraFallbackInput" accept="image/*" capture="environment" class="hidden" onchange="handleImageFileSelected(this, 'productImageUrl', 'productImagePreview', 'productImagePlaceholder')">
+
+              <!-- Image Action Toolbar -->
+              <div class="image-actions-row">
+                <button type="button" class="btn btn-primary btn-sm" onclick="triggerImageUpload('productImageFile')" title="اختيار ورفع صورة من الكمبيوتر أو الهاتف">
+                  <i class="fa-solid fa-upload"></i> <span>رفع صورة من الجهاز</span>
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="triggerCameraCapture('productImageFile')" title="التقاط صورة مباشرة بكاميرا الجهاز">
+                  <i class="fa-solid fa-camera"></i> <span>التقاط بالكاميرا</span>
+                </button>
+                <button type="button" class="btn btn-danger btn-sm" onclick="clearProductImage('productImageUrl', 'productImagePreview', 'productImagePlaceholder')" title="حذف الصورة المحددة">
+                  <i class="fa-solid fa-trash"></i> <span>حذف</span>
+                </button>
+                <div class="image-url-inline">
+                  <input type="url" id="productImageUrl" placeholder="أو الصق رابط صورة مباشر هنا (https://example.com/image.jpg)...">
+                </div>
+              </div>
+              <div id="productImageUploadStatus" class="image-upload-status hidden"></div>
+            </div>
+
+            <!-- Checkboxes for Stock and Active status -->
+            <div class="form-group full-width checkboxes-row">
+              <label class="checkbox-label" for="productInStock">
+                <input type="checkbox" id="productInStock" checked>
+                <span>متوفر بالمستودع (In Stock)</span>
+              </label>
+              <label class="checkbox-label" for="productIsActive">
+                <input type="checkbox" id="productIsActive" checked>
+                <span>نشط ومعروض للبيع بالتطبيق (Active)</span>
+              </label>
+            </div>
+
+            <!-- Description -->
+            <div class="form-group full-width">
+              <label for="productDescription"><i class="fa-solid fa-align-right"></i> وصف المنتج أو مواصفات التوريد</label>
+              <textarea id="productDescription" rows="2" placeholder="أدخل مواصفات أو تفاصيل إضافية للسلعة..."></textarea>
+            </div>
+
+          </div>
+
+          <div class="form-actions">
+            <button type="button" id="btnCancelEdit" class="btn btn-secondary hidden" onclick="cancelEditMode()">
+              <i class="fa-solid fa-xmark"></i> إلغاء التعديل
+            </button>
+            <button type="submit" id="btnSaveProduct" class="btn btn-primary btn-save-product">
+              <i class="fa-solid fa-floppy-disk"></i>
+              <span id="btnSaveProductText">حفظ وتسجيل المنتج بالمستودع</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- TAB 2: POS Cashier & Barcode Scanner -->
+    <div id="posTab" class="tab-content">
+      <div class="pos-grid">
+
+        <!-- Scanner & Receipt List -->
+        <div>
+          <div class="pos-scanner-box">
+            <label for="posBarcodeScanner" class="pos-scanner-label">
+              <i class="fa-solid fa-barcode"></i> مسح باركود البيع السريع
+            </label>
+            <div class="input-with-action">
+              <input type="text" id="posBarcodeScanner" placeholder="امسح باركود السلعة هنا..." autocomplete="off">
+              <button type="button" class="btn btn-secondary" onclick="openCameraModalForPos()" title="مسح باستخدام الكاميرا">
+                <i class="fa-solid fa-camera"></i> الكاميرا
+              </button>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <i class="fa-solid fa-receipt text-secondary"></i>
+              <span>قائمة السلع الممسوحة بالفاتورة الحالية</span>
+            </div>
+
+            <div id="posReceiptItems">
+              <!-- Rendered via JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Sidebar Summary & Checkout -->
+        <div>
+          <div class="pos-receipt">
+            <div class="pos-receipt-title">
+              <i class="fa-solid fa-calculator"></i> ملخص الفاتورة
+            </div>
+
+            <div class="receipt-total">
+              <span>الإجمالي:</span>
+              <span id="posTotalAmount">0.00 ج.م</span>
+            </div>
+
+            <button type="button" id="btnCheckoutPos" class="btn btn-success btn-checkout" onclick="checkoutPosSale()">
+              <i class="fa-solid fa-circle-check"></i>
+              <span>إتمام العملية وطباعة الفاتورة</span>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- TAB 3: Warehouse Inventory Management -->
+    <div id="inventoryTab" class="tab-content">
+      <div class="card">
+        <div class="card-title">
+          <i class="fa-solid fa-boxes-packing text-primary"></i>
+          <span>جرد المخزون الحالي بمستودع سوق التل</span>
+        </div>
+
+        <!-- Filter Controls -->
+        <div class="form-grid inventory-filter-grid">
+          <div class="form-group">
+            <label for="searchInventory" class="sr-only">بحث في المخزون</label>
+            <input type="text" id="searchInventory" placeholder="ابحث باسم السلعة، الباركود، الماركة، أو السيريال..." aria-label="ابحث باسم السلعة أو رقم الباركود أو الماركة" title="بحث في المخزون">
+          </div>
+          <div class="form-group">
+            <label for="filterCategory" class="sr-only">تصفية حسب القسم</label>
+            <select id="filterCategory" title="تصفية حسب القسم" aria-label="تصفية حسب القسم">
+              <option value="">جميع الأقسام</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="filterSupplier" class="sr-only">تصفية حسب المورد</label>
+            <select id="filterSupplier" title="تصفية حسب المورد" aria-label="تصفية حسب المورد">
+              <option value="">جميع الموردين</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Inventory Table -->
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>الباركود</th>
+                <th>اسم السلعة والمواصفات</th>
+                <th>القسم</th>
+                <th>المورّد الشريك</th>
+                <th>سعر التوريد</th>
+                <th>سعر البيع</th>
+                <th>المخزون</th>
+                <th>إجراءات</th>
+              </tr>
+            </thead>
+            <tbody id="inventoryTbody">
+              <!-- Rendered via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 4: FBN Internal Tracking Labels (ملصقات التتبع FBN) -->
+    <div id="fbnLabelsTab" class="tab-content">
+      <div class="card">
+        <div class="card-title">
+          <div class="title-with-icon">
+            <i class="fa-solid fa-tags text-primary"></i>
+            <div>
+              <h3>نظام توليد وطباعة ملصقات التتبع الداخلي (FBN Item Labels)</h3>
+              <p class="subtitle">توليد وطباعة باركود Code 128 لطابعات الملصقات الحرارية (Thermal Stickers) على غرار نظام Noon FBN</p>
+            </div>
+          </div>
+          <div class="card-title-actions">
+            <button type="button" class="btn btn-secondary" onclick="loadFbnItems()" title="تحديث قائمة السلع">
+              <i class="fa-solid fa-arrows-rotate"></i> <span>تحديث</span>
+            </button>
+            <button type="button" class="btn btn-primary" id="btnBatchPrintLabels" onclick="printSelectedFbnLabels()" title="طباعة الملصقات المحددة لطابعة الباركود الحرارية">
+              <i class="fa-solid fa-print"></i> <span id="btnBatchPrintText">طباعة الملصقات (0)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter and Settings Toolbar -->
+        <div class="fbn-toolbar">
+          <div class="fbn-filters-grid">
+            <div class="form-group">
+              <label for="filterFbnSupplier"><i class="fa-solid fa-truck-field"></i> المورّد / التاجر الشريك</label>
+              <select id="filterFbnSupplier" onchange="applyFbnFilter()">
+                <option value="">جميع الموردين والتجار</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="filterFbnCategory"><i class="fa-solid fa-layer-group"></i> القسم / الفئة</label>
+              <select id="filterFbnCategory" onchange="applyFbnFilter()">
+                <option value="">جميع الأقسام</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="searchFbnItems"><i class="fa-solid fa-magnifying-glass"></i> بحث (اسم / باركود / كود تتبع)</label>
+              <input type="text" id="searchFbnItems" placeholder="ابحث بالاسم أو الباركود أو كود التتبع..." oninput="applyFbnFilter()">
+            </div>
+            <div class="form-group">
+              <label for="fbnLabelSize"><i class="fa-solid fa-ruler-combined"></i> مقاس ورق الملصقات (Sticker Size)</label>
+              <select id="fbnLabelSize" onchange="changeFbnLabelSize(this.value)">
+                <option value="50x25" selected>50 mm × 25 mm (قياسي – Standard FBN)</option>
+                <option value="50x30">50 mm × 30 mm (موسع – Detailed)</option>
+                <option value="40x25">40 mm × 25 mm (صغير – Compact)</option>
+                <option value="60x40">60 mm × 40 mm (كبير – Large)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Quick Selection & Quantity Helper Buttons -->
+          <div class="fbn-quick-actions">
+            <div class="quick-select-group">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="toggleSelectAllFbn(true)">
+                <i class="fa-solid fa-square-check"></i> تحديد الكل
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="toggleSelectAllFbn(false)">
+                <i class="fa-regular fa-square"></i> إلغاء التحديد
+              </button>
+            </div>
+            <div class="quick-qty-group">
+              <span class="quick-group-label">تعيين النسخ:</span>
+              <button type="button" class="btn btn-outline btn-sm" onclick="setAllFbnCopies(1)" title="نسخة واحدة لكل صنف محدد">
+                1 لكل صنف
+              </button>
+              <button type="button" class="btn btn-outline btn-sm" onclick="setFbnCopiesToStock()" title="عدد نسخ مساوٍ لرصيد المخزون الحالي">
+                حسب رصيد المخزون
+              </button>
+            </div>
+            <div class="fbn-summary-badge" id="fbnSelectionSummary">
+              تم تحديد: <strong>0</strong> صنف | إجمالي الملصقات: <strong>0</strong> ملصق حراري
+            </div>
+          </div>
+        </div>
+
+        <!-- FBN Items Table -->
+        <div class="table-responsive">
+          <table class="data-table fbn-table">
+            <thead>
+              <tr>
+                <th style="width: 45px; text-align: center;">
+                  <input type="checkbox" id="fbnSelectAllCheckbox" onchange="toggleSelectAllFbn(this.checked)" title="تحديد / إلغاء تحديد الكل">
+                </th>
+                <th>السلعة / المنتج</th>
+                <th>المورّد الشريك</th>
+                <th>المواصفات (اللون / المقاس)</th>
+                <th>باركود التتبع FBN (Code 128)</th>
+                <th>الباركود الأصلي</th>
+                <th>المخزون</th>
+                <th style="width: 140px; text-align: center;">عدد الملصقات</th>
+                <th style="width: 140px; text-align: center;">إجراءات</th>
+              </tr>
+            </thead>
+            <tbody id="fbnTableBody">
+              <!-- Rendered via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Edit Product Modal -->
+  <div id="editProductModal" class="modal">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h3 class="modal-title">
+          <i class="fa-solid fa-pen-to-square text-primary"></i>
+          <span>تعديل بيانات السلعة والباركود</span>
+        </h3>
+        <button type="button" class="btn btn-danger btn-modal-close" onclick="closeEditModal()" title="إغلاق">✕</button>
+      </div>
+
+      <form id="editProductModalForm">
+        <input type="hidden" id="modalEditProductId">
+
+        <div class="form-grid">
+          <!-- Unified Barcode Field in Modal -->
+          <div class="form-group full-width">
+            <label for="modalEditBarcode"><i class="fa-solid fa-barcode"></i> رقم الباركود (المحلي / الدولي / المصنع)</label>
+            <div class="input-with-action">
+              <input type="text" id="modalEditBarcode" placeholder="رقم الباركود..." required>
+              <button type="button" class="btn btn-secondary" onclick="openCameraModal('modalEditBarcode')" title="مسح الباركود بالكاميرا">
+                <i class="fa-solid fa-camera"></i> <span>الكاميرا</span>
+              </button>
+              <button type="button" class="btn btn-lookup" id="btnLookupModal" onclick="lookupBarcodeOnline('modalEditBarcode', true)" title="جلب بيانات السلعة تلقائياً برقم الباركود">
+                <i class="fa-solid fa-cloud-arrow-down"></i> <span>جلب البيانات</span>
+              </button>
+              <button type="button" class="btn btn-warning" onclick="generateLocalBarcode('modalEditBarcode')" title="توليد باركود محلي تلقائي للسلعة">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> <span>توليد محلي</span>
+              </button>
+            </div>
+          </div>
+          <div id="lookupStatusModal" class="lookup-status-banner hidden full-width"></div>
+
+          <!-- Product Name -->
+          <div class="form-group full-width">
+            <label for="modalEditName"><i class="fa-solid fa-tag"></i> اسم السلعة/المنتج</label>
+            <input type="text" id="modalEditName" placeholder="اسم السلعة…" required>
+          </div>
+
+          <!-- Category -->
+          <div class="form-group">
+            <label for="modalEditCategory"><i class="fa-solid fa-layer-group"></i> القسم/الفئة</label>
+            <select id="modalEditCategory" required title="القسم أو الفئة" aria-label="القسم أو الفئة">
+              <option value="">اختر القسم…</option>
+            </select>
+          </div>
+
+          <!-- Supplier / Merchant -->
+          <div class="form-group">
+            <label for="modalEditSupplier"><i class="fa-solid fa-truck-field"></i> المورّد الشريك / التاجر</label>
+            <select id="modalEditSupplier" title="المورد الشريك أو المتجر" aria-label="المورد الشريك أو المتجر">
+              <option value="">اختر المورّد/المتجر…</option>
+            </select>
+          </div>
+
+          <!-- Wholesale/Cost Price -->
+          <div class="form-group">
+            <label for="modalEditCostPrice"><i class="fa-solid fa-hand-holding-dollar"></i> سعر التوريد/الجملة (ج.م)</label>
+            <input type="number" id="modalEditCostPrice" step="0.5" placeholder="مثال: 25.00">
+          </div>
+
+          <!-- Sale Price -->
+          <div class="form-group">
+            <label for="modalEditPrice"><i class="fa-solid fa-money-bill-wave"></i> سعر البيع للجمهور (ج.م)</label>
+            <input type="number" id="modalEditPrice" step="0.5" placeholder="مثال: 30.00" required>
+          </div>
+
+          <!-- Compare Price (Before discount) -->
+          <div class="form-group">
+            <label for="modalEditComparePrice"><i class="fa-solid fa-tags"></i> السعر قبل الخصم (ج.م - اختياري)</label>
+            <input type="number" id="modalEditComparePrice" step="0.5" placeholder="مثال: 35.00">
+          </div>
+
+          <!-- Stock Quantity -->
+          <div class="form-group">
+            <label for="modalEditStock"><i class="fa-solid fa-boxes-stacked"></i> كمية المخزون (بالقطعة)</label>
+            <input type="number" id="modalEditStock" placeholder="مثال: 100" required>
+          </div>
+
+          <!-- Brand / Manufacturer -->
+          <div class="form-group">
+            <label for="modalEditBrand"><i class="fa-solid fa-award"></i> البراند / الماركة (Brand)</label>
+            <input type="text" id="modalEditBrand" placeholder="مثال: Samsung, Apple, Nike, المراعي...">
+          </div>
+
+          <!-- Size / Volume / Weight -->
+          <div class="form-group">
+            <label for="modalEditSize"><i class="fa-solid fa-ruler-combined"></i> المقاس / الحجم / السعة (Size / Vol)</label>
+            <input type="text" id="modalEditSize" placeholder="مثال: XL, 500 مل, 1 كجم, 128GB, 42...">
+          </div>
+
+          
+
+          <!-- Serial Number / Model (for Electronics & Appliances) -->
+          <div class="form-group">
+            <label for="modalEditSerialNumber"><i class="fa-solid fa-microchip"></i> السيريال نمبر / الموديل (Serial No / Model)</label>
+            <div class="input-with-action">
+              <input type="text" id="modalEditSerialNumber" placeholder="للأجهزة الإلكترونية: SN-XXXX أو رقم الموديل...">
+              <button type="button" class="btn btn-secondary" onclick="openCameraModal('modalEditSerialNumber')" title="مسح السيريال بالكاميرا">
+                <i class="fa-solid fa-camera"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- Color / Material -->
+          <div class="form-group">
+            <label for="modalEditColor"><i class="fa-solid fa-palette"></i> اللون / المظهر (Color)</label>
+            <input type="text" id="modalEditColor" placeholder="مثال: أسود، فضي، كحلي...">
+          </div>
+
+          <!-- Warranty Period -->
+          <div class="form-group">
+            <label for="modalEditWarranty"><i class="fa-solid fa-shield-halved"></i> فترة الضمان (Warranty)</label>
+            <input type="text" id="modalEditWarranty" placeholder="مثال: ضمان سنة، سنتين، بدون ضمان...">
+          </div>
+
+          <!-- Country of Origin -->
+          <div class="form-group full-width">
+            <label for="modalEditOrigin"><i class="fa-solid fa-earth-americas"></i> بلد المنشأ / الصنع (Country of Origin)</label>
+            <input type="text" id="modalEditOrigin" placeholder="مثال: مصر، الصين، ألمانيا، فيتنام...">
+          </div>
+
+          <!-- Image Upload, URL & Preview in Modal -->
+          <div class="form-group full-width">
+            <label for="modalEditImageUrl"><i class="fa-solid fa-image"></i> صورة السلعة / المنتج (رفع من الجهاز أو إدخال رابط)</label>
+            <div class="image-preview-wrapper" id="modalEditImagePreviewContainer">
+              <div class="image-preview-box" onclick="triggerImageUpload('modalEditImageFile')" title="انقر لرفع صورة من جهازك، أو اسحب الصورة هنا">
+                <img id="modalEditImagePreview" src="logo.png" alt="معاينة صورة المنتج" class="product-preview-img hidden">
+                <div id="modalEditImagePlaceholder" class="image-preview-placeholder">
+                  <i class="fa-solid fa-cloud-arrow-up"></i>
+                  <span>اضغط هنا لاختيار أو رفع صورة من جهازك، أو اسحب الصورة هنا</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Hidden File Input for Modal Image -->
+            <input type="file" id="modalEditImageFile" accept="image/*" class="hidden" onchange="handleImageFileSelected(this, 'modalEditImageUrl', 'modalEditImagePreview', 'modalEditImagePlaceholder')">
+            <input type="file" id="modalEditCameraFallbackInput" accept="image/*" capture="environment" class="hidden" onchange="handleImageFileSelected(this, 'modalEditImageUrl', 'modalEditImagePreview', 'modalEditImagePlaceholder')">
+
+            <!-- Image Action Toolbar in Modal -->
+            <div class="image-actions-row">
+              <button type="button" class="btn btn-primary btn-sm" onclick="triggerImageUpload('modalEditImageFile')" title="اختيار ورفع صورة من الكمبيوتر أو الهاتف">
+                <i class="fa-solid fa-upload"></i> <span>رفع صورة من الجهاز</span>
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="triggerCameraCapture('modalEditImageFile')" title="التقاط صورة مباشرة بكاميرا الجهاز">
+                <i class="fa-solid fa-camera"></i> <span>التقاط بالكاميرا</span>
+              </button>
+              <button type="button" class="btn btn-danger btn-sm" onclick="clearProductImage('modalEditImageUrl', 'modalEditImagePreview', 'modalEditImagePlaceholder')" title="حذف الصورة المحددة">
+                <i class="fa-solid fa-trash"></i> <span>حذف</span>
+              </button>
+              <div class="image-url-inline">
+                <input type="url" id="modalEditImageUrl" placeholder="أو الصق رابط صورة مباشر هنا (https://example.com/image.jpg)...">
+              </div>
+            </div>
+            <div id="modalEditImageUploadStatus" class="image-upload-status hidden"></div>
+          </div>
+
+          <!-- Checkboxes for Stock and Active status -->
+          <div class="form-group full-width checkboxes-row">
+            <label class="checkbox-label" for="modalEditInStock">
+              <input type="checkbox" id="modalEditInStock">
+              <span>متوفر بالمستودع (In Stock)</span>
+            </label>
+            <label class="checkbox-label" for="modalEditIsActive">
+              <input type="checkbox" id="modalEditIsActive">
+              <span>نشط ومعروض للبيع بالتطبيق (Active)</span>
+            </label>
+          </div>
+
+          <!-- Description -->
+          <div class="form-group full-width">
+            <label for="modalEditDescription"><i class="fa-solid fa-align-right"></i> وصف المنتج أو مواصفات التوريد</label>
+            <textarea id="modalEditDescription" rows="2" placeholder="أدخل مواصفات أو تفاصيل إضافية للسلعة..."></textarea>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeEditModal()">إلغاء</button>
+          <button type="submit" id="btnSaveModalEdit" class="btn btn-primary">
+            <i class="fa-solid fa-floppy-disk"></i>
+            <span>حفظ التعديلات على السلعة</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Full Image Preview Modal Dialog -->
+  <div id="imageModal" class="modal">
+    <div class="modal-content modal-image-content">
+      <div class="modal-header">
+        <h3 class="modal-title">
+          <i class="fa-solid fa-image text-primary"></i>
+          <span>عرض صورة المنتج بحجم كامل</span>
+        </h3>
+        <button type="button" class="btn btn-danger btn-modal-close" onclick="closeImageModal()" title="إغلاق">✕</button>
+      </div>
+      <div class="modal-body-image">
+        <img id="fullModalImage" src="logo.png" alt="صورة المنتج بحجم كامل" class="full-modal-img">
+        <div class="image-modal-footer">
+          <a id="fullModalImageLink" href="#" target="_blank" class="btn btn-secondary btn-sm" title="فتح الصورة في تبويب جديد">
+            <i class="fa-solid fa-arrow-up-right-from-square"></i> <span>فتح في تبويب جديد</span>
+          </a>
+          <button type="button" class="btn btn-primary btn-sm" onclick="closeImageModal()">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FBN Label Preview Modal -->
+  <div id="fbnPreviewModal" class="modal">
+    <div class="modal-content modal-md">
+      <div class="modal-header">
+        <h3 class="modal-title">
+          <i class="fa-solid fa-eye text-primary"></i>
+          <span>معاينة ملصق التتبع الحراري (FBN Label Preview)</span>
+        </h3>
+        <button type="button" class="btn btn-danger btn-modal-close" onclick="closeFbnPreviewModal()" title="إغلاق">✕</button>
+      </div>
+      <div class="modal-body text-center" style="padding: 1.5rem; background: #f8fafc;">
+        <p style="margin-bottom: 12px; font-size: 0.9rem; color: #64748b;">
+          المعاينة المباشرة بالحجم والنسب الفعلية للملصق الحراري (Thermal Sticker):
+        </p>
+        <div class="fbn-preview-wrapper" id="fbnModalPreviewContainer">
+          <!-- Live sticker preview rendered here -->
+        </div>
+        <div class="fbn-preview-info" id="fbnModalPreviewInfo" style="margin-top: 15px; font-size: 0.85rem; color: #475569;">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" onclick="closeFbnPreviewModal()">إلغاء</button>
+        <button type="button" class="btn btn-primary" id="btnModalPrintSingle" onclick="printSingleFbnFromModal()">
+          <i class="fa-solid fa-print"></i> <span>طباعة هذا الملصق</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Thermal Print Container (Hidden on screen, strictly visible during @media print) -->
+  <div id="thermalPrintArea" class="thermal-print-area"></div>
+
+  <!-- Product Photo Camera Capture Modal -->
+  <div id="productPhotoModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">
+          <i class="fa-solid fa-camera text-primary"></i>
+          <span>التقاط صورة السلعة بالكاميرا</span>
+        </h3>
+        <button type="button" class="btn btn-danger btn-modal-close" onclick="closeProductPhotoModal()" title="إغلاق">✕</button>
+      </div>
+      <div class="modal-body text-center" style="padding: 1rem 0;">
+        <div style="position: relative; width: 100%; min-height: 260px; max-height: 380px; background: #0f172a; border-radius: 12px; overflow: hidden; display: flex; align-items: center; justify-content: center;">
+          <video id="productPhotoVideo" autoplay playsinline muted style="width: 100%; height: 100%; max-height: 380px; object-fit: contain; border-radius: 8px;"></video>
+          <canvas id="productPhotoCanvas" class="hidden"></canvas>
+          <div id="productPhotoLoading" class="hidden" style="position: absolute; color: white; display: flex; flex-direction: column; align-items: center; gap: 8px;">
+            <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
+            <span>جاري تشغيل الكاميرا...</span>
+          </div>
+        </div>
+        <div id="productPhotoCameraError" class="login-alert hidden" style="margin-top: 12px;">
+          <i class="fa-solid fa-circle-exclamation"></i>
+          <span id="productPhotoCameraErrorText">تعذر الوصول إلى الكاميرا. يرجى التأكد من توصيل الكاميرا ومنح الإذن للمتصفح.</span>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <button type="button" class="btn btn-secondary btn-sm" id="btnSwitchProductCamera" onclick="switchProductCamera()" title="تبديل الكاميرا (الأمامية / الخلفية)">
+          <i class="fa-solid fa-camera-rotate"></i> <span>تبديل الكاميرا</span>
+        </button>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn btn-secondary" onclick="closeProductPhotoModal()">إلغاء</button>
+          <button type="button" class="btn btn-primary" id="btnCaptureProductPhoto" onclick="captureProductPhoto()">
+            <i class="fa-solid fa-circle-dot"></i> <span>التقاط وحفظ الصورة</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Camera Scanner Modal -->
+  <div id="cameraModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">مسح الباركود بالكاميرا</h3>
+        <button class="btn btn-danger btn-modal-close" onclick="closeCameraModal()">✕</button>
+      </div>
+      <div id="reader"></div>
+    </div>
+  </div>
+
+  <!-- App JavaScript -->
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,3 +1,4 @@
+import 'package:ell_tall_market/widgets/safe_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/models/order_model.dart';
 import 'package:ell_tall_market/core/logger.dart';
@@ -307,12 +308,12 @@ class _CompactOrderItemsList extends StatelessWidget {
                   borderRadius: BorderRadius.circular(6),
                   child:
                       item.productImage != null && item.productImage!.isNotEmpty
-                      ? Image.network(
-                          item.productImage!,
+                      ? SafeNetworkImage(
+                          imageUrl: item.productImage!,
                           width: 40,
                           height: 40,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => Container(
+                          errorWidget: Container(
                             width: 40,
                             height: 40,
                             color: Colors.grey[200],

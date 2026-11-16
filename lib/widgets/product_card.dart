@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:ell_tall_market/models/product_model.dart';
+import 'package:ell_tall_market/widgets/safe_network_image.dart';
 
 class ProductCard extends StatelessWidget {
   final ProductModel product;
@@ -62,14 +63,13 @@ class ProductCard extends StatelessWidget {
                     ),
                     child:
                         product.imageUrl != null && product.imageUrl!.isNotEmpty
-                        ? Image.network(
-                            product.imageUrl!,
+                        ? SafeNetworkImage(
+                            imageUrl: product.imageUrl!,
                             width: double.infinity,
                             height: double.infinity,
                             fit: BoxFit.cover,
-                            errorBuilder: (context, error, stackTrace) {
-                              return _buildPlaceholderImage(null, colorScheme);
-                            },
+                            placeholder: _buildPlaceholderImage(null, colorScheme),
+                            errorWidget: _buildPlaceholderImage(null, colorScheme),
                           )
                         : _buildPlaceholderImage(null, colorScheme),
                   ),

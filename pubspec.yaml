@@ -1,97 +1,85 @@
 name: ell_tall_market
-description: "Ell Tall Market - سوق التل"
-# The following line prevents the package from being accidentally published to
-# pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+description: "Souq El Tal - سوق التل"
+publish_to: 'none'
 
-# The following defines the version and build number for your application.
-# A version number is three numbers separated by dots, like 1.2.43
-# followed by an optional build number separated by a +.
-# Both the version and the builder number may be overridden in flutter
-# build by specifying --build-name and --build-number, respectively.
-# In Android, build-name is used as versionName while build-number used as versionCode.
-# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
-# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
-# Read more about iOS versioning at
-# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
-# In Windows, build-name is used as the major, minor, and patch parts
-# of the product and file versions while build-number is used as the build suffix.
 version: 1.1.9+18
 
 environment:
   sdk: ^3.9.2
 
-# Dependencies specify other packages that your package needs in order to work.
-# To automatically upgrade your package dependencies to the latest versions
-# consider running `flutter pub upgrade --major-versions`. Alternatively,
-# dependencies can be manually updated by changing the version numbers below to
-# the latest version available on pub.dev. To see which dependencies have newer
-# versions available, run `flutter pub outdated`.
 dependencies:
+  # Flutter Framework & Localization
   flutter:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  # Firebase - أحدث إصدارات مستقرة من pub.dev
+  cupertino_icons: ^1.0.8
+  intl: ^0.20.3
+
+  # Firebase Services
   firebase_core: ^4.1.1
   firebase_messaging: ^16.0.2
   firebase_analytics: ^12.0.2
   firebase_auth: ^6.1.0
   cloud_firestore: ^6.0.2
-  # State Management
-  provider: ^6.1.5
-  shared_preferences: ^2.2.1
-  # Media & Files
-  image_picker: ^1.0.4
-  device_info_plus: ^13.2.0
-  # Database & Backend
+
+  # Supabase & Network
   supabase_flutter: ^2.10.2
   web_socket_channel: ^3.0.1
-  flutter_secure_storage: ^10.2.0
-  equatable: ^2.0.5
-  # Charts & Analytics
-  syncfusion_flutter_charts: ^33.2.6
-  fl_chart: ^1.1.1
-  flutter_stripe: ^13.0.0
-  # UI Components
-  flutter_staggered_grid_view: ^0.7.0
-  cached_network_image: ^3.3.0
-  shimmer: ^3.0.0
-  reorderables: ^0.6.0
-  # Authentication
-  google_sign_in: ^7.2.0
-  # Storage & Preferences
-  flutter_dotenv: ^6.0.0
-  permission_handler: ^12.0.1
-  # Utilities
-  intl: 0.20.2
   http: ^1.1.0
-  url_launcher: ^6.1.14
-  logger: ^2.0.2
-  connectivity_plus: ^7.0.0
-  uuid: ^4.2.1
-  # Location Services
+
+  # State Management & Local Storage
+  provider: ^6.1.5
+  shared_preferences: ^2.2.1
+  flutter_secure_storage: ^10.2.0
+  flutter_dotenv: ^6.0.0
+
+  # Location & Maps
   google_maps_flutter: ^2.5.0
   geolocator: ^14.0.2
   geocoding: ^5.0.0
   google_places_flutter: ^2.0.12
-  # Analytics & Performance
-  cupertino_icons: ^1.0.8
-  flutter_local_notifications: ^22.0.1
-  path: ^1.9.0
-  image: ^4.3.0
+  flutter_polyline_points: ^3.1.0
+
+  # Media & Image Handling
+  image_picker: ^1.0.4
   image_cropper: ^12.2.1
-  # PDF Generation
+  image: ^4.3.0
+  cached_network_image: ^3.3.0
+
+  # UI Components & Charts
+  flutter_staggered_grid_view: ^0.7.0
+  shimmer: ^3.0.0
+  reorderables: ^0.6.0
+  fl_chart: ^1.1.1
+  syncfusion_flutter_charts: ^33.2.6
+  flutter_keyboard_visibility: ^6.0.0
+
+  # Payments
+  flutter_stripe: ^13.0.0
+
+  # Documents & File Processing
   pdf: ^3.11.1
   printing: ^5.13.4
-  path_provider: ^2.1.5
-  flutter_polyline_points: ^3.1.0
-  share_plus: ^13.2.0
-  package_info_plus: ^10.2.0
-  flutter_keyboard_visibility: ^6.0.0
-  # Product Import
   excel: ^4.0.6
   file_picker: ^12.0.0-beta.7
+  path_provider: ^2.1.5
+  path: ^1.9.0
+
+  # Authentication
+  google_sign_in: ^7.2.0
+
+  # Device Features & System Utilities
+  device_info_plus: ^13.2.0
+  package_info_plus: ^10.2.0
+  connectivity_plus: ^7.0.0
+  permission_handler: ^12.0.1
+  flutter_local_notifications: ^22.0.1
+  url_launcher: ^6.1.14
+  share_plus: ^13.2.0
+  uuid: ^4.2.1
+  logger: ^2.0.2
+  equatable: ^2.0.5
   windows_single_instance: ^1.2.0
 
 dev_dependencies:
@@ -101,8 +89,6 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.4
   build_runner: ^2.4.6
   msix: ^3.16.5
-
-# dependency_overrides:
 
 flutter_launcher_icons:
   android: true
@@ -116,15 +102,7 @@ flutter_launcher_icons:
   image_path: "assets/icons/icon.png"
   remove_alpha_ios: true
 
-# For information on the generic Dart part of this file, see the
-# following page: https://dart.dev/tools/pub/pubspec
-
-# The following section is specific to Flutter packages.
 flutter:
-
-  # The following line ensures that the Material Icons font is
-  # included with your application, so that you can use the icons in
-  # the material Icons class.
   uses-material-design: true
   generate: true
 
@@ -147,7 +125,7 @@ flutter:
 
 msix_config:
   display_name: "سوق التل"
-  publisher_display_name: "El Tal Market"
-  title: "سوق التل - El Tal Market"
+  publisher_display_name: "Souq El Tal"
+  title: "سوق التل - Souq El Tal"
   logo_path: "assets/icons/icon.png"
   capabilities: "internetClient"

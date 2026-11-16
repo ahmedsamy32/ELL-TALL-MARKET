@@ -106,6 +106,14 @@ class _CategoryScreenState extends State<CategoryScreen> {
       listen: false,
     );
 
+    if (LocationUiText.isDeniedForever(locationProvider)) {
+      await Geolocator.openAppSettings();
+    } else if (LocationUiText.isServiceOff(locationProvider)) {
+      await Geolocator.openLocationSettings();
+    }
+
+    if (!mounted) return;
+
     bool loadedStores = false;
     final authUser = Supabase.instance.client.auth.currentUser;
     if (authUser != null) {
@@ -121,7 +129,8 @@ class _CategoryScreenState extends State<CategoryScreen> {
         if (addressRes.isNotEmpty) {
           final defaultAddress = Map<String, dynamic>.from(addressRes.first);
           final city = (defaultAddress['city'] as String? ?? '').trim();
-          final governorate = (defaultAddress['governorate'] as String? ?? '').trim();
+          final governorate = (defaultAddress['governorate'] as String? ?? '')
+              .trim();
           final area = (defaultAddress['area'] as String? ?? '').trim();
           final lat = (defaultAddress['latitude'] as num?)?.toDouble();
           final lng = (defaultAddress['longitude'] as num?)?.toDouble();
@@ -146,7 +155,9 @@ class _CategoryScreenState extends State<CategoryScreen> {
       if (!mounted) return;
 
       if (!got || !locationProvider.hasLocation) {
-        await categoryProvider.applyAvailabilityScope(allowedStoreIds: const []);
+        await categoryProvider.applyAvailabilityScope(
+          allowedStoreIds: const [],
+        );
         return;
       }
 
@@ -549,9 +560,7 @@ class _CategoryScreenState extends State<CategoryScreen> {
                   alignment: WrapAlignment.center,
                   children: [
                     FilledButton.icon(
-                      onPressed: isDeniedForever
-                          ? () => Geolocator.openAppSettings()
-                          : _requestLocationAndReload,
+                      onPressed: _requestLocationAndReload,
                       icon: Icon(
                         isDeniedForever
                             ? Icons.settings_rounded
@@ -563,7 +572,11 @@ class _CategoryScreenState extends State<CategoryScreen> {
                     ),
                     if (isServiceOff)
                       OutlinedButton.icon(
-                        onPressed: () => Geolocator.openLocationSettings(),
+                        onPressed: () async {
+                          await Geolocator.openLocationSettings();
+                          if (!mounted) return;
+                          await _requestLocationAndReload();
+                        },
                         icon: const Icon(Icons.location_on_outlined),
                         label: const Text(LocationUiText.secondaryButtonLabel),
                       ),
@@ -703,19 +716,34 @@ class _CategoryScreenState extends State<CategoryScreen> {
 
     final nameLower = category.name.toLowerCase();
     final idLower = category.id.toLowerCase();
-    
+
     String styleKey = 'default';
-    if (nameLower.contains('سوبر') || nameLower.contains('بقالة') || nameLower.contains('grocery') || nameLower.contains('supermarket')) {
+    if (nameLower.contains('سوبر') ||
+        nameLower.contains('بقالة') ||
+        nameLower.contains('grocery') ||
+        nameLower.contains('supermarket')) {
       styleKey = 'supermarket';
-    } else if (nameLower.contains('صيدل') || nameLower.contains('pharmacy') || idLower == '27fb2938-4949-4720-bbe1-56816279db0a') {
+    } else if (nameLower.contains('صيدل') ||
+        nameLower.contains('pharmacy') ||
+        idLower == '27fb2938-4949-4720-bbe1-56816279db0a') {
       styleKey = 'pharmacy';
-    } else if (nameLower.contains('مطعم') || nameLower.contains('مطاعم') || nameLower.contains('restaurant') || nameLower.contains('restaurants')) {
+    } else if (nameLower.contains('مطعم') ||
+        nameLower.contains('مطاعم') ||
+        nameLower.contains('restaurant') ||
+        nameLower.contains('restaurants')) {
       styleKey = 'restaurants';
-    } else if (nameLower.contains('مخبز') || nameLower.contains('bakery') || nameLower.contains('حلويات')) {
+    } else if (nameLower.contains('مخبز') ||
+        nameLower.contains('bakery') ||
+        nameLower.contains('حلويات')) {
       styleKey = 'bakery';
-    } else if (nameLower.contains('جزار') || nameLower.contains('butcher') || nameLower.contains('لحوم')) {
+    } else if (nameLower.contains('جزار') ||
+        nameLower.contains('butcher') ||
+        nameLower.contains('لحوم')) {
       styleKey = 'butcher';
-    } else if (nameLower.contains('خضار') || nameLower.contains('فواكه') || nameLower.contains('vegetable') || nameLower.contains('vegetables')) {
+    } else if (nameLower.contains('خضار') ||
+        nameLower.contains('فواكه') ||
+        nameLower.contains('vegetable') ||
+        nameLower.contains('vegetables')) {
       styleKey = 'vegetables';
     } else {
       styleKey = nameLower;

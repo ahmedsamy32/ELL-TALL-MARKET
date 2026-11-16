@@ -1,11 +1,19 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
-    id("com.google.gms.google-services") // يجب أن يأتي بعد com.android.application
+    id("com.google.gms.google-services")
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-import java.io.FileInputStream
-import java.util.Properties
+val localPropertiesFile = rootProject.file("local.properties")
+val localProperties = Properties()
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.inputStream().use { localProperties.load(it) }
+}
+
+val mapsApiKey = localProperties.getProperty("maps.api.key") ?: ""
 
 val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreProperties = Properties()
@@ -15,23 +23,22 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.elltall.market"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.elltall.market"
         minSdk = flutter.minSdkVersion
-        targetSdk = 35
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        manifestPlaceholders["mapsApiKey"] = mapsApiKey
     }
 
     signingConfigs {
-        // Used only when android/key.properties exists.
         create("release") {
             if (keystorePropertiesFile.exists()) {
-                // Resolve relative paths from the android/ directory (rootProject).
                 storeFile = rootProject.file(keystoreProperties["storeFile"] as String)
                 storePassword = keystoreProperties["storePassword"] as String
                 keyAlias = keystoreProperties["keyAlias"] as String
@@ -45,15 +52,11 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
 
-            // IMPORTANT:
-            // - For local testing, sign release with debug key if no key.properties is configured.
-            // - For production, create android/key.properties and an upload keystore.
-            signingConfig =
-                if (keystorePropertiesFile.exists()) {
-                    signingConfigs.getByName("release")
-                } else {
-                    signingConfigs.getByName("debug")
-                }
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
 
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -90,25 +93,25 @@ flutter {
 dependencies {
     // Core library desugaring
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
-    
-    // Firebase BOM لإدارة نسخ مكتبات Firebase
+
+    // Firebase BOM
     implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
     implementation("com.google.firebase:firebase-analytics")
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
 
-    // AndroidX
+    // AndroidX & Material Design
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
 
-    // (إزالة kotlin-stdlib لأن نسخة الـ plugin توفرها تلقائياً وتجنب تعارض الإصدارات مع 2.1.0)
-
+    // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
 }
- // تعديل اسم APK
+
+// Rename release APK task
 tasks.register<Copy>("renameApk") {
     from("build/outputs/apk/release") {
         include("app-release.apk")

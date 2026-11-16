@@ -759,6 +759,7 @@ class ProductModel with BaseModelMixin {
   final String? categoryId; // UUID REFERENCES categories(id)
   final String? sectionId; // UUID REFERENCES store_sections(id)
   final String name; // TEXT NOT NULL
+  final String? barcode; // TEXT (الباركود)
   final String? description; // TEXT
   final double price; // DECIMAL(10,2) NOT NULL
   final double? comparePrice; // DECIMAL(10,2)
@@ -792,6 +793,7 @@ class ProductModel with BaseModelMixin {
     this.categoryId,
     this.sectionId,
     required this.name,
+    this.barcode,
     this.description,
     required this.price,
     this.comparePrice,
@@ -823,6 +825,7 @@ class ProductModel with BaseModelMixin {
       categoryId: map['category_id'] as String?,
       sectionId: map['section_id'] as String?,
       name: map['name'] as String,
+      barcode: map['barcode'] as String?,
       description: map['description'] as String?,
       price: double.parse(map['price'].toString()),
       comparePrice: map['compare_price'] != null
@@ -927,6 +930,7 @@ class ProductModel with BaseModelMixin {
       'category_id': categoryId,
       'section_id': sectionId,
       'name': name,
+      'barcode': barcode,
       'description': description,
       'price': price,
       'compare_price': comparePrice,
@@ -953,6 +957,7 @@ class ProductModel with BaseModelMixin {
       'category_id': categoryId,
       'section_id': sectionId,
       'name': name,
+      'barcode': barcode,
       'description': description,
       'price': price,
       'compare_price': comparePrice,

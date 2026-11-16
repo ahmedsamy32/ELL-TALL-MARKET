@@ -196,139 +196,269 @@ class _AddressFormSectionState extends State<AddressFormSection> {
           ),
           const SizedBox(height: 12),
         ],
-        Row(
-          children: [
-            Expanded(
-              child: useGovernorateDropdown
-                  ? DropdownButtonFormField<String>(
-                      focusNode: widget.governorateFocus,
-                      key: ValueKey<String>(
-                        'gov-${widget.governorateController.text.trim()}-${governorates.length}',
-                      ),
-                      isExpanded: true,
-                      isDense: true,
-                      initialValue: widget.governorateController.text.trim().isEmpty
+        if (MediaQuery.of(context).size.width < 500) ...[
+          useGovernorateDropdown
+              ? DropdownButtonFormField<String>(
+                  focusNode: widget.governorateFocus,
+                  key: ValueKey<String>(
+                    'gov-${widget.governorateController.text.trim()}-${governorates.length}',
+                  ),
+                  isExpanded: true,
+                  isDense: true,
+                  initialValue:
+                      widget.governorateController.text.trim().isEmpty
                           ? null
                           : widget.governorateController.text.trim(),
-                      decoration: const InputDecoration(
-                        labelText: 'المحافظة',
-                        prefixIcon: Icon(Icons.map_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      items: governorates
-                          .map(
-                            (value) => DropdownMenuItem<String>(
-                              value: value,
-                              child: Text(
-                                value,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                  decoration: const InputDecoration(
+                    labelText: 'المحافظة',
+                    prefixIcon: Icon(Icons.map_outlined),
+                    border: OutlineInputBorder(),
+                  ),
+                  items: governorates
+                      .map(
+                        (value) => DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(
+                            value,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    final selected = (value ?? '').trim();
+                    widget.governorateController.text = selected;
+                    widget.onGovernorateChanged?.call(selected);
+                    if (selected.isNotEmpty) {
+                      FocusScope.of(context).requestFocus(widget.cityFocus);
+                    }
+                  },
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) {
+                      return 'الرجاء اختيار المحافظة';
+                    }
+                    return null;
+                  },
+                )
+              : TextFormField(
+                  controller: widget.governorateController,
+                  focusNode: widget.governorateFocus,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: 'المحافظة',
+                    prefixIcon: Icon(Icons.map_outlined),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) {
+                      return 'الرجاء إدخال المحافظة';
+                    }
+                    return null;
+                  },
+                  onChanged: widget.onGovernorateChanged,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).requestFocus(widget.cityFocus),
+                ),
+          const SizedBox(height: 12),
+          useCityDropdown
+              ? DropdownButtonFormField<String>(
+                  focusNode: widget.cityFocus,
+                  key: ValueKey<String>(
+                    'city-${widget.cityController.text.trim()}-${cities.length}',
+                  ),
+                  isExpanded: true,
+                  isDense: true,
+                  initialValue: widget.cityController.text.trim().isEmpty
+                      ? null
+                      : widget.cityController.text.trim(),
+                  decoration: const InputDecoration(
+                    labelText: 'المدينة/المركز',
+                    prefixIcon: Icon(Icons.location_city),
+                    border: OutlineInputBorder(),
+                  ),
+                  items: cities
+                      .map(
+                        (value) => DropdownMenuItem<String>(
+                          value: value,
+                          child: Text(
+                            value,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    final selected = (value ?? '').trim();
+                    widget.cityController.text = selected;
+                    widget.onCityChanged?.call(selected);
+                    if (selected.isNotEmpty) {
+                      FocusScope.of(context).requestFocus(_areaFocus);
+                    }
+                  },
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) {
+                      return 'الرجاء اختيار المدينة';
+                    }
+                    return null;
+                  },
+                )
+              : TextFormField(
+                  controller: widget.cityController,
+                  focusNode: widget.cityFocus,
+                  textInputAction: TextInputAction.next,
+                  decoration: const InputDecoration(
+                    labelText: 'المدينة/المركز',
+                    prefixIcon: Icon(Icons.location_city),
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) {
+                      return 'الرجاء إدخال المدينة';
+                    }
+                    return null;
+                  },
+                  onChanged: widget.onCityChanged,
+                  onFieldSubmitted: (_) =>
+                      FocusScope.of(context).requestFocus(_areaFocus),
+                ),
+        ] else ...[
+          Row(
+            children: [
+              Expanded(
+                child: useGovernorateDropdown
+                    ? DropdownButtonFormField<String>(
+                        focusNode: widget.governorateFocus,
+                        key: ValueKey<String>(
+                          'gov-${widget.governorateController.text.trim()}-${governorates.length}',
+                        ),
+                        isExpanded: true,
+                        isDense: true,
+                        initialValue:
+                            widget.governorateController.text.trim().isEmpty
+                                ? null
+                                : widget.governorateController.text.trim(),
+                        decoration: const InputDecoration(
+                          labelText: 'المحافظة',
+                          prefixIcon: Icon(Icons.map_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        items: governorates
+                            .map(
+                              (value) => DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(
+                                  value,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        final selected = (value ?? '').trim();
-                        widget.governorateController.text = selected;
-                        widget.onGovernorateChanged?.call(selected);
-                        if (selected.isNotEmpty) {
-                          FocusScope.of(context).requestFocus(widget.cityFocus);
-                        }
-                      },
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return 'الرجاء اختيار المحافظة';
-                        }
-                        return null;
-                      },
-                    )
-                  : TextFormField(
-                      controller: widget.governorateController,
-                      focusNode: widget.governorateFocus,
-                      textInputAction: TextInputAction.next,
-                      decoration: const InputDecoration(
-                        labelText: 'المحافظة',
-                        prefixIcon: Icon(Icons.map_outlined),
-                        border: OutlineInputBorder(),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          final selected = (value ?? '').trim();
+                          widget.governorateController.text = selected;
+                          widget.onGovernorateChanged?.call(selected);
+                          if (selected.isNotEmpty) {
+                            FocusScope.of(context).requestFocus(widget.cityFocus);
+                          }
+                        },
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'الرجاء اختيار المحافظة';
+                          }
+                          return null;
+                        },
+                      )
+                    : TextFormField(
+                        controller: widget.governorateController,
+                        focusNode: widget.governorateFocus,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'المحافظة',
+                          prefixIcon: Icon(Icons.map_outlined),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'الرجاء إدخال المحافظة';
+                          }
+                          return null;
+                        },
+                        onChanged: widget.onGovernorateChanged,
+                        onFieldSubmitted: (_) =>
+                            FocusScope.of(context).requestFocus(widget.cityFocus),
                       ),
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return 'الرجاء إدخال المحافظة';
-                        }
-                        return null;
-                      },
-                      onChanged: widget.onGovernorateChanged,
-                      onFieldSubmitted: (_) =>
-                          FocusScope.of(context).requestFocus(widget.cityFocus),
-                    ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: useCityDropdown
-                  ? DropdownButtonFormField<String>(
-                      focusNode: widget.cityFocus,
-                      key: ValueKey<String>(
-                        'city-${widget.cityController.text.trim()}-${cities.length}',
-                      ),
-                      isExpanded: true,
-                      isDense: true,
-                      initialValue: widget.cityController.text.trim().isEmpty
-                          ? null
-                          : widget.cityController.text.trim(),
-                      decoration: const InputDecoration(
-                        labelText: 'المدينة/المركز',
-                        prefixIcon: Icon(Icons.location_city),
-                        border: OutlineInputBorder(),
-                      ),
-                      items: cities
-                          .map(
-                            (value) => DropdownMenuItem<String>(
-                              value: value,
-                              child: Text(
-                                value,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: useCityDropdown
+                    ? DropdownButtonFormField<String>(
+                        focusNode: widget.cityFocus,
+                        key: ValueKey<String>(
+                          'city-${widget.cityController.text.trim()}-${cities.length}',
+                        ),
+                        isExpanded: true,
+                        isDense: true,
+                        initialValue: widget.cityController.text.trim().isEmpty
+                            ? null
+                            : widget.cityController.text.trim(),
+                        decoration: const InputDecoration(
+                          labelText: 'المدينة/المركز',
+                          prefixIcon: Icon(Icons.location_city),
+                          border: OutlineInputBorder(),
+                        ),
+                        items: cities
+                            .map(
+                              (value) => DropdownMenuItem<String>(
+                                value: value,
+                                child: Text(
+                                  value,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
                               ),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        final selected = (value ?? '').trim();
-                        widget.cityController.text = selected;
-                        widget.onCityChanged?.call(selected);
-                        if (selected.isNotEmpty) {
-                          FocusScope.of(context).requestFocus(_areaFocus);
-                        }
-                      },
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return 'الرجاء اختيار المدينة';
-                        }
-                        return null;
-                      },
-                    )
-                  : TextFormField(
-                      controller: widget.cityController,
-                      focusNode: widget.cityFocus,
-                      textInputAction: TextInputAction.next,
-                      decoration: const InputDecoration(
-                        labelText: 'المدينة/المركز',
-                        prefixIcon: Icon(Icons.location_city),
-                        border: OutlineInputBorder(),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          final selected = (value ?? '').trim();
+                          widget.cityController.text = selected;
+                          widget.onCityChanged?.call(selected);
+                          if (selected.isNotEmpty) {
+                            FocusScope.of(context).requestFocus(_areaFocus);
+                          }
+                        },
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'الرجاء اختيار المدينة';
+                          }
+                          return null;
+                        },
+                      )
+                    : TextFormField(
+                        controller: widget.cityController,
+                        focusNode: widget.cityFocus,
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'المدينة/المركز',
+                          prefixIcon: Icon(Icons.location_city),
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'الرجاء إدخال المدينة';
+                          }
+                          return null;
+                        },
+                        onChanged: widget.onCityChanged,
+                        onFieldSubmitted: (_) =>
+                            FocusScope.of(context).requestFocus(_areaFocus),
                       ),
-                      validator: (v) {
-                        if (v == null || v.trim().isEmpty) {
-                          return 'الرجاء إدخال المدينة';
-                        }
-                        return null;
-                      },
-                      onChanged: widget.onCityChanged,
-                      onFieldSubmitted: (_) =>
-                          FocusScope.of(context).requestFocus(_areaFocus),
-                    ),
-            ),
-          ],
-        ),
+              ),
+            ],
+          ),
+        ],
         if (useGovernorateDropdown && governorates.isEmpty) ...[
           const SizedBox(height: 8),
           Align(
@@ -544,28 +674,55 @@ class _AddressFormSectionState extends State<AddressFormSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (effectiveShowMapPicker)
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  isResidential
-                      ? 'اختر موقعك من الخريطة'
-                      : 'اختر موقع المتجر من الخريطة',
-                  style: text.bodySmall?.copyWith(
-                    color: color.onSurfaceVariant,
+        if (effectiveShowMapPicker) ...[
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.tonalIcon(
+              onPressed: widget.onPickFromMap,
+              icon: Icon(
+                widget.position != null
+                    ? Icons.check_circle_rounded
+                    : Icons.map_outlined,
+                color: widget.position != null
+                    ? color.primary
+                    : color.onSurfaceVariant,
+              ),
+              label: Text(
+                widget.position != null
+                    ? '📍 تم تحديد الموقع على الخريطة (انقر للتغيير)'
+                    : (isResidential
+                        ? '🗺️ اختر موقعك من الخريطة'
+                        : '🗺️ اختر موقع المتجر من الخريطة'),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  color: widget.position != null
+                      ? color.primary
+                      : color.onSurface,
+                ),
+              ),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                  horizontal: 16,
+                ),
+                backgroundColor: widget.position != null
+                    ? color.primaryContainer.withValues(alpha: 0.5)
+                    : color.surfaceContainerHighest,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  side: BorderSide(
+                    color: widget.position != null
+                        ? color.primary
+                        : color.outlineVariant,
+                    width: widget.position != null ? 1.5 : 1,
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
-              IconButton.filledTonal(
-                onPressed: widget.onPickFromMap,
-                icon: const Icon(Icons.map),
-                tooltip: 'اختر من الخريطة',
-                iconSize: 24,
-              ),
-            ],
+            ),
           ),
+          const SizedBox(height: 8),
+        ],
         // Hide coordinates from UI; only show a hint when location is required
         // but not picked yet.
         if (effectiveShowMapPicker && widget.requirePosition && widget.position == null) ...[

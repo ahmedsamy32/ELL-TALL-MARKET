@@ -339,6 +339,12 @@ class SupabaseProvider with ChangeNotifier {
     String? storeDescription,
     String? category,
     String? storeLogoUrl,
+    String? merchantType,
+    String? payoutMethod,
+    String? payoutAccountDetails,
+    String? supplyAgreementType,
+    int? estimatedPrepTimeMinutes,
+    String? workingHours,
   }) async {
     _isLoading = true;
     _error = null;
@@ -368,6 +374,12 @@ class SupabaseProvider with ChangeNotifier {
           'store_latitude': storeLatitude,
           'store_longitude': storeLongitude,
           'store_description': storeDescription,
+          'merchant_type': ?merchantType,
+          'payout_method': ?payoutMethod,
+          'payout_details': ?payoutAccountDetails,
+          'supply_agreement_type': ?supplyAgreementType,
+          'estimated_prep_time_minutes': ?estimatedPrepTimeMinutes,
+          'working_hours': ?workingHours,
         };
 
         // إضافة الفئة إذا تم تحديدها

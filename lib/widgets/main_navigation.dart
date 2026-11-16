@@ -15,6 +15,8 @@ import 'package:ell_tall_market/providers/cart_provider.dart';
 import 'package:ell_tall_market/providers/notification_provider.dart';
 import 'package:ell_tall_market/providers/location_provider.dart';
 import 'package:ell_tall_market/providers/store_provider.dart';
+import 'package:ell_tall_market/providers/product_provider.dart';
+import 'package:ell_tall_market/providers/category_provider.dart';
 import 'package:ell_tall_market/services/google_maps_api_service.dart';
 import 'package:ell_tall_market/services/notification_service.dart';
 import 'package:ell_tall_market/utils/app_routes.dart';
@@ -388,7 +390,7 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
     }
   }
 
-  // جلب المتاجر القريبة من الموقع المحدد
+  // جلب المتاجر القريبة من الموقع المحدد ثم تحديث المنتجات والأقسام بنفس الزون
   Future<void> _fetchNearbyStores(double latitude, double longitude) async {
     try {
       final storeProvider = context.read<StoreProvider>();
@@ -397,9 +399,24 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
         longitude: longitude,
         maxDistanceKm: 15,
       );
+
+      if (!mounted) return;
+
+      final allowedStoreIds = storeProvider.nearbyStores
+          .map((s) => s.id)
+          .toList(growable: false);
+
       AppLogger.info(
         '🏪 تم تحديث المتاجر القريبة: ${storeProvider.nearbyStores.length} متجر',
       );
+
+      // إعادة تحميل المنتجات والأقسام مقيدةً بالمتاجر الجديدة فقط
+      final productProvider = context.read<ProductProvider>();
+      final categoryProvider = context.read<CategoryProvider>();
+      await Future.wait([
+        productProvider.fetchProducts(allowedStoreIds: allowedStoreIds),
+        categoryProvider.applyAvailabilityScope(allowedStoreIds: allowedStoreIds),
+      ]);
     } catch (e) {
       AppLogger.error('❌ خطأ في جلب المتاجر القريبة', e);
     }

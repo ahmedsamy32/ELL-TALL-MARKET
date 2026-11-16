@@ -30,16 +30,17 @@ class LocationProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      // التحقق من تفعيل خدمة الموقع
+      // 1. التحقق من تفعيل خدمة الموقع (GPS)
       bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
+        _permissionDenied = false;
         _error = 'خدمة الموقع غير مفعّلة';
         _isLoading = false;
         notifyListeners();
         return false;
       }
 
-      // التحقق من الصلاحيات
+      // 2. التحقق من الصلاحيات
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -60,27 +61,48 @@ class LocationProvider with ChangeNotifier {
         return false;
       }
 
-      // الحصول على الموقع
-      Position position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-          timeLimit: Duration(seconds: 10),
-        ),
-      );
+      // 3. كاش مبدئي إن وُجد
+      final lastPosition = await Geolocator.getLastKnownPosition();
+      if (lastPosition != null) {
+        _latitude = lastPosition.latitude;
+        _longitude = lastPosition.longitude;
+        _permissionDenied = false;
+        _error = null;
+        AppLogger.info('📍 تم تحديد الموقع المبدئي من الكاش: ($_latitude, $_longitude)');
+      }
 
-      _latitude = position.latitude;
-      _longitude = position.longitude;
-      _permissionDenied = false;
-      _error = null;
+      // 4. الحصول على الموقع المباشر الدقيق
+      try {
+        Position position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+            timeLimit: Duration(seconds: 10),
+          ),
+        );
 
-      AppLogger.info('📍 تم تحديد الموقع: ($_latitude, $_longitude)');
+        _latitude = position.latitude;
+        _longitude = position.longitude;
+        _permissionDenied = false;
+        _error = null;
+
+        AppLogger.info('📍 تم تحديد الموقع عبر GPS: ($_latitude, $_longitude)');
+      } catch (e) {
+        // إذا فشل الحصول على الموقع الدقيق، ولكن تم العثور على آخر موقع معروف من الكاش
+        if (_latitude != null && _longitude != null) {
+          AppLogger.warning('⚠️ تعذر جلب الموقع المباشر، تم الاعتماد على آخر موقع معروف.');
+          _isLoading = false;
+          notifyListeners();
+          return true;
+        }
+        rethrow;
+      }
 
       _isLoading = false;
       notifyListeners();
       return true;
     } catch (e) {
       AppLogger.error('❌ خطأ في تحديد الموقع', e);
-      _error = 'فشل في تحديد الموقع';
+      _error = 'فشل في تحديد الموقع. يرجى التأكد من تشغيل الـ GPS والإعدادات.';
       _isLoading = false;
       notifyListeners();
       return false;

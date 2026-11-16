@@ -870,7 +870,8 @@ class _SearchScreenState extends State<SearchScreen> {
                     onPressed: () async {
                       if (isDeniedForever) {
                         await Geolocator.openAppSettings();
-                        return;
+                      } else if (isServiceOff) {
+                        await Geolocator.openLocationSettings();
                       }
 
                       final got = await locationProvider.getCurrentLocation();
@@ -916,7 +917,38 @@ class _SearchScreenState extends State<SearchScreen> {
                   ),
                   if (isServiceOff)
                     OutlinedButton.icon(
-                      onPressed: () => Geolocator.openLocationSettings(),
+                      onPressed: () async {
+                        await Geolocator.openLocationSettings();
+                        final got = await locationProvider.getCurrentLocation();
+                        if (mounted && got && locationProvider.hasLocation) {
+                          final storeProvider = Provider.of<StoreProvider>(
+                            context,
+                            listen: false,
+                          );
+                          final categoryProvider = Provider.of<CategoryProvider>(
+                            context,
+                            listen: false,
+                          );
+
+                          await storeProvider.fetchNearbyStores(
+                            latitude: locationProvider.latitude!,
+                            longitude: locationProvider.longitude!,
+                            maxDistanceKm: 15,
+                          );
+
+                          final allowedStoreIds = storeProvider.nearbyStores
+                              .map((s) => s.id)
+                              .toList(growable: false);
+
+                          await categoryProvider.applyAvailabilityScope(
+                            allowedStoreIds: allowedStoreIds,
+                          );
+
+                          if (_searchController.text.isNotEmpty) {
+                            _performSearch(_searchController.text);
+                          }
+                        }
+                      },
                       icon: const Icon(Icons.location_on_outlined),
                       label: const Text(LocationUiText.secondaryButtonLabel),
                     ),

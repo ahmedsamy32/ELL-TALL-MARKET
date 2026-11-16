@@ -1,3 +1,4 @@
+import 'package:ell_tall_market/widgets/safe_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 
@@ -173,12 +174,12 @@ class _ProductOptionsBottomSheetState extends State<ProductOptionsBottomSheet> {
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: _currentImage != null
-                        ? Image.network(
-                            _currentImage!,
+                        ? SafeNetworkImage(
+                            imageUrl: _currentImage!,
                             width: 80,
                             height: 80,
                             fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => Container(
+                            errorWidget: Container(
                               color: Colors.grey[200],
                               width: 80,
                               height: 80,

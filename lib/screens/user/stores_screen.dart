@@ -523,7 +523,8 @@ class _StoresScreenState extends State<StoresScreen> {
                   onPressed: () async {
                     if (isDeniedForever) {
                       await Geolocator.openAppSettings();
-                      return;
+                    } else if (isServiceOff) {
+                      await Geolocator.openLocationSettings();
                     }
                     final got = await locationProvider.getCurrentLocation();
                     if (!mounted) return;
@@ -542,7 +543,13 @@ class _StoresScreenState extends State<StoresScreen> {
                 ),
                 if (isServiceOff)
                   OutlinedButton.icon(
-                    onPressed: () => Geolocator.openLocationSettings(),
+                    onPressed: () async {
+                      await Geolocator.openLocationSettings();
+                      final got = await locationProvider.getCurrentLocation();
+                      if (mounted && got) {
+                        await _loadData();
+                      }
+                    },
                     icon: const Icon(Icons.location_on_outlined),
                     label: const Text(LocationUiText.secondaryButtonLabel),
                   ),

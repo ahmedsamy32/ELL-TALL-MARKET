@@ -11,6 +11,7 @@ import 'package:ell_tall_market/providers/supabase_provider.dart';
 import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/services/product_service.dart';
 import 'package:ell_tall_market/screens/user/product_detail_screen.dart';
+import 'package:ell_tall_market/widgets/safe_network_image.dart';
 
 
 /// بوتوم شيت القسائم — المسجلة والمستخدمة
@@ -714,12 +715,12 @@ class _UserCouponsSheetState extends State<UserCouponsSheet>
                                         ClipRRect(
                                           borderRadius: BorderRadius.circular(6),
                                           child: product.imageUrl != null && product.imageUrl!.isNotEmpty
-                                              ? Image.network(
-                                                  product.imageUrl!,
+                                              ? SafeNetworkImage(
+                                                  imageUrl: product.imageUrl!,
                                                   width: 36,
                                                   height: 36,
                                                   fit: BoxFit.cover,
-                                                  errorBuilder: (context, error, stackTrace) => Container(
+                                                  errorWidget: Container(
                                                     width: 36,
                                                     height: 36,
                                                     color: Colors.grey[200],

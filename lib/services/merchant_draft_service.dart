@@ -6,6 +6,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// - يتم استخدامه لحفظ تقدم المستخدم في نموذج التسجيل متعدد الخطوات
 /// - لا يحتوي على أي معرفات حساسة؛ البيانات مؤقتة ويمكن مسحها
 class MerchantDraft {
+  // النوع وطريقة الأرباح
+  final String? merchantType; // 'supplier' or 'restaurant'
+  final String? payoutMethod; // 'instapay', 'vodafone_cash', 'bank_account', 'cash'
+  final String? payoutAccountDetails;
+  final String? supplyAgreementType; // 'consignment' or 'wholesale'
+  final int? estimatedPrepTimeMinutes;
+  final String? workingHours;
+
   // البيانات الشخصية
   final String? fullName;
   final String? email;
@@ -27,6 +35,12 @@ class MerchantDraft {
   final DateTime updatedAt;
 
   MerchantDraft({
+    this.merchantType,
+    this.payoutMethod,
+    this.payoutAccountDetails,
+    this.supplyAgreementType,
+    this.estimatedPrepTimeMinutes,
+    this.workingHours,
     this.fullName,
     this.email,
     this.phone,
@@ -47,6 +61,12 @@ class MerchantDraft {
 
   /// تحويل إلى خريطة JSON قابلة للتخزين
   Map<String, dynamic> toJson() => {
+    'merchantType': merchantType,
+    'payoutMethod': payoutMethod,
+    'payoutAccountDetails': payoutAccountDetails,
+    'supplyAgreementType': supplyAgreementType,
+    'estimatedPrepTimeMinutes': estimatedPrepTimeMinutes,
+    'workingHours': workingHours,
     'fullName': fullName,
     'email': email,
     'phone': phone,
@@ -73,8 +93,19 @@ class MerchantDraft {
       if (v is String) return double.tryParse(v);
       return null;
     }
+    int? asInt(dynamic v) {
+      if (v is num) return v.toInt();
+      if (v is String) return int.tryParse(v);
+      return null;
+    }
 
     return MerchantDraft(
+      merchantType: asString(json['merchantType']),
+      payoutMethod: asString(json['payoutMethod']),
+      payoutAccountDetails: asString(json['payoutAccountDetails']),
+      supplyAgreementType: asString(json['supplyAgreementType']),
+      estimatedPrepTimeMinutes: asInt(json['estimatedPrepTimeMinutes']),
+      workingHours: asString(json['workingHours']),
       fullName: asString(json['fullName']),
       email: asString(json['email']),
       phone: asString(json['phone']),
@@ -98,6 +129,12 @@ class MerchantDraft {
 
   /// نسخة جديدة مع تعديلات اختيارية
   MerchantDraft copyWith({
+    String? merchantType,
+    String? payoutMethod,
+    String? payoutAccountDetails,
+    String? supplyAgreementType,
+    int? estimatedPrepTimeMinutes,
+    String? workingHours,
     String? fullName,
     String? email,
     String? phone,
@@ -116,6 +153,13 @@ class MerchantDraft {
     DateTime? updatedAt,
   }) {
     return MerchantDraft(
+      merchantType: merchantType ?? this.merchantType,
+      payoutMethod: payoutMethod ?? this.payoutMethod,
+      payoutAccountDetails: payoutAccountDetails ?? this.payoutAccountDetails,
+      supplyAgreementType: supplyAgreementType ?? this.supplyAgreementType,
+      estimatedPrepTimeMinutes:
+          estimatedPrepTimeMinutes ?? this.estimatedPrepTimeMinutes,
+      workingHours: workingHours ?? this.workingHours,
       fullName: fullName ?? this.fullName,
       email: email ?? this.email,
       phone: phone ?? this.phone,
@@ -140,6 +184,8 @@ class MerchantDraft {
 
   /// هل جميع الحقول فارغة؟ (باستثناء updatedAt)
   bool get isEmpty =>
+      (merchantType == null || merchantType!.trim().isEmpty) &&
+      (payoutMethod == null || payoutMethod!.trim().isEmpty) &&
       (fullName == null || fullName!.trim().isEmpty) &&
       (email == null || email!.trim().isEmpty) &&
       (phone == null || phone!.trim().isEmpty) &&
