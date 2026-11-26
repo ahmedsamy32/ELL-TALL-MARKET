@@ -1,9 +1,11 @@
 import com.android.build.gradle.BaseExtension
+import com.android.build.api.dsl.LibraryExtension
 
 allprojects {
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
@@ -16,28 +18,6 @@ val newBuildDir: Directory = rootProject.layout.buildDirectory.dir("../../build"
 rootProject.layout.buildDirectory.value(newBuildDir)
 
 subprojects {
-    plugins.withId("com.android.library") {
-        val androidExt = extensions.findByName("android")
-        if (androidExt is org.gradle.api.plugins.ExtensionAware) {
-            if (androidExt.extensions.findByName("flutter") == null) {
-                androidExt.extensions.add(
-                    FlutterExtension::class.java,
-                    "flutter",
-                    FlutterExtension()
-                )
-            }
-        }
-
-        // Clean, type-safe configuration for all Android library subprojects (Flutter plugins)
-        (androidExt as? BaseExtension)?.apply {
-            compileSdkVersion(36)
-            ndkVersion = "27.0.12077973"
-            defaultConfig {
-                targetSdkVersion(36)
-            }
-        }
-    }
-
     val projectDir = project.projectDir.absolutePath
     val buildDir = newBuildDir.asFile.absolutePath
     val projectDrive = if (projectDir.contains(":\\")) projectDir.substringBefore(":\\").uppercase() else ""
@@ -47,6 +27,32 @@ subprojects {
         val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
         project.layout.buildDirectory.value(newSubprojectBuildDir)
     }
+
+    val applyConfig = Action<Project> {
+        plugins.withId("com.android.library") {
+            val androidExt = extensions.findByName("android")
+            if (androidExt is LibraryExtension) {
+                androidExt.compileSdk = 36
+                androidExt.ndkVersion = "27.0.12077973"
+            } else if (androidExt is BaseExtension) {
+                androidExt.compileSdkVersion(36)
+                androidExt.ndkVersion = "27.0.12077973"
+                androidExt.defaultConfig.targetSdkVersion(36)
+            }
+        }
+    }
+
+    if (state.executed) {
+        applyConfig.execute(this)
+    } else {
+        afterEvaluate {
+            applyConfig.execute(this)
+        }
+    }
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
 }
 
 // Clean task to clear temporary build artifacts

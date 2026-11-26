@@ -103,6 +103,56 @@ class AddressUtils {
     return s;
   }
 
+  /// توحيد الحروف العربية للمطابقة الدقيقة والتقريبية
+  static String normalizeArabic(String text) {
+    var s = text.trim();
+    if (s.isEmpty) return '';
+
+    // إزالة التشكيل
+    s = s.replaceAll(RegExp(r'[\u064B-\u065F\u0670]'), '');
+    // إزالة التطويل
+    s = s.replaceAll('\u0640', '');
+
+    // توحيد الهمزات والألف
+    s = s.replaceAll(RegExp(r'[إأآا]'), 'ا');
+    s = s.replaceAll('ة', 'ه');
+    s = s.replaceAll('ى', 'ي');
+    s = s.replaceAll('ؤ', 'و');
+    s = s.replaceAll('ئ', 'ي');
+
+    // إزالة الرموز وعلامات الترقيم
+    s = s.replaceAll(RegExp(r'[^\u0600-\u06FFa-zA-Z0-9\s]'), ' ');
+    s = s.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+
+    return s;
+  }
+
+  /// فحص تطابق منطقتين أو مدينتين (الزون) بمرونة وأمان
+  static bool matchesZone(String? a, String? b) {
+    if (a == null || b == null) return false;
+    final cleanA = canonicalForDedup(a);
+    final cleanB = canonicalForDedup(b);
+    final normA = normalizeArabic(cleanA);
+    final normB = normalizeArabic(cleanB);
+    if (normA.isEmpty || normB.isEmpty) return false;
+    if (normA == normB) return true;
+
+    // تطابق بالاحتواء للأسماء التي لا تقل عن 3 أحرف
+    if (normA.length >= 3 && normB.length >= 3) {
+      if (normA.contains(normB) || normB.contains(normA)) return true;
+    }
+
+    // مقارنة بدون "ال" التعريف
+    final noAlA = normA.replaceAll(RegExp(r'\bال'), '');
+    final noAlB = normB.replaceAll(RegExp(r'\bال'), '');
+    if (noAlA.isNotEmpty && noAlB.isNotEmpty && noAlA == noAlB) return true;
+    if (noAlA.length >= 3 && noAlB.length >= 3) {
+      if (noAlA.contains(noAlB) || noAlB.contains(noAlA)) return true;
+    }
+
+    return false;
+  }
+
   /// بناء عنوان عرض مع إزالة التكرارات
   ///
   /// يأخذ أجزاء العنوان ويدمجها بدون تكرار

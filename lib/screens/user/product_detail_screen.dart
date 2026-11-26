@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui' as ui;
-import 'package:cached_network_image/cached_network_image.dart';
+import 'package:ell_tall_market/widgets/safe_network_image.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/providers/cart_provider.dart';
@@ -523,13 +523,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           ),
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(12),
-                            child: widget.product.imageUrl != null
-                                ? Image.network(
-                                    widget.product.imageUrl!,
+                            child: widget.product.imageUrl != null && widget.product.imageUrl!.isNotEmpty
+                                ? SafeNetworkImage(
+                                    imageUrl: widget.product.imageUrl!,
                                     fit: BoxFit.cover,
-                                    errorBuilder: (context, error, stackTrace) {
-                                      return const Icon(Icons.image, size: 40);
-                                    },
+                                    errorWidget: const Icon(Icons.image, size: 40),
                                   )
                                 : const Icon(Icons.image, size: 40),
                           ),
@@ -1517,22 +1515,27 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             maxLines: 4,
             overflow: TextOverflow.ellipsis,
           ),
-          if (widget.product.customFields != null &&
-              widget.product.customFields!.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: _showSpecificationsSheet,
-              icon: const Icon(Icons.list_alt, size: 18),
-              label: const Text('تفاصيل المنتج'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: theme.colorScheme.primary,
-                side: BorderSide(color: theme.colorScheme.primary),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
+          Builder(
+            builder: (context) {
+              final specs = _getFilteredSpecifications();
+              if (specs.isEmpty) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: OutlinedButton.icon(
+                  onPressed: () => _showSpecificationsSheet(specs),
+                  icon: const Icon(Icons.list_alt, size: 18),
+                  label: const Text('تفاصيل المنتج'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: theme.colorScheme.primary,
+                    side: BorderSide(color: theme.colorScheme.primary),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ],
+              );
+            },
+          ),
           const SizedBox(height: 24),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -1665,10 +1668,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                             sigmaX: 12, // Reduced blur to make product replica ("خيال") more visible
                             sigmaY: 12,
                           ),
-                          child: CachedNetworkImage(
+                          child: SafeNetworkImage(
                             imageUrl: imageUrl,
                             fit: BoxFit.cover,
-                            errorWidget: (_, _, _) => const SizedBox.shrink(),
+                            errorWidget: const SizedBox.shrink(),
                           ),
                         ),
                       ),
@@ -1677,11 +1680,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                     Container(color: Colors.black.withValues(alpha: 0.15)),
                     // Foreground uncropped image
                     Center(
-                      child: CachedNetworkImage(
+                      child: SafeNetworkImage(
                         imageUrl: imageUrl,
                         fit: BoxFit.contain,
-                        errorWidget: (context, url, error) =>
-                            const Icon(Icons.broken_image, size: 50),
+                        errorWidget: const Icon(Icons.broken_image, size: 50),
                       ),
                     ),
                   ],
@@ -2544,7 +2546,67 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     }
   }
 
-  void _showSpecificationsSheet() {
+  Map<String, dynamic> _getFilteredSpecifications() {
+    if (widget.product.customFields == null) return {};
+
+    final filtered = <String, dynamic>{};
+    for (final entry in widget.product.customFields!.entries) {
+      final keyLower = entry.key.toLowerCase().trim();
+      final val = entry.value;
+      if (val == null) continue;
+      final valStr = val.toString().trim();
+      if (valStr.isEmpty) continue;
+
+      // استبعاد الباركود المحلي والرقم التسلسلي بناءً على طلب المستخدم
+      if (keyLower.contains('local') && keyLower.contains('barco')) continue;
+      if (keyLower == 'local_barcode' ||
+          keyLower == 'local_barcod' ||
+          keyLower == 'local barcode' ||
+          keyLower == 'localbarcode') {
+        continue;
+      }
+      if (keyLower.contains('باركود محلي') || keyLower.contains('الباركود المحلي')) {
+        continue;
+      }
+
+      if (keyLower.contains('serial')) continue;
+      if (keyLower.contains('تسلسلي')) continue;
+
+      filtered[_getSpecificationDisplayName(entry.key)] = valStr;
+    }
+    return filtered;
+  }
+
+  String _getSpecificationDisplayName(String key) {
+    final lower = key.toLowerCase().trim();
+    switch (lower) {
+      case 'brand':
+        return 'العلامة التجارية';
+      case 'size':
+        return 'المقاس / الحجم';
+      case 'color':
+        return 'اللون';
+      case 'warranty':
+        return 'الضمان';
+      case 'country_of_origin':
+      case 'origin':
+        return 'بلد المنشأ';
+      case 'international_barcode':
+        return 'الباركود الدولي';
+      case 'weight':
+        return 'الوزن';
+      case 'material':
+        return 'الخامة';
+      case 'expiry_date':
+        return 'تاريخ الصلاحية';
+      default:
+        return key;
+    }
+  }
+
+  void _showSpecificationsSheet([Map<String, dynamic>? specs]) {
+    final effectiveSpecs = specs ?? _getFilteredSpecifications();
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -2580,8 +2642,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                   ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 16),
-                if (widget.product.customFields == null ||
-                    widget.product.customFields!.isEmpty)
+                if (effectiveSpecs.isEmpty)
                   const Text('لا توجد مواصفات إضافية')
                 else
                   Flexible(
@@ -2591,9 +2652,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
                           color: Colors.grey.shade200,
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        children: widget.product.customFields!.entries.map((
-                          entry,
-                        ) {
+                        children: effectiveSpecs.entries.map((entry) {
                           return TableRow(
                             decoration: BoxDecoration(
                               color: Colors.grey.shade50,

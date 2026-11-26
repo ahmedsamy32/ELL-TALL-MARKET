@@ -25,6 +25,9 @@
   <!-- JsBarcode library for Code 128 / EAN thermal barcode printing -->
   <!--suppress JSUnresolvedLibraryURL -->
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <!-- SheetJS / xlsx for Bulk Excel/CSV Import -->
+  <!--suppress JSUnresolvedLibraryURL -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -132,6 +135,61 @@
         <div class="card-title">
           <i class="fa-solid fa-cart-plus text-primary"></i>
           <span id="addProductCardTitle">إدخال بيانات سلعة جديدة وسكان الباركود</span>
+          <!-- Bulk Import Button -->
+          <button type="button" class="btn btn-outline btn-sm bulk-import-toggle-btn" onclick="toggleBulkImportPanel()" title="استيراد عدة سلع دفعة واحدة من ملف Excel أو CSV">
+            <i class="fa-solid fa-file-excel"></i>
+            <span>استيراد جماعي (Excel / CSV)</span>
+          </button>
+        </div>
+
+        <!-- ==========================================
+             📦 Bulk Import Panel (Excel / CSV)
+             ========================================== -->
+        <div id="bulkImportPanel" class="bulk-import-panel hidden">
+          <div class="bulk-import-header">
+            <h4><i class="fa-solid fa-file-import"></i> الاستيراد الجماعي من Excel / CSV</h4>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="toggleBulkImportPanel()">
+              <i class="fa-solid fa-xmark"></i> إغلاق
+            </button>
+          </div>
+
+          <div class="bulk-import-actions">
+            <button type="button" class="btn btn-outline btn-sm" onclick="downloadBulkTemplate()" title="تحميل نموذج Excel جاهز لملء بياناته">
+              <i class="fa-solid fa-download"></i> تحميل قالب Excel النموذجي
+            </button>
+            <label class="btn btn-primary btn-sm" for="bulkImportFile" title="اختر ملف Excel أو CSV للاستيراد">
+              <i class="fa-solid fa-upload"></i> اختيار ملف Excel / CSV للرفع
+              <input type="file" id="bulkImportFile" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleBulkImportFile(this)">
+            </label>
+          </div>
+
+          <!-- Preview Table -->
+          <div id="bulkImportPreviewArea" class="hidden">
+            <div id="bulkImportValidationSummary" class="bulk-validation-summary"></div>
+            <div class="bulk-preview-table-wrapper">
+              <table id="bulkPreviewTable" class="bulk-preview-table">
+                <thead id="bulkPreviewHead"></thead>
+                <tbody id="bulkPreviewBody"></tbody>
+              </table>
+            </div>
+            <!-- Progress Bar -->
+            <div id="bulkProgressArea" class="bulk-progress-area hidden">
+              <div class="bulk-progress-label">
+                <span id="bulkProgressText">جاري الحفظ...</span>
+                <span id="bulkProgressCount">0 / 0</span>
+              </div>
+              <div class="bulk-progress-bar-track">
+                <div id="bulkProgressBar" class="bulk-progress-bar" style="width:0%"></div>
+              </div>
+            </div>
+            <div class="bulk-import-save-row">
+              <span id="bulkRowCount" class="bulk-row-count"></span>
+              <button type="button" class="btn btn-primary" id="btnSaveBulk" onclick="saveBulkProducts()">
+                <i class="fa-solid fa-floppy-disk"></i>
+                <span>حفظ جميع السلع بالمستودع دفعة واحدة</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         <form id="addProductForm">
@@ -160,7 +218,9 @@
             <!-- Product Name -->
             <div class="form-group">
               <label for="productName"><i class="fa-solid fa-tag"></i> اسم السلعة/المنتج</label>
-              <input type="text" id="productName" placeholder="مثال: جبنة عبور لاند 500 جرام" required>
+              <input type="text" id="productName" placeholder="مثال: جبنة عبور لاند 500 جرام" required
+                     oninput="smartAutoFill(this.value, 'product')" onpaste="setTimeout(()=>smartAutoFill(this.value,'product'),50)">
+              <div id="autoFillHints" class="autofill-hints hidden"></div>
             </div>
 
             <!-- Category -->
@@ -281,6 +341,60 @@
               <div id="productImageUploadStatus" class="image-upload-status hidden"></div>
             </div>
 
+            <!-- Multiple Gallery Images -->
+            <div class="form-group full-width gallery-section">
+              <div class="section-sub-header">
+                <label><i class="fa-solid fa-images"></i> معرض صور إضافية للمنتج (معرض الصور / Gallery)</label>
+                <div class="gallery-action-buttons">
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="triggerGalleryUpload('productGalleryFiles')">
+                    <i class="fa-solid fa-cloud-arrow-up"></i> <span>رفع صور متعددة</span>
+                  </button>
+                  <button type="button" class="btn btn-outline btn-sm" onclick="promptAddGalleryUrl('product')">
+                    <i class="fa-solid fa-link"></i> <span>إضافة رابط صورة</span>
+                  </button>
+                </div>
+              </div>
+              <input type="file" id="productGalleryFiles" accept="image/*" multiple class="hidden" onchange="handleGalleryFilesSelected(this, 'product')">
+              <div id="productGalleryGrid" class="gallery-grid"></div>
+              <div id="productGalleryStatus" class="image-upload-status hidden"></div>
+            </div>
+
+            <!-- Customer Options & Variants (variant_groups & variants) -->
+            <div class="form-group full-width specs-section">
+              <div class="section-sub-header">
+                <label><i class="fa-solid fa-sliders"></i> خيارات المنتج للعميل (الألوان والمقاسات والأحجام - variant_groups &amp; variants)</label>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="addCustomSpecRow('product')">
+                  <i class="fa-solid fa-plus"></i> <span>+ إضافة مجموعة خيار</span>
+                </button>
+              </div>
+              <div id="productSpecsContainer" class="specs-container"></div>
+
+              <!-- Auto-generated Variants Matrix Table -->
+              <div id="productVariantsMatrixSection" class="variants-matrix-section hidden">
+                <div class="variants-matrix-header">
+                  <span><i class="fa-solid fa-table-list"></i> جدول التركيبات والأسعار والمخزون (variants)</span>
+                  <button type="button" class="btn btn-outline btn-sm" onclick="applyBaseValuesToVariants('product')" title="نسخ السعر والكمية الأساسية إلى جميع الخيارات">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> تطبيق السعر والكمية الأساسية للكل
+                  </button>
+                </div>
+                <div class="variants-table-wrapper">
+                  <table class="variants-table">
+                    <thead>
+                      <tr>
+                        <th>الخيار / التركيبة</th>
+                        <th>السعر (ج.م)</th>
+                        <th>الكمية</th>
+                        <th>SKU / باركود فرعي</th>
+                        <th>صورة الخيار (رابط أو رفع)</th>
+                        <th>نشط</th>
+                      </tr>
+                    </thead>
+                    <tbody id="productVariantsTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
             <!-- Checkboxes for Stock and Active status -->
             <div class="form-group full-width checkboxes-row">
               <label class="checkbox-label" for="productInStock">
@@ -372,6 +486,20 @@
         <div class="card-title">
           <i class="fa-solid fa-boxes-packing text-primary"></i>
           <span>جرد المخزون الحالي بمستودع سوق التل</span>
+          <button type="button" id="btnFetchMissingImages" class="btn btn-lookup btn-sm" onclick="fetchMissingProductImages()" title="البحث عن الصور المفقودة للمنتجات ذات الباركود الدولي وتحديثها تلقائياً" style="margin-right:auto;margin-left:0;">
+            <i class="fa-solid fa-images"></i> <span>جلب الصور المفقودة تلقائياً</span>
+          </button>
+        </div>
+
+        <!-- Missing Images Progress Bar -->
+        <div id="missingImagesProgressArea" class="bulk-progress-area hidden" style="margin-bottom:14px;">
+          <div class="bulk-progress-label">
+            <span id="missingImagesProgressText">جاري البحث عن الصور المفقودة...</span>
+            <span id="missingImagesProgressCount">0 / 0</span>
+          </div>
+          <div class="bulk-progress-bar-track">
+            <div id="missingImagesProgressBar" class="bulk-progress-bar" style="width:0%"></div>
+          </div>
         </div>
 
         <!-- Filter Controls -->
@@ -678,6 +806,60 @@
             <div id="modalEditImageUploadStatus" class="image-upload-status hidden"></div>
           </div>
 
+          <!-- Multiple Gallery Images in Modal -->
+          <div class="form-group full-width gallery-section">
+            <div class="section-sub-header">
+              <label><i class="fa-solid fa-images"></i> معرض صور إضافية للمنتج (معرض الصور / Gallery)</label>
+              <div class="gallery-action-buttons">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="triggerGalleryUpload('modalEditGalleryFiles')">
+                  <i class="fa-solid fa-cloud-arrow-up"></i> <span>رفع صور متعددة</span>
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" onclick="promptAddGalleryUrl('modalEdit')">
+                  <i class="fa-solid fa-link"></i> <span>إضافة رابط صورة</span>
+                </button>
+              </div>
+            </div>
+            <input type="file" id="modalEditGalleryFiles" accept="image/*" multiple class="hidden" onchange="handleGalleryFilesSelected(this, 'modalEdit')">
+            <div id="modalEditGalleryGrid" class="gallery-grid"></div>
+            <div id="modalEditGalleryStatus" class="image-upload-status hidden"></div>
+          </div>
+
+          <!-- Customer Options & Variants in Modal -->
+          <div class="form-group full-width specs-section">
+            <div class="section-sub-header">
+              <label><i class="fa-solid fa-sliders"></i> خيارات المنتج للعميل (الألوان والمقاسات والأحجام - variant_groups &amp; variants)</label>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="addCustomSpecRow('modalEdit')">
+                <i class="fa-solid fa-plus"></i> <span>+ إضافة مجموعة خيار</span>
+              </button>
+            </div>
+            <div id="modalEditSpecsContainer" class="specs-container"></div>
+
+            <!-- Auto-generated Variants Matrix Table in Modal -->
+            <div id="modalEditVariantsMatrixSection" class="variants-matrix-section hidden">
+              <div class="variants-matrix-header">
+                <span><i class="fa-solid fa-table-list"></i> جدول التركيبات والأسعار والمخزون (variants)</span>
+                <button type="button" class="btn btn-outline btn-sm" onclick="applyBaseValuesToVariants('modalEdit')" title="نسخ السعر والكمية الأساسية إلى جميع الخيارات">
+                  <i class="fa-solid fa-wand-magic-sparkles"></i> تطبيق السعر والكمية الأساسية للكل
+                </button>
+              </div>
+              <div class="variants-table-wrapper">
+                <table class="variants-table">
+                  <thead>
+                    <tr>
+                      <th>الخيار / التركيبة</th>
+                      <th>السعر (ج.م)</th>
+                      <th>الكمية</th>
+                      <th>SKU / باركود فرعي</th>
+                      <th>صورة الخيار (رابط أو رفع)</th>
+                      <th>نشط</th>
+                    </tr>
+                  </thead>
+                  <tbody id="modalEditVariantsTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
           <!-- Checkboxes for Stock and Active status -->
           <div class="form-group full-width checkboxes-row">
             <label class="checkbox-label" for="modalEditInStock">
@@ -796,6 +978,49 @@
             <i class="fa-solid fa-circle-dot"></i> <span>التقاط وحفظ الصورة</span>
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Product Image Upload / Link Modal -->
+  <div id="quickImageModal" class="modal">
+    <div class="modal-content" style="max-width:460px;">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-image text-primary"></i> تحديث صورة المنتج السريع</h3>
+        <button type="button" class="btn btn-danger btn-modal-close" onclick="closeQuickImageModal()">✕</button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;">
+        <input type="hidden" id="quickImageProductId" value="">
+        <div id="quickImageProductName" style="font-weight:700;color:#0f172a;font-size:0.95rem;"></div>
+
+        <div style="text-align:center;">
+          <img id="quickImagePreview" src="logo.png" alt="معاينة الصورة" class="hidden" style="max-width:100%;max-height:180px;border-radius:10px;border:1px solid #e2e8f0;object-fit:contain;">
+        </div>
+
+        <div id="quickImagePasteZone" style="border:2px dashed #93c5fd;background:#eff6ff;border-radius:10px;padding:12px;text-align:center;color:#1d4ed8;font-size:0.86rem;font-weight:600;">
+          <i class="fa-solid fa-paste" style="font-size:1.1rem;margin-bottom:4px;display:block;"></i>
+          <span>اضغط <kbd style="background:#fff;border:1px solid #bfdbfe;border-radius:4px;padding:1px 6px;">Ctrl + V</kbd> للصق صورة منسوخة من الحافظة مباشرة</span>
+        </div>
+
+        <input type="file" id="quickImageFileInput" accept="image/*" class="hidden" onchange="handleQuickImageFileUpload(this)">
+        <button type="button" id="btnQuickUploadFromDevice" class="btn btn-primary" onclick="document.getElementById('quickImageFileInput').click()">
+          <i class="fa-solid fa-cloud-arrow-up"></i> <span>اختيار ورفع صورة من الجهاز</span>
+        </button>
+
+        <div style="display:flex;align-items:center;gap:8px;color:#94a3b8;font-size:0.82rem;">
+          <hr style="flex:1;border:none;border-top:1px solid #e2e8f0;">
+          <span>أو لصق رابط صورة مباشر</span>
+          <hr style="flex:1;border:none;border-top:1px solid #e2e8f0;">
+        </div>
+
+        <div style="display:flex;gap:8px;">
+          <input type="url" id="quickImageUrlInput" placeholder="https://example.com/image.jpg" style="flex:1;padding:8px 12px;border:1px solid #cbd5e1;border-radius:8px;">
+          <button type="button" id="btnQuickSaveUrl" class="btn btn-secondary btn-sm" onclick="saveQuickImageUrl()">
+            <i class="fa-solid fa-check"></i> حفظ الرابط
+          </button>
+        </div>
+
+        <div id="quickImageStatus" class="image-upload-status hidden"></div>
       </div>
     </div>
   </div>

@@ -12,6 +12,8 @@ let productsList = [];
 let cartItems = [];
 let html5QrCode = null;
 let isAppDataLoading = false;
+let productGalleryUrls = [];
+let modalEditGalleryUrls = [];
 
 // On DOM Ready
 document.addEventListener("DOMContentLoaded", async () => {
@@ -29,6 +31,7 @@ document.addEventListener("keydown", (e) => {
     closeEditModal();
     closeCameraModal();
     closeProductPhotoModal();
+    closeQuickImageModal();
   }
 });
 
@@ -505,7 +508,11 @@ function renderInventoryTable(items) {
         </td>
         <td>
           <div class="product-item-cell">
-            ${p.image_url ? `<img src="${p.image_url}" class="product-thumb" alt="${p.name || ''}" onclick="openFullImage('${p.image_url}')" title="انقر لعرض الصورة بحجمها الكامل" style="cursor: pointer;">` : ''}
+            <div class="product-thumb-wrapper" onclick="openQuickImageModal('${p.id}')" title="${p.image_url ? 'انقر لتغيير الصورة أو رفع صورة جديدة' : 'انقر لرفع صورة من الجهاز أو لصق رابط'}">
+              ${p.image_url
+                ? `<img src="${p.image_url}" class="product-thumb" alt="${escapeHtml(p.name || '')}"><div class="product-thumb-edit-overlay"><i class="fa-solid fa-camera"></i></div>`
+                : `<div class="product-thumb-placeholder"><i class="fa-solid fa-camera"></i></div>`}
+            </div>
             <div>
               <strong>${p.name || ''}</strong>
               <div class="product-desc-text">${p.description || ''}</div>
@@ -702,6 +709,36 @@ function openEditModal(productId) {
 
   updateImagePreview("modalEditImageUrl", "modalEditImagePreview", "modalEditImagePlaceholder");
 
+  // Populate Gallery
+  modalEditGalleryUrls = Array.isArray(p.image_urls) ? p.image_urls.filter(u => u && u !== p.image_url) : [];
+  renderGalleryGrid("modalEdit");
+
+  // Populate Customer Options (Variant Groups / Custom Fields)
+  const modalSpecs = document.getElementById("modalEditSpecsContainer");
+  if (modalSpecs) modalSpecs.innerHTML = "";
+  const standardKeys = new Set(['brand', 'size', 'color', 'warranty', 'country_of_origin', 'serial_number', 'local_barcode', 'international_barcode', 'fbn_barcode', 'origin', 'volume', 'weight']);
+
+  const loadedOptionKeys = new Set();
+  if (Array.isArray(p.variant_groups) && p.variant_groups.length > 0) {
+    for (const group of p.variant_groups) {
+      if (group && group.name) {
+        const values = Array.isArray(group.options) ? group.options.map(o => o.value || o.name).filter(Boolean) : [];
+        addCustomSpecRow("modalEdit", group.name, values.join(", "), group.type, true);
+        loadedOptionKeys.add(group.name.toLowerCase().trim());
+      }
+    }
+  }
+
+  if (p.custom_fields && typeof p.custom_fields === 'object') {
+    for (const [k, v] of Object.entries(p.custom_fields)) {
+      if (!standardKeys.has(k) && !loadedOptionKeys.has(k.toLowerCase().trim()) && v !== null && v !== undefined && String(v).trim() !== "") {
+        addCustomSpecRow("modalEdit", k, String(v), null, true);
+      }
+    }
+  }
+
+  syncVariantsTable("modalEdit", Array.isArray(p.variants) ? p.variants : []);
+
   document.getElementById("editProductModal").classList.add("active");
 }
 
@@ -772,6 +809,8 @@ async function saveModalEdit() {
       : {};
 
     const isLocal = barcode.startsWith("200");
+    const variantGroups = getVariantGroupsFromContainer("modalEdit");
+    const variants = getVariantsFromContainer("modalEdit", productId);
     const updatedCustomFields = {
       ...existingCustomFields,
       brand: brand || null,
@@ -784,6 +823,35 @@ async function saveModalEdit() {
       country_of_origin: origin || null
     };
 
+    // Ensure image is uploaded to cloud storage if it's currently a Base64 data URL
+    let finalCloudImageUrl = imageUrl;
+    if (finalCloudImageUrl && finalCloudImageUrl.startsWith("data:")) {
+      const cleanFileName = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+      const authUser = (await supabaseClient.auth.getUser())?.data?.user;
+      const userId = currentUser?.id || authUser?.id || 'admin';
+      const filePath = `${userId}/products/${targetStoreId || 'default'}/${cleanFileName}`;
+      const blob = dataURLtoBlob(finalCloudImageUrl);
+      const { data: upData, error: upErr } = await supabaseClient.storage
+        .from("products")
+        .upload(filePath, blob, { contentType: 'image/jpeg', upsert: true });
+
+      if (upErr) {
+        throw new Error(`تعذر رفع الصورة إلى سحابة التخزين (${upErr.message}). يرجى التأكد من تشغيل صلاحية مدير المتجر / المسؤول في Supabase Storage.`);
+      }
+
+      if (upData) {
+        const { data: pubData } = supabaseClient.storage.from("products").getPublicUrl(filePath);
+        if (pubData && pubData.publicUrl) {
+          finalCloudImageUrl = pubData.publicUrl;
+          const inputEl = document.getElementById("modalEditImageUrl");
+          if (inputEl) inputEl.value = finalCloudImageUrl;
+        }
+      }
+    }
+
+    const allImages = [finalCloudImageUrl, ...modalEditGalleryUrls].filter(Boolean);
+    const uniqueImages = Array.from(new Set(allImages));
+
     const updatePayload = {
       barcode: barcode,
       name: name,
@@ -795,10 +863,12 @@ async function saveModalEdit() {
       stock_quantity: stockQuantity,
       in_stock: inStock,
       is_active: isActive,
-      image_url: imageUrl || null,
-      image_urls: (imageUrl && !imageUrl.startsWith('data:')) ? [imageUrl] : null,
+      image_url: finalCloudImageUrl || (uniqueImages.length > 0 ? uniqueImages[0] : null),
+      image_urls: uniqueImages.length > 0 ? uniqueImages : null,
       description: description || null,
-      custom_fields: updatedCustomFields
+      custom_fields: updatedCustomFields,
+      variant_groups: variantGroups.length > 0 ? variantGroups : null,
+      variants: variants.length > 0 ? variants : null
     };
 
     const { error } = await supabaseClient
@@ -900,6 +970,16 @@ function cancelEditMode() {
 
   const originInput = document.getElementById("productOrigin");
   if (originInput) originInput.value = "";
+
+  // Reset Gallery, Options & Variants
+  productGalleryUrls = [];
+  renderGalleryGrid("product");
+  const specsContainer = document.getElementById("productSpecsContainer");
+  if (specsContainer) specsContainer.innerHTML = "";
+  const variantsBody = document.getElementById("productVariantsTableBody");
+  if (variantsBody) variantsBody.innerHTML = "";
+  const variantsSection = document.getElementById("productVariantsMatrixSection");
+  if (variantsSection) variantsSection.classList.add("hidden");
 
   updateImagePreview("productImageUrl", "productImagePreview", "productImagePlaceholder");
 }
@@ -1034,6 +1114,41 @@ function populateProductForm(prod, prefix = "product", overrideBarcode = "") {
   if (descInput) descInput.value = prod.description || "";
 
   updateImagePreview(`${prefix}ImageUrl`, `${prefix}ImagePreview`, `${prefix}ImagePlaceholder`);
+
+  // Populate Gallery
+  const galleryList = Array.isArray(prod.image_urls) ? prod.image_urls.filter(u => u && u !== prod.image_url) : [];
+  if (prefix === "product") {
+    productGalleryUrls = [...galleryList];
+  } else {
+    modalEditGalleryUrls = [...galleryList];
+  }
+  renderGalleryGrid(prefix);
+
+  // Populate Customer Options (Variant Groups / Custom Fields)
+  const specsCont = document.getElementById(`${prefix}SpecsContainer`);
+  if (specsCont) specsCont.innerHTML = "";
+  const standardKeys = new Set(['brand', 'size', 'color', 'warranty', 'country_of_origin', 'serial_number', 'local_barcode', 'international_barcode', 'fbn_barcode', 'origin', 'volume', 'weight']);
+
+  const loadedOptionKeys = new Set();
+  if (Array.isArray(prod.variant_groups) && prod.variant_groups.length > 0) {
+    for (const group of prod.variant_groups) {
+      if (group && group.name) {
+        const values = Array.isArray(group.options) ? group.options.map(o => o.value || o.name).filter(Boolean) : [];
+        addCustomSpecRow(prefix, group.name, values.join(", "), group.type, true);
+        loadedOptionKeys.add(group.name.toLowerCase().trim());
+      }
+    }
+  }
+
+  if (prod.custom_fields && typeof prod.custom_fields === 'object') {
+    for (const [k, v] of Object.entries(prod.custom_fields)) {
+      if (!standardKeys.has(k) && !loadedOptionKeys.has(k.toLowerCase().trim()) && v !== null && v !== undefined && String(v).trim() !== "") {
+        addCustomSpecRow(prefix, k, String(v), null, true);
+      }
+    }
+  }
+
+  syncVariantsTable(prefix, Array.isArray(prod.variants) ? prod.variants : []);
 
   if (prefix === "product") {
     const editingIdInput = document.getElementById("editingProductId");
@@ -1183,6 +1298,13 @@ function initFormListeners() {
 
   const filterSupplier = document.getElementById("filterSupplier");
   if (filterSupplier) filterSupplier.addEventListener("change", applyInventoryFilter);
+
+  // Smart Auto-Fill: listen to product name input
+  const productNameInput = document.getElementById("productName");
+  if (productNameInput) {
+    productNameInput.addEventListener("input", () => smartAutoFill(productNameInput.value, "product"));
+    productNameInput.addEventListener("paste", () => setTimeout(() => smartAutoFill(productNameInput.value, "product"), 50));
+  }
 }
 
 // Save Product to Supabase (Add or Edit)
@@ -1252,6 +1374,8 @@ async function saveProduct() {
     }
 
     const isLocal = barcode.startsWith("200");
+    const variantGroups = getVariantGroupsFromContainer("product");
+    const variants = getVariantsFromContainer("product", editingId || "");
     const updatedCustomFields = {
       ...existingCustomFields,
       brand: brand || null,
@@ -1263,6 +1387,35 @@ async function saveProduct() {
       warranty: warranty || null,
       country_of_origin: origin || null
     };
+
+    // Ensure image is uploaded to cloud storage if it's currently a Base64 data URL
+    let finalCloudImageUrl = imageUrl;
+    if (finalCloudImageUrl && finalCloudImageUrl.startsWith("data:")) {
+      const cleanFileName = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+      const authUser = (await supabaseClient.auth.getUser())?.data?.user;
+      const userId = currentUser?.id || authUser?.id || 'admin';
+      const filePath = `${userId}/products/${targetStoreId || 'default'}/${cleanFileName}`;
+      const blob = dataURLtoBlob(finalCloudImageUrl);
+      const { data: upData, error: upErr } = await supabaseClient.storage
+        .from("products")
+        .upload(filePath, blob, { contentType: 'image/jpeg', upsert: true });
+
+      if (upErr) {
+        throw new Error(`تعذر رفع الصورة إلى سحابة التخزين (${upErr.message}). يرجى التأكد من تشغيل صلاحية مدير المتجر / المسؤول في Supabase Storage.`);
+      }
+
+      if (upData) {
+        const { data: pubData } = supabaseClient.storage.from("products").getPublicUrl(filePath);
+        if (pubData && pubData.publicUrl) {
+          finalCloudImageUrl = pubData.publicUrl;
+          const inputEl = document.getElementById("productImageUrl");
+          if (inputEl) inputEl.value = finalCloudImageUrl;
+        }
+      }
+    }
+
+    const allImages = [finalCloudImageUrl, ...productGalleryUrls].filter(Boolean);
+    const uniqueImages = Array.from(new Set(allImages));
 
     const productPayload = {
       barcode: barcode,
@@ -1276,9 +1429,11 @@ async function saveProduct() {
       in_stock: inStock,
       is_active: isActive,
       description: description || null,
-      image_url: imageUrl || null,
-      image_urls: (imageUrl && !imageUrl.startsWith('data:')) ? [imageUrl] : null,
-      custom_fields: updatedCustomFields
+      image_url: finalCloudImageUrl || (uniqueImages.length > 0 ? uniqueImages[0] : null),
+      image_urls: uniqueImages.length > 0 ? uniqueImages : null,
+      custom_fields: updatedCustomFields,
+      variant_groups: variantGroups.length > 0 ? variantGroups : null,
+      variants: variants.length > 0 ? variants : null
     };
 
     let res;
@@ -1765,6 +1920,46 @@ function parseGlobalProductData(p) {
   };
 }
 
+// Parse data from UPCitemdb API response (احتياطي للإلكترونيات والمنتجات العامة)
+function parseUpcItemDbData(item) {
+  if (!item || !item.title) return null;
+  const name = item.title || '';
+  const brand = item.brand || '';
+  const size  = item.size || item.dimension || item.weight || '';
+  const imageUrl = (Array.isArray(item.images) && item.images.length > 0) ? item.images[0] : '';
+  const description = item.description || item.category || '';
+  const country = item.origin || '';
+  const categoryHint = item.category || '';
+  return { name: name.trim(), brand: brand.trim(), size: size.trim(), imageUrl: imageUrl.trim(), categoryHint: categoryHint.trim(), country: country.trim(), description: description.trim() };
+}
+
+// Lookup barcode via Supabase Edge Function (Google Shopping / Google Egypt)
+async function lookupBarcodeFromGoogleEdge(barcode) {
+  try {
+    const response = await fetch(
+      "https://ebbkdhmwaawzxbidjynz.supabase.co/functions/v1/barcode-google-lookup",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": SUPABASE_ANON_KEY,
+          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({ barcode }),
+      }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data && data.found && data.product) {
+      return data.product;
+    }
+    return null;
+  } catch (err) {
+    console.warn("Google Edge lookup error:", err);
+    return null;
+  }
+}
+
 async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = false) {
   const prefix = isModal ? "modalEdit" : "product";
   const targetId = inputElementId || `${prefix}Barcode`;
@@ -1859,6 +2054,7 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
         return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(t));
       };
 
+      // محاولة 1: Open Food Facts (العالمي + مصر)
       const [offRes, egRes] = await Promise.allSettled([
         fetchWithTimeout(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(barcode)}.json`),
         fetchWithTimeout(`https://eg.openfoodfacts.org/api/v0/product/${encodeURIComponent(barcode)}.json`)
@@ -1875,6 +2071,25 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
         const data = await egRes.value.json();
         if (data && (data.status === 1 || data.status_verbose === "product found") && data.product) {
           result = parseGlobalProductData(data.product);
+        }
+      }
+
+      // محاولة 2: Google Edge Function (احتياطي للمنتجات المصرية والدولية عبر Supabase)
+      // يُستدعى إذا لم يُعثر على اسم المنتج أو كانت صورته فارغة
+      if (!result || !result.name || !result.imageUrl) {
+        showStatus(`جاري البحث في قاعدة البيانات الدولية (${barcode})...`, "loading");
+        const googleProduct = await lookupBarcodeFromGoogleEdge(barcode);
+        console.log(`[Google Edge barcode-google-lookup] barcode=${barcode} →`, googleProduct);
+        if (googleProduct) {
+          result = {
+            name:        result?.name        || googleProduct.name        || "",
+            brand:       result?.brand       || googleProduct.brand       || "",
+            size:        result?.size        || googleProduct.size        || "",
+            country:     result?.country     || googleProduct.country     || (barcode.startsWith("622") ? "مصر" : ""),
+            imageUrl:    result?.imageUrl    || googleProduct.image_url   || "",
+            description: result?.description || googleProduct.description || "",
+            categoryHint: result?.categoryHint || "",
+          };
         }
       }
     } catch (e) {
@@ -2671,27 +2886,39 @@ async function handleImageFileSelected(fileInput, urlInputId, previewImgId, plac
   try {
     // 1. Client-side Image Optimization via Canvas (scales to max 1000px WebP/JPEG)
     const compressedDataUrl = await compressImageFile(file, 1000, 0.82);
+    const compressedBlob = dataURLtoBlob(compressedDataUrl);
 
     // 2. Try uploading to Supabase Storage bucket 'products'
     let finalImageUrl = compressedDataUrl;
     let uploadedToStorage = false;
+    let storageErrorMessage = null;
 
     try {
       if (supabaseClient && supabaseClient.storage) {
         showUploadStatus('<i class="fa-solid fa-spinner fa-spin"></i> جاري رفع الصورة إلى سحابة التخزين...', 'loading');
-        const fileExt = (file.name.split('.').pop() || 'jpg').toLowerCase();
-        const cleanFileName = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
-        const userFolder = currentUser?.id || 'admin';
-        const filePath = `${userFolder}/${cleanFileName}`;
+        const cleanFileName = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+
+        // Determine target store ID from UI
+        const isModal = urlInputId.startsWith("modalEdit");
+        const supplierSelect = document.getElementById(isModal ? "modalEditSupplier" : "productSupplier");
+        const storeId = (supplierSelect && supplierSelect.value) ? supplierSelect.value : (suppliers[0]?.id || 'default');
+        const authUser = (await supabaseClient.auth.getUser())?.data?.user;
+        const userId = currentUser?.id || authUser?.id || 'admin';
+
+        // Path standard: {userId}/products/{storeId}/{cleanFileName}
+        const filePath = `${userId}/products/${storeId}/${cleanFileName}`;
 
         const { data: uploadData, error: uploadErr } = await supabaseClient.storage
           .from("products")
-          .upload(filePath, file, {
-            contentType: file.type || 'image/jpeg',
+          .upload(filePath, compressedBlob, {
+            contentType: 'image/jpeg',
             upsert: true
           });
 
-        if (!uploadErr && uploadData) {
+        if (uploadErr) {
+          console.error("Storage upload error:", uploadErr);
+          storageErrorMessage = uploadErr.message || "فشل التحقق من صلاحيات التخزين";
+        } else if (uploadData) {
           const { data: publicData } = supabaseClient.storage
             .from("products")
             .getPublicUrl(filePath);
@@ -2704,6 +2931,7 @@ async function handleImageFileSelected(fileInput, urlInputId, previewImgId, plac
       }
     } catch (storageErr) {
       console.warn("Storage upload fallback to compressed Data URL:", storageErr);
+      storageErrorMessage = storageErr.message;
     }
 
     // 3. Set URL in input
@@ -2715,11 +2943,18 @@ async function handleImageFileSelected(fileInput, urlInputId, previewImgId, plac
     // 4. Update preview box
     updateImagePreview(urlInputId, previewImgId, placeholderId);
 
-    showUploadStatus(`
-      <i class="fa-solid fa-circle-check"></i>
-      <span>تمت إضافة الصورة بنجاح ${uploadedToStorage ? '(مرفوعة إلى سحابة التخزين)' : ''}!</span>
-    `, 'success');
-    setTimeout(hideUploadStatus, 4000);
+    if (uploadedToStorage) {
+      showUploadStatus(`
+        <i class="fa-solid fa-circle-check"></i>
+        <span>تم رفع الصورة بنجاح إلى سحابة التخزين (Supabase Storage)!</span>
+      `, 'success');
+      setTimeout(hideUploadStatus, 4000);
+    } else {
+      showUploadStatus(`
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <span>تحذير: تعذر رفع الصورة إلى سحابة التخزين (${storageErrorMessage || 'خطأ في صلاحيات Storage'}). يرجى التأكد من تشغيل صلاحية مدير المتجر في Supabase.</span>
+      `, 'error');
+    }
 
   } catch (err) {
     console.error("Image processing error:", err);
@@ -2730,7 +2965,19 @@ async function handleImageFileSelected(fileInput, urlInputId, previewImgId, plac
   }
 }
 
-function compressImageFile(file, maxDimension = 1000, quality = 0.82) {
+function dataURLtoBlob(dataurl) {
+  const arr = dataurl.split(',');
+  const mime = arr[0].match(/:(.*?);/)[1];
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new Blob([u8arr], { type: mime });
+}
+
+function compressImageFile(file, maxDimension = 1000, quality = 0.82, outputMime = "image/jpeg") {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -2755,7 +3002,7 @@ function compressImageFile(file, maxDimension = 1000, quality = 0.82) {
         const ctx = canvas.getContext("2d");
         ctx.drawImage(img, 0, 0, width, height);
 
-        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        const dataUrl = canvas.toDataURL(outputMime, quality);
         resolve(dataUrl);
       };
       img.onerror = () => reject(new Error("فشل قراءة ملف الصورة"));
@@ -2764,4 +3011,1594 @@ function compressImageFile(file, maxDimension = 1000, quality = 0.82) {
     reader.onerror = () => reject(new Error("فشل فتح الملف من جهازك"));
     reader.readAsDataURL(file);
   });
+}
+
+// ----------------------------------------------------
+// Product Gallery & Custom Specifications Helpers
+// ----------------------------------------------------
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function triggerGalleryUpload(inputId) {
+  const el = document.getElementById(inputId);
+  if (el) el.click();
+}
+
+function promptAddGalleryUrl(prefix) {
+  const url = prompt("أدخل رابط الصورة الإضافية المباشر (https://...):");
+  if (url && url.trim().startsWith("http")) {
+    const list = prefix === "product" ? productGalleryUrls : modalEditGalleryUrls;
+    list.push(url.trim());
+    renderGalleryGrid(prefix);
+  }
+}
+
+function removeGalleryImage(prefix, index) {
+  const list = prefix === "product" ? productGalleryUrls : modalEditGalleryUrls;
+  list.splice(index, 1);
+  renderGalleryGrid(prefix);
+}
+
+function renderGalleryGrid(prefix) {
+  const grid = document.getElementById(`${prefix}GalleryGrid`);
+  if (!grid) return;
+  const list = prefix === "product" ? productGalleryUrls : modalEditGalleryUrls;
+  grid.innerHTML = list.map((url, idx) => `
+    <div class="gallery-thumb-item">
+      <img src="${url}" alt="صورة إضافية ${idx + 1}" onclick="window.open('${url}', '_blank')">
+      <span class="gallery-thumb-badge">${idx + 1}</span>
+      <button type="button" class="gallery-thumb-delete" onclick="removeGalleryImage('${prefix}', ${idx})" title="حذف هذه الصورة">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+  `).join("");
+}
+
+async function handleGalleryFilesSelected(fileInput, prefix) {
+  const files = Array.from(fileInput.files || []);
+  if (files.length === 0) return;
+
+  const statusEl = document.getElementById(`${prefix}GalleryStatus`);
+  const showStatus = (msg, type = 'loading') => {
+    if (!statusEl) return;
+    statusEl.innerHTML = msg;
+    statusEl.className = `image-upload-status ${type}`;
+    statusEl.classList.remove("hidden");
+  };
+  const hideStatus = () => {
+    if (statusEl) statusEl.classList.add("hidden");
+  };
+
+  showStatus(`<i class="fa-solid fa-spinner fa-spin"></i> جاري تجهيز ورفع ${files.length} صورة إلى التخزين...`, 'loading');
+
+  try {
+    const authUser = (await supabaseClient.auth.getUser())?.data?.user;
+    const userId = currentUser?.id || authUser?.id || 'admin';
+    const isModal = prefix === "modalEdit";
+    const supplierSelect = document.getElementById(isModal ? "modalEditSupplier" : "productSupplier");
+    const storeId = (supplierSelect && supplierSelect.value) ? supplierSelect.value : (suppliers[0]?.id || 'default');
+
+    const list = prefix === "product" ? productGalleryUrls : modalEditGalleryUrls;
+    let successCount = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      showStatus(`<i class="fa-solid fa-spinner fa-spin"></i> جاري رفع الصورة (${i + 1} من ${files.length})...`, 'loading');
+
+      try {
+        const compressedDataUrl = await compressImageFile(file, 1000, 0.82);
+        const compressedBlob = dataURLtoBlob(compressedDataUrl);
+        const cleanFileName = `gallery_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+        const filePath = `${userId}/products/${storeId}/${cleanFileName}`;
+
+        const { data: uploadData, error: uploadErr } = await supabaseClient.storage
+          .from("products")
+          .upload(filePath, compressedBlob, { contentType: 'image/jpeg', upsert: true });
+
+        if (!uploadErr && uploadData) {
+          const { data: publicData } = supabaseClient.storage.from("products").getPublicUrl(filePath);
+          if (publicData && publicData.publicUrl) {
+            list.push(publicData.publicUrl);
+            successCount++;
+          }
+        } else {
+          console.error("Gallery file upload error:", uploadErr);
+        }
+      } catch (fErr) {
+        console.error("Error processing gallery file:", fErr);
+      }
+    }
+
+    renderGalleryGrid(prefix);
+
+    if (successCount > 0) {
+      showStatus(`<i class="fa-solid fa-circle-check"></i> تم رفع ${successCount} صورة بنجاح إلى المعرض!`, 'success');
+      setTimeout(hideStatus, 4000);
+    } else {
+      showStatus(`<i class="fa-solid fa-triangle-exclamation"></i> تعذر رفع الصور. يرجى التأكد من تشغيل صلاحية مدير المتجر في Supabase.`, 'error');
+      setTimeout(hideStatus, 5000);
+    }
+  } catch (err) {
+    console.error("Gallery upload error:", err);
+    showStatus(`❌ حدث خطأ أثناء رفع صور المعرض: ${err.message}`, 'error');
+  } finally {
+    fileInput.value = "";
+  }
+}
+
+// Color map for visual dots in options chips
+const OPTION_COLOR_HEX_MAP = {
+  'أسود': '#111827', 'black': '#111827',
+  'أبيض': '#ffffff', 'white': '#ffffff',
+  'أحمر': '#ef4444', 'red': '#ef4444',
+  'أزرق': '#3b82f6', 'blue': '#3b82f6',
+  'كحلي': '#1e3a8a', 'navy': '#1e3a8a',
+  'أخضر': '#22c55e', 'green': '#22c55e',
+  'أصفر': '#eab308', 'yellow': '#eab308',
+  'برتقالي': '#f97316', 'orange': '#f97316',
+  'رمادي': '#6b7280', 'gray': '#6b7280', 'grey': '#6b7280',
+  'بيج': '#d2b48c', 'beige': '#d2b48c',
+  'بني': '#78350f', 'brown': '#78350f',
+  'فضي': '#94a3b8', 'silver': '#94a3b8',
+  'ذهبي': '#d97706', 'gold': '#d97706',
+  'وردي': '#ec4899', 'pink': '#ec4899',
+  'بنفسجي': '#8b5cf6', 'purple': '#8b5cf6'
+};
+
+function detectOptionType(key) {
+  if (!key) return 'color';
+  const k = key.toLowerCase().trim();
+  if (k.includes('لون') || k.includes('color') || k.includes('ألوان')) return 'color';
+  if (k.includes('مقاس') || k.includes('size')) return 'size';
+  if (k.includes('وزن') || k.includes('حجم') || k.includes('weight') || k.includes('volume')) return 'weight';
+  if (k.includes('سعة') || k.includes('capacity') || k.includes('ذاكرة')) return 'capacity';
+  return 'custom';
+}
+
+function addCustomSpecRow(prefix, key = '', value = '', forcedType = null, skipSync = false) {
+  const container = document.getElementById(`${prefix}SpecsContainer`);
+  if (!container) return;
+
+  // Determine initial option type
+  let initialType = forcedType;
+  if (!initialType) {
+    initialType = key ? detectOptionType(key) : 'color';
+  }
+
+  // If no key given, default to the type's Arabic name
+  if (!key) {
+    if (initialType === 'color') key = 'اللون';
+    else if (initialType === 'size') key = 'المقاس';
+    else if (initialType === 'weight') key = 'الحجم / الوزن';
+    else if (initialType === 'capacity') key = 'السعة';
+    else key = '';
+  }
+
+  // Parse initial values (could be array or comma-separated string)
+  let values = [];
+  if (Array.isArray(value)) {
+    values = value.map(v => String(v || '').trim()).filter(Boolean);
+  } else if (typeof value === 'string' && value.trim()) {
+    values = value.split(/[,،]/).map(v => v.trim()).filter(Boolean);
+  }
+
+  const row = document.createElement("div");
+  row.className = "spec-row option-row-card";
+
+  row.innerHTML = `
+    <div class="option-card-header">
+      <select class="option-type-select" title="نوع خيار العميل">
+        <option value="color" ${initialType === 'color' ? 'selected' : ''}>🎨 اللون (Colors)</option>
+        <option value="size" ${initialType === 'size' ? 'selected' : ''}>👕 المقاس (Sizes)</option>
+        <option value="weight" ${initialType === 'weight' ? 'selected' : ''}>⚖️ الحجم / الوزن (Volume/Weight)</option>
+        <option value="capacity" ${initialType === 'capacity' ? 'selected' : ''}>💾 السعة / الذاكرة (Capacity)</option>
+        <option value="custom" ${initialType === 'custom' ? 'selected' : ''}>⚙️ خيار مخصص...</option>
+      </select>
+      <input type="text" class="spec-key option-name-input" placeholder="اسم الخيار (مثال: اللون، المقاس)..." value="${escapeHtml(key)}">
+      <button type="button" class="spec-row-delete-btn option-delete-btn" title="حذف هذا الخيار بالكامل">
+        <i class="fa-solid fa-trash-can"></i>
+      </button>
+    </div>
+
+    <!-- Presets bar for quick addition -->
+    <div class="option-presets-bar"></div>
+
+    <!-- Chips / Tags container -->
+    <div class="option-chips-container"></div>
+
+    <!-- Input to add custom or typed values -->
+    <div class="option-add-value-group">
+      <input type="text" class="option-add-value-input" placeholder="اكتب قيمة واضغط Enter (أو الصق قيماً مفصولة بفاصلة: أحمر, أزرق)...">
+      <button type="button" class="btn btn-secondary btn-sm btn-add-val">
+        <i class="fa-solid fa-plus"></i> <span>إضافة</span>
+      </button>
+    </div>
+
+    <!-- Hidden input holding comma-separated string for 100% backward compatibility -->
+    <input type="hidden" class="spec-val" value="${escapeHtml(values.join(', '))}">
+  `;
+
+  // Internal state for this row's values
+  let currentValues = [...values];
+  let currentType = initialType;
+
+  const typeSelect = row.querySelector(".option-type-select");
+  const nameInput = row.querySelector(".spec-key");
+  const deleteBtn = row.querySelector(".option-delete-btn");
+  const presetsBar = row.querySelector(".option-presets-bar");
+  const chipsContainer = row.querySelector(".option-chips-container");
+  const addValueInput = row.querySelector(".option-add-value-input");
+  const addValueBtn = row.querySelector(".btn-add-val");
+  const hiddenValInput = row.querySelector(".spec-val");
+
+  let isInitialRender = true;
+  const syncValues = () => {
+    hiddenValInput.value = currentValues.join(", ");
+    if (!(skipSync && isInitialRender)) {
+      syncVariantsTable(prefix);
+    }
+  };
+
+  const renderChips = () => {
+    chipsContainer.innerHTML = "";
+    if (currentValues.length === 0) {
+      chipsContainer.innerHTML = `<span style="font-size:0.8rem;color:#94a3b8;font-style:italic;">لم يتم إضافة أي خيارات بعد. اضغط على الأزرار السريعة بالأعلى أو اكتب في الحقل أدناه.</span>`;
+      syncValues();
+      return;
+    }
+
+    currentValues.forEach((val, idx) => {
+      const chip = document.createElement("span");
+      chip.className = "option-value-chip";
+
+      let colorDotHtml = "";
+      const hex = OPTION_COLOR_HEX_MAP[val.toLowerCase()] || (val.startsWith("#") ? val : null);
+      if (hex) {
+        colorDotHtml = `<span class="color-dot" style="background-color: ${hex};"></span>`;
+      }
+
+      chip.innerHTML = `
+        ${colorDotHtml}
+        <span>${escapeHtml(val)}</span>
+        <button type="button" class="chip-remove-btn" title="حذف هذا الخيار">✕</button>
+      `;
+
+      chip.querySelector(".chip-remove-btn").addEventListener("click", () => {
+        currentValues.splice(idx, 1);
+        renderChips();
+      });
+
+      chipsContainer.appendChild(chip);
+    });
+
+    syncValues();
+  };
+
+  const addValues = (rawStr) => {
+    if (!rawStr) return;
+    const items = rawStr.split(/[,،]/).map(s => s.trim()).filter(Boolean);
+    let changed = false;
+    items.forEach(item => {
+      if (!currentValues.includes(item)) {
+        currentValues.push(item);
+        changed = true;
+      }
+    });
+    if (changed) {
+      renderChips();
+    }
+  };
+
+  const renderPresets = () => {
+    presetsBar.innerHTML = "";
+
+    if (currentType === "color") {
+      const colors = ['أسود', 'أبيض', 'أحمر', 'أزرق', 'كحلي', 'أخضر', 'أصفر', 'رمادي', 'بيج', 'بني', 'فضي', 'ذهبي'];
+      presetsBar.innerHTML = `
+        <span class="presets-label"><i class="fa-solid fa-palette"></i> ألوان سريعة:</span>
+        ${colors.map(c => `
+          <button type="button" class="preset-chip-btn" data-val="${c}">
+            <span class="color-dot" style="background:${OPTION_COLOR_HEX_MAP[c]}"></span>
+            <span>${c}</span>
+          </button>
+        `).join("")}
+        <div class="color-picker-wrapper">
+          <input type="color" class="color-picker-input" value="#0284c7" title="اختر درجة لون دقيقة">
+          <button type="button" class="btn btn-outline btn-sm btn-add-color-picker" style="padding:2px 8px;font-size:0.75rem;">
+            + إضافة اللون
+          </button>
+        </div>
+      `;
+
+      presetsBar.querySelectorAll(".preset-chip-btn").forEach(btn => {
+        btn.addEventListener("click", () => addValues(btn.dataset.val));
+      });
+
+      const pickerInput = presetsBar.querySelector(".color-picker-input");
+      const addColorBtn = presetsBar.querySelector(".btn-add-color-picker");
+      if (addColorBtn && pickerInput) {
+        addColorBtn.addEventListener("click", () => addValues(pickerInput.value));
+      }
+
+    } else if (currentType === "size") {
+      const sizes = ['S', 'M', 'L', 'XL', 'XXL', '3XL', '38', '39', '40', '41', '42', '43', '44', '45'];
+      presetsBar.innerHTML = `
+        <span class="presets-label"><i class="fa-solid fa-ruler-combined"></i> مقاسات سريعة:</span>
+        ${sizes.map(s => `
+          <button type="button" class="preset-chip-btn" data-val="${s}">${s}</button>
+        `).join("")}
+      `;
+      presetsBar.querySelectorAll(".preset-chip-btn").forEach(btn => {
+        btn.addEventListener("click", () => addValues(btn.dataset.val));
+      });
+
+    } else if (currentType === "weight") {
+      const weights = ['250 مل', '500 مل', '1 لتر', '250 جم', '500 جم', '1 كجم'];
+      presetsBar.innerHTML = `
+        <span class="presets-label"><i class="fa-solid fa-weight-scale"></i> أحجام وأوزان:</span>
+        ${weights.map(w => `
+          <button type="button" class="preset-chip-btn" data-val="${w}">${w}</button>
+        `).join("")}
+      `;
+      presetsBar.querySelectorAll(".preset-chip-btn").forEach(btn => {
+        btn.addEventListener("click", () => addValues(btn.dataset.val));
+      });
+
+    } else if (currentType === "capacity") {
+      const capacities = ['32GB', '64GB', '128GB', '256GB', '512GB', '1TB'];
+      presetsBar.innerHTML = `
+        <span class="presets-label"><i class="fa-solid fa-microchip"></i> سعات تخزين:</span>
+        ${capacities.map(c => `
+          <button type="button" class="preset-chip-btn" data-val="${c}">${c}</button>
+        `).join("")}
+      `;
+      presetsBar.querySelectorAll(".preset-chip-btn").forEach(btn => {
+        btn.addEventListener("click", () => addValues(btn.dataset.val));
+      });
+
+    } else {
+      presetsBar.innerHTML = `<span class="presets-label" style="font-weight:normal;color:#64748b;">💡 اكتب القيم المخصصة في الحقل أدناه مفصولة بفاصلة واضغط إضافة.</span>`;
+    }
+  };
+
+  typeSelect.addEventListener("change", () => {
+    currentType = typeSelect.value;
+    if (currentType === "color" && (!nameInput.value.trim() || nameInput.value === "المقاس" || nameInput.value === "الحجم / الوزن" || nameInput.value === "السعة")) {
+      nameInput.value = "اللون";
+    } else if (currentType === "size" && (!nameInput.value.trim() || nameInput.value === "اللون" || nameInput.value === "الحجم / الوزن" || nameInput.value === "السعة")) {
+      nameInput.value = "المقاس";
+    } else if (currentType === "weight" && (!nameInput.value.trim() || nameInput.value === "اللون" || nameInput.value === "المقاس" || nameInput.value === "السعة")) {
+      nameInput.value = "الحجم / الوزن";
+    } else if (currentType === "capacity" && (!nameInput.value.trim() || nameInput.value === "اللون" || nameInput.value === "المقاس" || nameInput.value === "الحجم / الوزن")) {
+      nameInput.value = "السعة";
+    } else if (currentType === "custom" && (nameInput.value === "اللون" || nameInput.value === "المقاس" || nameInput.value === "الحجم / الوزن" || nameInput.value === "السعة")) {
+      nameInput.value = "";
+      nameInput.focus();
+    }
+    renderPresets();
+  });
+
+  deleteBtn.addEventListener("click", () => {
+    row.remove();
+    syncVariantsTable(prefix);
+  });
+
+  nameInput.addEventListener("change", () => syncVariantsTable(prefix));
+
+  const handleAddFromInput = () => {
+    const val = addValueInput.value.trim();
+    if (val) {
+      addValues(val);
+      addValueInput.value = "";
+    }
+    addValueInput.focus();
+  };
+
+  addValueBtn.addEventListener("click", handleAddFromInput);
+  addValueInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleAddFromInput();
+    }
+  });
+
+  renderPresets();
+  renderChips();
+  isInitialRender = false;
+
+  container.appendChild(row);
+  if (!skipSync) {
+    syncVariantsTable(prefix);
+  }
+}
+
+function getCustomSpecsFromContainer(prefix) {
+  const container = document.getElementById(`${prefix}SpecsContainer`);
+  if (!container) return {};
+  const specs = {};
+  const rows = container.querySelectorAll(".spec-row");
+  rows.forEach(r => {
+    const k = r.querySelector(".spec-key")?.value.trim();
+    const v = r.querySelector(".spec-val")?.value.trim();
+    if (k && v) {
+      specs[k] = v;
+    }
+  });
+  return specs;
+}
+
+function getVariantGroupsFromContainer(prefix) {
+  const container = document.getElementById(`${prefix}SpecsContainer`);
+  if (!container) return [];
+  const groups = [];
+  const rows = container.querySelectorAll(".spec-row");
+  rows.forEach((r, idx) => {
+    const k = r.querySelector(".spec-key")?.value.trim();
+    const v = r.querySelector(".spec-val")?.value.trim();
+    const typeSelect = r.querySelector(".option-type-select");
+    const type = typeSelect ? typeSelect.value : detectOptionType(k);
+    if (k && v) {
+      const values = v.split(/[,،]/).map(s => s.trim()).filter(Boolean);
+      if (values.length > 0) {
+        groups.push({
+          id: `vg_${Date.now()}_${idx}`,
+          name: k,
+          type: type || 'custom',
+          is_required: false,
+          sort_order: idx,
+          is_active: true,
+          created_at: new Date().toISOString(),
+          options: values.map((val, vIdx) => ({
+            id: `opt_${Date.now()}_${idx}_${vIdx}`,
+            name: k,
+            value: val,
+            sort_order: vIdx,
+            is_active: true,
+            created_at: new Date().toISOString()
+          }))
+        });
+      }
+    }
+  });
+  return groups;
+}
+
+// Generate Cartesian product of variant groups and render the Variants Matrix Table
+function syncVariantsTable(prefix, existingVariants = null) {
+  const section = document.getElementById(`${prefix}VariantsMatrixSection`);
+  const tbody = document.getElementById(`${prefix}VariantsTableBody`);
+  if (!section || !tbody) return;
+
+  const groups = getVariantGroupsFromContainer(prefix);
+  if (groups.length === 0) {
+    tbody.innerHTML = "";
+    section.classList.add("hidden");
+    return;
+  }
+
+  section.classList.remove("hidden");
+
+  // Build map of existing variant values (either from passed existingVariants or current DOM)
+  const preservedMap = new Map();
+  if (Array.isArray(existingVariants)) {
+    existingVariants.forEach(v => {
+      if (v && Array.isArray(v.selected_options)) {
+        const key = v.selected_options.map(o => `${o.name}:${o.value}`).join('|');
+        preservedMap.set(key, {
+          id: v.id,
+          price: v.price ?? '',
+          stock_quantity: v.stock_quantity ?? '',
+          sku: v.sku || '',
+          image_url: v.image_url || '',
+          is_active: v.is_active !== false,
+          created_at: v.created_at || new Date().toISOString()
+        });
+      }
+    });
+  } else {
+    tbody.querySelectorAll("tr").forEach(tr => {
+      const key = tr.dataset.comboKey;
+      if (key) {
+        preservedMap.set(key, {
+          id: tr.dataset.variantId || '',
+          price: tr.querySelector(".var-price")?.value || '',
+          stock_quantity: tr.querySelector(".var-stock")?.value || '',
+          sku: tr.querySelector(".var-sku")?.value || '',
+          image_url: tr.querySelector(".var-img")?.value || '',
+          is_active: tr.querySelector(".var-active")?.checked !== false,
+          created_at: tr.dataset.createdAt || new Date().toISOString()
+        });
+      }
+    });
+  }
+
+  // Cartesian product of groups
+  let combinations = [[]];
+  for (const group of groups) {
+    const next = [];
+    for (const combo of combinations) {
+      for (const opt of group.options) {
+        next.push([...combo, {
+          id: opt.id,
+          name: group.name,
+          value: opt.value,
+          sort_order: opt.sort_order,
+          is_active: true,
+          created_at: opt.created_at
+        }]);
+      }
+    }
+    combinations = next;
+  }
+
+  const basePrice = document.getElementById(`${prefix}Price`)?.value || '';
+  const baseStock = document.getElementById(`${prefix}Stock`)?.value || '0';
+  const baseBarcode = document.getElementById(`${prefix}Barcode`)?.value?.trim() || '';
+
+  tbody.innerHTML = "";
+  combinations.forEach((selectedOptions, idx) => {
+    const comboKey = selectedOptions.map(o => `${o.name}:${o.value}`).join('|');
+    const saved = preservedMap.get(comboKey);
+
+    const varId = saved?.id || `var_${Date.now()}_${idx}`;
+    const priceVal = saved ? saved.price : basePrice;
+    const stockVal = saved ? saved.stock_quantity : baseStock;
+    const skuVal = saved?.sku || (baseBarcode ? `${baseBarcode}-${idx + 1}` : `VAR-${idx + 1}`);
+    const imgVal = saved?.image_url || '';
+    const isActive = saved ? saved.is_active : true;
+    const createdAt = saved?.created_at || new Date().toISOString();
+
+    const badgesHtml = selectedOptions.map(o => {
+      const hex = OPTION_COLOR_HEX_MAP[o.value.toLowerCase()] || (o.value.startsWith("#") ? o.value : null);
+      const dot = hex ? `<span class="color-dot" style="background:${hex};"></span>` : '';
+      return `<span class="variant-combo-pill">${dot}<span>${escapeHtml(o.name)}: ${escapeHtml(o.value)}</span></span>`;
+    }).join("");
+
+    const tr = document.createElement("tr");
+    tr.dataset.comboKey = comboKey;
+    tr.dataset.variantId = varId;
+    tr.dataset.createdAt = createdAt;
+    tr.dataset.selectedOptions = JSON.stringify(selectedOptions);
+
+    tr.innerHTML = `
+      <td><div class="variant-combo-badge">${badgesHtml}</div></td>
+      <td style="min-width:95px;"><input type="number" step="0.5" class="var-price" placeholder="السعر" value="${escapeHtml(priceVal)}"></td>
+      <td style="min-width:80px;"><input type="number" class="var-stock" placeholder="الكمية" value="${escapeHtml(stockVal)}"></td>
+      <td style="min-width:130px;"><input type="text" class="var-sku" placeholder="SKU / باركود" value="${escapeHtml(skuVal)}"></td>
+      <td>
+        <div class="variant-img-cell">
+          <img class="variant-thumb-preview ${imgVal ? '' : 'hidden'}" src="${escapeHtml(imgVal || 'logo.png')}" alt="صورة الخيار">
+          <input type="url" class="var-img" placeholder="رابط الصورة..." value="${escapeHtml(imgVal)}">
+          <input type="file" accept="image/*" class="hidden var-file-input">
+          <button type="button" class="variant-upload-btn" title="رفع صورة لهذا الخيار"><i class="fa-solid fa-upload"></i></button>
+        </div>
+      </td>
+      <td style="text-align:center;"><input type="checkbox" class="var-active" ${isActive ? 'checked' : ''}></td>
+    `;
+
+    const imgInput = tr.querySelector(".var-img");
+    const thumbImg = tr.querySelector(".variant-thumb-preview");
+    const fileInput = tr.querySelector(".var-file-input");
+    const uploadBtn = tr.querySelector(".variant-upload-btn");
+
+    imgInput.addEventListener("input", () => {
+      const url = imgInput.value.trim();
+      if (url && (url.startsWith("http") || url.startsWith("data:"))) {
+        thumbImg.src = url;
+        thumbImg.classList.remove("hidden");
+      } else {
+        thumbImg.classList.add("hidden");
+      }
+    });
+
+    uploadBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => uploadVariantImage(fileInput, imgInput, thumbImg, prefix));
+
+    tbody.appendChild(tr);
+  });
+}
+
+function applyBaseValuesToVariants(prefix) {
+  const tbody = document.getElementById(`${prefix}VariantsTableBody`);
+  if (!tbody) return;
+  const basePrice = document.getElementById(`${prefix}Price`)?.value || '';
+  const baseStock = document.getElementById(`${prefix}Stock`)?.value || '';
+  const baseBarcode = document.getElementById(`${prefix}Barcode`)?.value?.trim() || '';
+
+  tbody.querySelectorAll("tr").forEach((tr, idx) => {
+    const pInput = tr.querySelector(".var-price");
+    const sInput = tr.querySelector(".var-stock");
+    const skuInput = tr.querySelector(".var-sku");
+    if (pInput && basePrice) pInput.value = basePrice;
+    if (sInput && baseStock !== '') sInput.value = baseStock;
+    if (skuInput && baseBarcode && (!skuInput.value || skuInput.value.startsWith("VAR-"))) {
+      skuInput.value = `${baseBarcode}-${idx + 1}`;
+    }
+  });
+}
+
+async function uploadVariantImage(fileInput, urlInput, thumbImg, prefix) {
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) return;
+
+  try {
+    const compressedDataUrl = await compressImageFile(file, 800, 0.82);
+    const compressedBlob = dataURLtoBlob(compressedDataUrl);
+    const authUser = (await supabaseClient.auth.getUser())?.data?.user;
+    const userId = currentUser?.id || authUser?.id || 'admin';
+    const isModal = prefix === "modalEdit";
+    const supplierSelect = document.getElementById(isModal ? "modalEditSupplier" : "productSupplier");
+    const storeId = (supplierSelect && supplierSelect.value) ? supplierSelect.value : (suppliers[0]?.id || 'default');
+
+    const cleanFileName = `var_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.jpg`;
+    const filePath = `${userId}/products/${storeId}/${cleanFileName}`;
+
+    const { data: uploadData, error: uploadErr } = await supabaseClient.storage
+      .from("products")
+      .upload(filePath, compressedBlob, { contentType: 'image/jpeg', upsert: true });
+
+    if (uploadErr) {
+      throw new Error(uploadErr.message);
+    }
+
+    if (uploadData) {
+      const { data: publicData } = supabaseClient.storage.from("products").getPublicUrl(filePath);
+      if (publicData && publicData.publicUrl) {
+        urlInput.value = publicData.publicUrl;
+        thumbImg.src = publicData.publicUrl;
+        thumbImg.classList.remove("hidden");
+      }
+    }
+  } catch (err) {
+    console.error("Variant image upload error:", err);
+    alert(`❌ تعذر رفع صورة الخيار: ${err.message}`);
+  } finally {
+    fileInput.value = "";
+  }
+}
+
+function getVariantsFromContainer(prefix, productId = '') {
+  const tbody = document.getElementById(`${prefix}VariantsTableBody`);
+  if (!tbody) return [];
+  const variants = [];
+  const nowIso = new Date().toISOString();
+
+  tbody.querySelectorAll("tr").forEach((tr, idx) => {
+    const selectedOptions = JSON.parse(tr.dataset.selectedOptions || "[]");
+    if (selectedOptions.length === 0) return;
+
+    const priceRaw = parseFloat(tr.querySelector(".var-price")?.value);
+    const stockRaw = parseInt(tr.querySelector(".var-stock")?.value, 10);
+    const skuRaw = (tr.querySelector(".var-sku")?.value || "").trim();
+    const imgRaw = (tr.querySelector(".var-img")?.value || "").trim();
+    const isActive = tr.querySelector(".var-active")?.checked !== false;
+
+    variants.push({
+      id: tr.dataset.variantId || `var_${Date.now()}_${idx}`,
+      product_id: productId || '',
+      selected_options: selectedOptions,
+      sku: skuRaw || `VAR-${idx + 1}`,
+      price: isNaN(priceRaw) ? null : priceRaw,
+      stock_quantity: isNaN(stockRaw) ? null : stockRaw,
+      image_url: (imgRaw && !imgRaw.startsWith("data:")) ? imgRaw : null,
+      is_active: isActive,
+      created_at: tr.dataset.createdAt || nowIso,
+      updated_at: nowIso
+    });
+  });
+
+  return variants;
+}
+
+
+// ============================================================
+// 🤖 SMART AUTO-FILL from Product Name
+// ============================================================
+
+// Known brand patterns (Arabic & International)
+const KNOWN_BRANDS = [
+  // إلكترونيات & تقنية
+  'Samsung','Apple','Huawei','Xiaomi','Oppo','Vivo','Nokia','Sony','LG','Panasonic',
+  'Philips','HP','Dell','Lenovo','Asus','Acer','Canon','Nikon','JBL','Bose','Anker',
+  // بقالة & منتجات غذائية مصرية
+  'عبور لاند','Obour Land','المراعي','Almarai','بيتي','Bettys','كادبوري','Cadbury',
+  'نستلة','Nestle','يونيليفر','Unilever','هاينز','Heinz','بونجر','Peugeot',
+  'برنامج','Americana','أميريكانا','بافاريا','Bavaria','كوكاكولا','Coca-Cola','بيبسي','Pepsi',
+  'رويال','Royal','شيبسي','Chipsy','ليز','Lays','ميرندا','Mirinda','فانتا','Fanta',
+  'Juhayna','جهينة','Dina Farms','مزرعة دينا','Domty','دومتي','Seoudi','السيودي',
+  // ملابس
+  'Nike','Adidas','Puma','Zara','H&M','Mango','Levi\'s','Calvin Klein','Gucci','Louis Vuitton',
+  // رعاية شخصية
+  'P&G','Procter','Dove','Nivea','Colgate','Oral-B','Head & Shoulders','Pantene',
+  // أخرى
+  'IKEA','Bosch','Siemens','Ariston','Zanussi','Kiriazi','كيريازي','Fresh','فريش',
+  'Tornado','تورنيدو','Unionaire','يونيون','Olympic','أوليمبيك'
+];
+
+const BRAND_REGEX = new RegExp(
+  '\\b(' + KNOWN_BRANDS.map(b => b.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\b',
+  'i'
+);
+
+// Size/weight patterns
+const SIZE_PATTERNS = [
+  /\b(\d+(?:\.\d+)?)\s*(كيلو جرام|كيلوجرام|كجم|kg|KG)\b/i,
+  /\b(\d+(?:\.\d+)?)\s*(جرام|غرام|gr|g|GM)\b/i,
+  /\b(\d+(?:\.\d+)?)\s*(ملي لتر|مل|ml|ML)\b/i,
+  /\b(\d+(?:\.\d+)?)\s*(لتر|lt|ltr|L)\b/i,
+  /\b(\d+(?:\.\d+)?)\s*(GB|جيجا|TB|تيرا|MB|ميجا)\b/i,
+  /\b(\d+(?:\.\d+)?)\s*(واط|Watt|W)\b/i,
+  /\b(\d+(?:\.\d+)?)\s*(بوصة|inch|"|in)\b/i,
+  /\b(\d+(?:\.\d+)?)\s*(قطعة|pcs|pieces|علبة|pack|باكيت)\b/i,
+  /\b(X[LS]|XXL|XL|LG|SM|2XL|3XL|S|M|L)\b/,
+];
+
+// Color patterns
+const COLOR_MAP = {
+  'أسود':'أسود','بلاك':'أسود','Black':'أسود',
+  'أبيض':'أبيض','وايت':'أبيض','White':'أبيض',
+  'أحمر':'أحمر','ريد':'أحمر','Red':'أحمر',
+  'أزرق':'أزرق','بلو':'أزرق','Blue':'أزرق',
+  'أخضر':'أخضر','جرين':'أخضر','Green':'أخضر',
+  'أصفر':'أصفر','ييلو':'أصفر','Yellow':'أصفر',
+  'برتقالي':'برتقالي','Orange':'برتقالي',
+  'فضي':'فضي','Silver':'فضي','سيلفر':'فضي',
+  'ذهبي':'ذهبي','Gold':'ذهبي','جولد':'ذهبي',
+  'رمادي':'رمادي','Gray':'رمادي','Grey':'رمادي',
+  'وردي':'وردي','Pink':'وردي','بيج':'بيج','Beige':'بيج',
+  'بني':'بني','Brown':'بني','كحلي':'كحلي','Navy':'كحلي',
+  'بنفسجي':'بنفسجي','Purple':'بنفسجي','كريمي':'كريمي','Cream':'كريمي'
+};
+
+let _autoFillTimer = null;
+
+function smartAutoFill(nameText, prefix = 'product') {
+  clearTimeout(_autoFillTimer);
+  _autoFillTimer = setTimeout(() => _doSmartAutoFill(nameText, prefix), 350);
+}
+
+function _doSmartAutoFill(nameText, prefix) {
+  if (!nameText || nameText.trim().length < 3) {
+    const hintsBox = document.getElementById('autoFillHints');
+    if (hintsBox) hintsBox.classList.add('hidden');
+    return;
+  }
+
+  const hints = [];
+
+  // --- Brand Detection ---
+  const brandInput = document.getElementById(`${prefix}Brand`);
+  if (brandInput && !brandInput.value.trim()) {
+    const brandMatch = BRAND_REGEX.exec(nameText);
+    if (brandMatch) {
+      hints.push({
+        label: `🏷️ البراند: ${brandMatch[1]}`,
+        action: () => { brandInput.value = brandMatch[1]; brandInput.dispatchEvent(new Event('change')); }
+      });
+    }
+  }
+
+  // --- Size/Weight/Volume Detection ---
+  const sizeInput = document.getElementById(`${prefix}Size`);
+  if (sizeInput && !sizeInput.value.trim()) {
+    for (const pattern of SIZE_PATTERNS) {
+      const m = pattern.exec(nameText);
+      if (m) {
+        const sizeVal = m[0].trim();
+        hints.push({
+          label: `📐 الحجم/المقاس: ${sizeVal}`,
+          action: () => { sizeInput.value = sizeVal; sizeInput.dispatchEvent(new Event('change')); }
+        });
+        break;
+      }
+    }
+  }
+
+  // --- Color Detection ---
+  const colorInput = document.getElementById(`${prefix}Color`);
+  if (colorInput && !colorInput.value.trim()) {
+    for (const [key, arabicName] of Object.entries(COLOR_MAP)) {
+      const colorRegex = new RegExp(`\\b${key}\\b`, 'i');
+      if (colorRegex.test(nameText)) {
+        hints.push({
+          label: `🎨 اللون: ${arabicName}`,
+          action: () => { colorInput.value = arabicName; colorInput.dispatchEvent(new Event('change')); }
+        });
+        break;
+      }
+    }
+  }
+
+  // --- Category Hint ---
+  if (hints.length > 0 || categories.length > 0) {
+    const catSelect = document.getElementById(`${prefix}Category`);
+    if (catSelect && !catSelect.value) {
+      const lowerName = nameText.toLowerCase();
+      const matched = categories.find(c => lowerName.includes(c.name.toLowerCase()));
+      if (matched) {
+        hints.push({
+          label: `📂 القسم: ${matched.name}`,
+          action: () => { catSelect.value = matched.id; catSelect.dispatchEvent(new Event('change')); }
+        });
+      }
+    }
+  }
+
+  // Show hints chips
+  const hintsBox = document.getElementById('autoFillHints');
+  if (!hintsBox) return;
+
+  if (hints.length === 0) {
+    hintsBox.classList.add('hidden');
+    return;
+  }
+
+  hintsBox.innerHTML = `<small style="color:#64748b;font-size:0.76rem;">💡 اضغط للتعبئة التلقائية:</small> ` +
+    hints.map((h, i) => `<button type="button" class="autofill-hint-chip" id="hint_chip_${i}">
+      <i class="fa-solid fa-wand-magic-sparkles"></i> ${escapeHtml(h.label)}
+    </button>`).join('');
+  hintsBox.classList.remove('hidden');
+
+  // Attach click handlers
+  hints.forEach((h, i) => {
+    const chip = document.getElementById(`hint_chip_${i}`);
+    if (chip) chip.addEventListener('click', () => {
+      h.action();
+      chip.style.background = '#dcfce7';
+      chip.style.borderColor = '#86efac';
+      chip.style.color = '#15803d';
+    });
+  });
+}
+
+
+// ============================================================
+// 📦 BULK IMPORT (Excel / CSV) — استيراد جماعي
+// ============================================================
+
+// Column mapping: Excel header → field name
+const BULK_COLUMNS = [
+  { key: 'barcode',           label: 'الباركود',              required: true  },
+  { key: 'name',              label: 'اسم المنتج',             required: true  },
+  { key: 'category',          label: 'القسم',                  required: false },
+  { key: 'cost_price',        label: 'سعر التوريد',            required: false },
+  { key: 'price',             label: 'سعر البيع',              required: true  },
+  { key: 'compare_price',     label: 'السعر قبل الخصم',       required: false },
+  { key: 'stock_quantity',    label: 'الكمية',                 required: true  },
+  { key: 'brand',             label: 'البراند',                required: false },
+  { key: 'size',              label: 'المقاس/الحجم',           required: false },
+  { key: 'serial_number',     label: 'السيريال/الموديل',      required: false },
+  { key: 'color',             label: 'اللون',                  required: false },
+  { key: 'warranty',          label: 'الضمان',                 required: false },
+  { key: 'country_of_origin', label: 'بلد المنشأ',            required: false },
+  { key: 'image_url',         label: 'رابط الصورة',           required: false },
+  { key: 'description',       label: 'الوصف',                 required: false },
+];
+
+let _bulkRows = [];
+
+function toggleBulkImportPanel() {
+  const panel = document.getElementById('bulkImportPanel');
+  if (panel) panel.classList.toggle('hidden');
+}
+
+function downloadBulkTemplate() {
+  if (typeof XLSX === 'undefined') {
+    alert('⚠️ مكتبة SheetJS غير محملة بعد. يرجى الانتظار أو التحقق من الاتصال بالإنترنت.');
+    return;
+  }
+  const headers = BULK_COLUMNS.map(c => c.label);
+  const exampleRow = [
+    '6221000000001','جبنة عبور لاند 500 جرام','ألبان ومنتجات',
+    '25','30','35','100','عبور لاند','500 جرام','','أبيض','لا يوجد','مصر',
+    'https://example.com/image.jpg','جبنة بيضاء طازجة'
+  ];
+  const ws = XLSX.utils.aoa_to_sheet([headers, exampleRow]);
+  // Set column widths
+  ws['!cols'] = BULK_COLUMNS.map(() => ({ wch: 20 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'سلع سوق التل');
+  XLSX.writeFile(wb, 'قالب_استيراد_سلع_سوق_التل.xlsx');
+}
+
+function handleBulkImportFile(fileInput) {
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) return;
+
+  if (typeof XLSX === 'undefined') {
+    alert('⚠️ مكتبة SheetJS غير محملة بعد. يرجى تحديث الصفحة والمحاولة مجدداً.');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+      if (!rows || rows.length < 2) {
+        alert('⚠️ الملف فارغ أو لا يحتوي على بيانات. يرجى استخدام القالب النموذجي.');
+        fileInput.value = '';
+        return;
+      }
+
+      parseBulkRows(rows);
+    } catch (err) {
+      console.error('Bulk import parse error:', err);
+      alert(`❌ تعذر قراءة الملف: ${err.message}`);
+    }
+    fileInput.value = '';
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parseBulkRows(rawRows) {
+  // Find header row (first row containing Arabic/English column headers)
+  const headerRow = rawRows[0].map(h => String(h || '').trim());
+
+  // Map header labels → column index
+  const colIndex = {};
+  BULK_COLUMNS.forEach(col => {
+    const idx = headerRow.findIndex(h =>
+      h === col.label ||
+      h.toLowerCase() === col.key.toLowerCase() ||
+      h === col.key
+    );
+    if (idx >= 0) colIndex[col.key] = idx;
+  });
+
+  const dataRows = rawRows.slice(1).filter(r => r.some(c => String(c || '').trim() !== ''));
+
+  _bulkRows = dataRows.map((row, rowIdx) => {
+    const obj = {};
+    BULK_COLUMNS.forEach(col => {
+      const idx = colIndex[col.key];
+      obj[col.key] = idx !== undefined ? String(row[idx] || '').trim() : '';
+    });
+    obj._rowIdx = rowIdx + 2; // human row number (1-indexed + header)
+    obj._errors = validateBulkRow(obj);
+    return obj;
+  });
+
+  renderBulkPreview();
+}
+
+function validateBulkRow(row) {
+  const errors = [];
+  if (!row.barcode) errors.push('barcode');
+  if (!row.name) errors.push('name');
+  if (!row.price || isNaN(parseFloat(row.price)) || parseFloat(row.price) <= 0) errors.push('price');
+  if (!row.stock_quantity || isNaN(parseInt(row.stock_quantity, 10))) errors.push('stock_quantity');
+  if (row.cost_price && parseFloat(row.cost_price) > parseFloat(row.price)) errors.push('cost_price_gt_price');
+  return errors;
+}
+
+function renderBulkPreview() {
+  const previewArea = document.getElementById('bulkImportPreviewArea');
+  const thead = document.getElementById('bulkPreviewHead');
+  const tbody = document.getElementById('bulkPreviewBody');
+  const summary = document.getElementById('bulkImportValidationSummary');
+  const rowCountEl = document.getElementById('bulkRowCount');
+
+  if (!previewArea || !thead || !tbody || !summary) return;
+
+  const errorRows = _bulkRows.filter(r => r._errors.length > 0);
+  const validRows = _bulkRows.filter(r => r._errors.length === 0);
+
+  // Summary
+  if (errorRows.length > 0) {
+    summary.className = 'bulk-validation-summary has-errors';
+    summary.innerHTML = `⚠️ يوجد <strong>${errorRows.length}</strong> صف بها أخطاء (تظهر باللون الأحمر). يرجى مراجعتها. الصفوف الصحيحة: <strong>${validRows.length}</strong>`;
+  } else {
+    summary.className = 'bulk-validation-summary valid';
+    summary.innerHTML = `✅ تم فحص <strong>${_bulkRows.length}</strong> سلعة — جميعها صحيحة وجاهزة للحفظ.`;
+  }
+
+  if (rowCountEl) rowCountEl.textContent = `إجمالي الصفوف: ${_bulkRows.length} (صحيح: ${validRows.length} | أخطاء: ${errorRows.length})`;
+
+  // Header
+  thead.innerHTML = `<tr>
+    <th class="row-num-cell">#</th>
+    ${BULK_COLUMNS.map(c => `<th>${c.label}${c.required ? ' *' : ''}</th>`).join('')}
+    <th>الحالة</th>
+  </tr>`;
+
+  // Body (show up to 200 rows for performance)
+  const displayRows = _bulkRows.slice(0, 200);
+  tbody.innerHTML = displayRows.map(row => {
+    const hasError = row._errors.length > 0;
+    const cells = BULK_COLUMNS.map(col => {
+      const isErrCell = row._errors.includes(col.key) || (col.key === 'cost_price' && row._errors.includes('cost_price_gt_price'));
+      return `<td class="${isErrCell ? 'cell-error' : ''}" title="${escapeHtml(row[col.key])}">${escapeHtml(row[col.key] || '—')}</td>`;
+    });
+    const statusCell = hasError
+      ? `<td style="color:#b91c1c;font-weight:700;">❌ ${row._errors.map(e => {
+          const labels = { barcode:'باركود', name:'اسم', price:'سعر', stock_quantity:'كمية', cost_price_gt_price:'سعر التوريد > البيع' };
+          return labels[e] || e;
+        }).join(', ')}</td>`
+      : `<td style="color:#15803d;font-weight:700;">✅ جاهز</td>`;
+    return `<tr class="${hasError ? 'row-error' : ''}">
+      <td class="row-num-cell">${row._rowIdx}</td>
+      ${cells.join('')}
+      ${statusCell}
+    </tr>`;
+  }).join('');
+
+  if (_bulkRows.length > 200) {
+    tbody.innerHTML += `<tr><td colspan="${BULK_COLUMNS.length + 2}" style="text-align:center;color:#64748b;padding:12px;">... و ${_bulkRows.length - 200} صف إضافي (سيتم حفظها جميعاً)</td></tr>`;
+  }
+
+  previewArea.classList.remove('hidden');
+  document.getElementById('bulkProgressArea')?.classList.add('hidden');
+}
+
+async function saveBulkProducts() {
+  const validRows = _bulkRows.filter(r => r._errors.length === 0);
+  if (validRows.length === 0) {
+    alert('⚠️ لا توجد صفوف صحيحة للحفظ. يرجى مراجعة الأخطاء أولاً.');
+    return;
+  }
+
+  const selectedCategoryId = document.getElementById('productCategory')?.value || null;
+  const selectedSupplierId = document.getElementById('productSupplier')?.value || (suppliers.length > 0 ? suppliers[0].id : null);
+
+  if (!selectedSupplierId) {
+    alert('⚠️ الرجاء اختيار المورّد الشريك / المتجر من القائمة المنسدلة في الأعلى قبل بدء الاستيراد الجماعي.');
+    return;
+  }
+
+  if (!confirm(`سيتم حفظ ${validRows.length} سلعة في المستودع للمتجر المحدد. هل أنت متأكد؟`)) return;
+
+  const btn = document.getElementById('btnSaveBulk');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> جاري تجهيز الأقسام والحفظ...'; }
+
+  const progressArea = document.getElementById('bulkProgressArea');
+  const progressBar = document.getElementById('bulkProgressBar');
+  const progressText = document.getElementById('bulkProgressText');
+  const progressCount = document.getElementById('bulkProgressCount');
+  if (progressArea) progressArea.classList.remove('hidden');
+
+  let saved = 0, failed = 0;
+  const BATCH_SIZE = 20;
+
+  // 1. Preload & Cache store_sections for the selected store_id
+  const sectionCache = new Map(); // normalizedName -> section.id
+  let maxDisplayOrder = 0;
+
+  try {
+    const { data: existingSections, error: secFetchErr } = await supabaseClient
+      .from('store_sections')
+      .select('id, name, display_order')
+      .eq('store_id', selectedSupplierId);
+
+    if (!secFetchErr && Array.isArray(existingSections)) {
+      existingSections.forEach(s => {
+        if (s.name) {
+          sectionCache.set(s.name.trim().toLowerCase(), s.id);
+        }
+        if (typeof s.display_order === 'number' && s.display_order > maxDisplayOrder) {
+          maxDisplayOrder = s.display_order;
+        }
+      });
+    }
+  } catch (secErr) {
+    console.warn('Could not preload store_sections:', secErr);
+  }
+
+  // Helper to resolve or auto-create store_section by name (cached in memory)
+  async function resolveSectionId(rawSectionName) {
+    const cleanName = String(rawSectionName || '').trim();
+    if (!cleanName || !selectedSupplierId) return null;
+
+    const cacheKey = cleanName.toLowerCase();
+    if (sectionCache.has(cacheKey)) {
+      return sectionCache.get(cacheKey);
+    }
+
+    maxDisplayOrder += 1;
+    try {
+      const { data: createdSec, error: createErr } = await supabaseClient
+        .from('store_sections')
+        .insert({
+          store_id: selectedSupplierId,
+          name: cleanName,
+          display_order: maxDisplayOrder,
+          is_active: true
+        })
+        .select('id')
+        .single();
+
+      if (createErr) {
+        console.error('Error creating store_section:', cleanName, createErr.message, createErr.details);
+        return null;
+      }
+
+      if (createdSec && createdSec.id) {
+        sectionCache.set(cacheKey, createdSec.id);
+        return createdSec.id;
+      }
+    } catch (err) {
+      console.error('Exception creating store_section:', cleanName, err);
+    }
+    return null;
+  }
+
+  // 2. Build payloads with store_id, category_id from UI dropdowns & resolved section_id from Excel
+  const payloads = [];
+  for (let rIdx = 0; rIdx < validRows.length; rIdx++) {
+    const row = validRows[rIdx];
+    const isLocal = (row.barcode || '').startsWith('200');
+    const customFields = {
+      brand: row.brand || null,
+      size: row.size || null,
+      serial_number: row.serial_number || null,
+      color: row.color || null,
+      warranty: row.warranty || null,
+      country_of_origin: row.country_of_origin || null,
+      local_barcode: isLocal ? row.barcode : null,
+      international_barcode: !isLocal ? row.barcode : null,
+    };
+    // Remove nulls
+    Object.keys(customFields).forEach(k => { if (!customFields[k]) delete customFields[k]; });
+
+    const sectionId = await resolveSectionId(row.category);
+
+    // Resolve product image: use valid URL from Excel, or query OpenFoodFacts/OpenBeautyFacts for international barcodes
+    const rawExcelImg = String(row.image_url || '').trim();
+    let finalImageUrl = (rawExcelImg.startsWith('http://') || rawExcelImg.startsWith('https://')) ? rawExcelImg : null;
+    if (!finalImageUrl && !isLocalBarcode(row.barcode)) {
+      if (progressText) progressText.textContent = `جاري البحث عن صورة (${rIdx + 1} / ${validRows.length})...`;
+      finalImageUrl = await fetchRealProductImageByBarcode(row.barcode);
+    }
+
+    const costNum = parseFloat(row.cost_price);
+    const priceNum = parseFloat(row.price);
+    const compareNum = parseFloat(row.compare_price);
+    const stockNum = parseInt(row.stock_quantity, 10);
+
+    payloads.push({
+      barcode: String(row.barcode).trim(),
+      name: String(row.name).trim(),
+      category_id: selectedCategoryId || null,
+      store_id: selectedSupplierId,
+      section_id: sectionId,
+      cost_price: (!isNaN(costNum) && costNum >= 0) ? costNum : null,
+      price: (!isNaN(priceNum) && priceNum > 0) ? priceNum : 0,
+      compare_price: (!isNaN(compareNum) && compareNum > 0) ? compareNum : null,
+      stock_quantity: (!isNaN(stockNum) && stockNum >= 0) ? stockNum : 0,
+      in_stock: (!isNaN(stockNum) ? stockNum : 0) > 0,
+      is_active: true,
+      image_url: finalImageUrl,
+      image_urls: finalImageUrl ? [finalImageUrl] : [],
+      description: row.description ? String(row.description).trim() : null,
+      custom_fields: Object.keys(customFields).length > 0 ? customFields : null,
+      variant_groups: null,
+      variants: null
+    });
+  }
+
+  // Safe batch insert/update (avoids 400 Bad Request from onConflict when barcode lacks a full UNIQUE constraint)
+  for (let i = 0; i < payloads.length; i += BATCH_SIZE) {
+    const batch = payloads.slice(i, i + BATCH_SIZE);
+    const batchBarcodes = batch.map(p => p.barcode).filter(Boolean);
+
+    try {
+      let existingMap = new Map();
+      if (batchBarcodes.length > 0) {
+        const { data: existingRows, error: fetchErr } = await supabaseClient
+          .from('products')
+          .select('id, barcode')
+          .in('barcode', batchBarcodes);
+        if (!fetchErr && Array.isArray(existingRows)) {
+          existingRows.forEach(r => existingMap.set(r.barcode, r.id));
+        }
+      }
+
+      const toInsert = [];
+      const toUpdate = [];
+      for (const item of batch) {
+        const existingId = existingMap.get(item.barcode);
+        if (existingId) {
+          toUpdate.push({ id: existingId, data: item });
+        } else {
+          toInsert.push(item);
+        }
+      }
+
+      if (toInsert.length > 0) {
+        const { error: insErr } = await supabaseClient
+          .from('products')
+          .insert(toInsert);
+        if (insErr) {
+          console.error('Batch insert error:', insErr.message, insErr.details, insErr.hint);
+          failed += toInsert.length;
+        } else {
+          saved += toInsert.length;
+        }
+      }
+
+      for (const upd of toUpdate) {
+        const { error: updErr } = await supabaseClient
+          .from('products')
+          .update(upd.data)
+          .eq('id', upd.id);
+        if (updErr) {
+          console.error('Row update error:', updErr.message, updErr.details);
+          failed += 1;
+        } else {
+          saved += 1;
+        }
+      }
+    } catch (err) {
+      console.error('Batch error:', err);
+      failed += batch.length;
+    }
+
+    const pct = Math.round(((i + batch.length) / payloads.length) * 100);
+    if (progressBar) progressBar.style.width = `${pct}%`;
+    if (progressText) progressText.textContent = `جاري الحفظ... ${pct}%`;
+    if (progressCount) progressCount.textContent = `${Math.min(i + BATCH_SIZE, payloads.length)} / ${payloads.length}`;
+
+    // Small delay to avoid rate limiting
+    await new Promise(r => setTimeout(r, 120));
+  }
+
+  if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> <span>حفظ جميع السلع بالمستودع دفعة واحدة</span>'; }
+
+  // Reload inventory
+  await loadInventory();
+
+  const msg = failed > 0
+    ? `⚠️ تم حفظ ${saved} سلعة بنجاح، وفشل ${failed} سلعة. يرجى المراجعة.`
+    : `✅ تم حفظ ${saved} سلعة في المستودع بنجاح!`;
+  alert(msg);
+
+  if (saved > 0) {
+    _bulkRows = [];
+    document.getElementById('bulkImportPreviewArea')?.classList.add('hidden');
+    toggleBulkImportPanel();
+  }
+}
+
+
+// ============================================================
+// 🖼️ REAL PRODUCT IMAGE LOOKUP, MISSING IMAGES & QUICK UPLOAD
+// ============================================================
+
+/**
+ * Query Open Food Facts v2 (and Open Beauty Facts fallback) for a real product.image_front_url.
+ * If not found by barcode and productName is provided, falls back to Open Food Facts text search.
+ */
+async function fetchRealProductImageByBarcode(barcode, productName = '') {
+  const clean = cleanBarcode(barcode);
+
+  const fetchWithTimeout = (url, ms = 3500) => {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), ms);
+    return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(t));
+  };
+
+  if (clean && !isLocalBarcode(clean)) {
+    const endpoints = [
+      `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(clean)}.json`,
+      `https://world.openbeautyfacts.org/api/v2/product/${encodeURIComponent(clean)}.json`
+    ];
+
+    for (const url of endpoints) {
+      try {
+        const res = await fetchWithTimeout(url, 3500);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.status === 1 && data.product && data.product.image_front_url) {
+            const imgUrl = String(data.product.image_front_url).trim();
+            if (imgUrl.startsWith('http://') || imgUrl.startsWith('https://')) {
+              return imgUrl;
+            }
+          }
+        }
+      } catch (e) {
+        // Ignore timeout/network error and try next endpoint
+      }
+    }
+  }
+
+  // Fallback: Search by product name in Open Food Facts
+  const cleanName = String(productName || '').trim();
+  if (cleanName.length >= 3) {
+    try {
+      const searchUrl = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(cleanName)}&search_simple=1&action=process&json=1&page_size=1`;
+      const res = await fetchWithTimeout(searchUrl, 4000);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.products) && data.products.length > 0 && data.products[0].image_front_url) {
+          const imgUrl = String(data.products[0].image_front_url).trim();
+          if (imgUrl.startsWith('http://') || imgUrl.startsWith('https://')) {
+            return imgUrl;
+          }
+        }
+      }
+    } catch (e) {
+      // Ignore timeout/network error
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Scan products missing image_url, fetch real image_front_url
+ * by barcode (or product name fallback) from Open Food Facts, and update Supabase.
+ */
+async function fetchMissingProductImages() {
+  const candidates = productsList.filter(p => {
+    const hasImg = p.image_url && String(p.image_url).trim() !== '';
+    const code = cleanBarcode(p.barcode || p.custom_fields?.international_barcode || '');
+    const hasName = p.name && String(p.name).trim().length >= 3;
+    return !hasImg && ((code && !isLocalBarcode(code)) || hasName);
+  });
+
+  if (candidates.length === 0) {
+    alert('✅ جميع المنتجات لديها صور بالفعل أو لا توجد بيانات كافية للبحث!');
+    return;
+  }
+
+  if (!confirm(`تم العثور على ${candidates.length} منتج بدون صورة.\nهل تريد البحث عن صورها (بالباركود أو باسم المنتج) وتحديثها الآن؟`)) {
+    return;
+  }
+
+  const btn = document.getElementById('btnFetchMissingImages');
+  const progressArea = document.getElementById('missingImagesProgressArea');
+  const progressBar = document.getElementById('missingImagesProgressBar');
+  const progressText = document.getElementById('missingImagesProgressText');
+  const progressCount = document.getElementById('missingImagesProgressCount');
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> <span>جاري جلب الصور...</span>';
+  }
+  if (progressArea) progressArea.classList.remove('hidden');
+
+  let updatedCount = 0;
+  let processed = 0;
+
+  for (const p of candidates) {
+    const code = cleanBarcode(p.barcode || p.custom_fields?.international_barcode || '');
+    const foundUrl = await fetchRealProductImageByBarcode(code, p.name || '');
+
+    if (foundUrl) {
+      const { error: updErr } = await supabaseClient
+        .from('products')
+        .update({
+          image_url: foundUrl,
+          image_urls: [foundUrl]
+        })
+        .eq('id', p.id);
+
+      if (!updErr) {
+        p.image_url = foundUrl;
+        p.image_urls = [foundUrl];
+        updatedCount++;
+      } else {
+        console.error('Error updating missing image for product:', p.id, updErr.message);
+      }
+    }
+
+    processed++;
+    const pct = Math.round((processed / candidates.length) * 100);
+    if (progressBar) progressBar.style.width = `${pct}%`;
+    if (progressText) progressText.textContent = `جاري الفحص... (تم تحديث ${updatedCount} صورة)`;
+    if (progressCount) progressCount.textContent = `${processed} / ${candidates.length}`;
+  }
+
+  if (typeof applyInventoryFilter === 'function') {
+    applyInventoryFilter();
+  } else {
+    renderInventoryTable(productsList);
+  }
+
+  if (btn) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-images"></i> <span>جلب الصور المفقودة تلقائياً</span>';
+  }
+
+  setTimeout(() => {
+    if (progressArea) progressArea.classList.add('hidden');
+  }, 3000);
+
+  alert(`✅ اكتمل الفحص لـ ${candidates.length} منتج!\nتم العثور على وتحديث ${updatedCount} صورة بنجاح.`);
+}
+
+// ============================================================
+// ⚡ QUICK IMAGE UPLOAD / URL MODAL FOR INVENTORY TABLE
+// ============================================================
+
+function openQuickImageModal(productId) {
+  const p = productsList.find(item => item.id === productId);
+  if (!p) return;
+
+  const modal = document.getElementById('quickImageModal');
+  const idInput = document.getElementById('quickImageProductId');
+  const nameEl = document.getElementById('quickImageProductName');
+  const previewEl = document.getElementById('quickImagePreview');
+  const urlInput = document.getElementById('quickImageUrlInput');
+  const statusEl = document.getElementById('quickImageStatus');
+
+  if (!modal) return;
+  if (idInput) idInput.value = p.id;
+  if (nameEl) nameEl.textContent = p.name || '';
+  if (urlInput) urlInput.value = p.image_url || '';
+  if (statusEl) statusEl.classList.add('hidden');
+
+  if (previewEl) {
+    if (p.image_url) {
+      previewEl.src = p.image_url;
+      previewEl.classList.remove('hidden');
+    } else {
+      previewEl.classList.add('hidden');
+    }
+  }
+
+  modal.classList.add('active');
+}
+
+function closeQuickImageModal() {
+  const modal = document.getElementById('quickImageModal');
+  if (modal) modal.classList.remove('active');
+}
+
+async function handleQuickImageFileUpload(fileInput) {
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) return;
+  await _uploadQuickImageFileOrBlob(file);
+  fileInput.value = '';
+}
+
+async function _uploadQuickImageFileOrBlob(fileOrBlob) {
+  const productId = document.getElementById('quickImageProductId')?.value;
+  if (!fileOrBlob || !productId) return;
+
+  const p = productsList.find(item => item.id === productId);
+  const statusEl = document.getElementById('quickImageStatus');
+  const previewEl = document.getElementById('quickImagePreview');
+  const btnUpload = document.getElementById('btnQuickUploadFromDevice');
+
+  const showQuickStatus = (msg, type = 'loading') => {
+    if (!statusEl) return;
+    statusEl.innerHTML = msg;
+    statusEl.className = `image-upload-status ${type}`;
+    statusEl.classList.remove('hidden');
+  };
+
+  if (btnUpload) btnUpload.disabled = true;
+  showQuickStatus('<i class="fa-solid fa-spinner fa-spin"></i> جاري ضغط ورفع الصورة إلى Supabase Storage...', 'loading');
+
+  try {
+    const compressedDataUrl = await compressImageFile(fileOrBlob, 1000, 0.85, 'image/webp');
+    const compressedBlob = dataURLtoBlob(compressedDataUrl);
+    const actualMime = compressedBlob.type || 'image/webp';
+    const ext = actualMime.includes('webp') ? 'webp' : 'jpg';
+
+    const authUser = (await supabaseClient.auth.getUser())?.data?.user;
+    const userId = currentUser?.id || authUser?.id || 'admin';
+    const storeId = p?.store_id || suppliers[0]?.id || 'default';
+
+    const filePath = `${userId}/products/${storeId}/${productId}_${Date.now()}.${ext}`;
+
+    const { error: uploadErr } = await supabaseClient.storage
+      .from('products')
+      .upload(filePath, compressedBlob, { contentType: actualMime, upsert: true });
+
+    if (uploadErr) {
+      throw new Error(uploadErr.message);
+    }
+
+    const { data: pubData } = supabaseClient.storage.from('products').getPublicUrl(filePath);
+    const publicUrl = pubData?.publicUrl;
+    if (!publicUrl) throw new Error('لم يتم استرجاع رابط الصورة العام');
+
+    await _commitQuickProductImage(productId, publicUrl, previewEl, showQuickStatus);
+  } catch (err) {
+    console.error('Quick image upload error:', err);
+    showQuickStatus(`❌ تعذر رفع الصورة: ${err.message}`, 'error');
+  } finally {
+    if (btnUpload) btnUpload.disabled = false;
+  }
+}
+
+// Listen for Ctrl+V / Paste of an image while Quick Image Modal is open
+document.addEventListener('paste', async (e) => {
+  const modal = document.getElementById('quickImageModal');
+  if (!modal || !modal.classList.contains('active')) return;
+
+  const items = e.clipboardData?.items;
+  if (!items) return;
+
+  for (const item of items) {
+    if (item.type && item.type.startsWith('image/')) {
+      e.preventDefault();
+      const blob = item.getAsFile();
+      if (blob) {
+        await _uploadQuickImageFileOrBlob(blob);
+      }
+      break;
+    }
+  }
+});
+
+async function saveQuickImageUrl() {
+  const productId = document.getElementById('quickImageProductId')?.value;
+  const rawUrl = (document.getElementById('quickImageUrlInput')?.value || '').trim();
+  const statusEl = document.getElementById('quickImageStatus');
+  const previewEl = document.getElementById('quickImagePreview');
+  const btnSave = document.getElementById('btnQuickSaveUrl');
+
+  const showQuickStatus = (msg, type = 'loading') => {
+    if (!statusEl) return;
+    statusEl.innerHTML = msg;
+    statusEl.className = `image-upload-status ${type}`;
+    statusEl.classList.remove('hidden');
+  };
+
+  if (!productId) return;
+  if (!rawUrl || !(rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))) {
+    showQuickStatus('⚠️ يرجى إدخال رابط صورة صالح يبدأ بـ http:// أو https://', 'error');
+    return;
+  }
+
+  if (btnSave) btnSave.disabled = true;
+  showQuickStatus('<i class="fa-solid fa-spinner fa-spin"></i> جاري تحديث رابط الصورة...', 'loading');
+
+  try {
+    await _commitQuickProductImage(productId, rawUrl, previewEl, showQuickStatus);
+  } catch (err) {
+    console.error('Quick URL save error:', err);
+    showQuickStatus(`❌ تعذر حفظ الرابط: ${err.message}`, 'error');
+  } finally {
+    if (btnSave) btnSave.disabled = false;
+  }
+}
+
+async function _commitQuickProductImage(productId, finalUrl, previewEl, showQuickStatus) {
+  const p = productsList.find(item => item.id === productId);
+  const existingGallery = Array.isArray(p?.image_urls) ? p.image_urls.filter(u => u && u !== p.image_url) : [];
+  const updatedUrls = Array.from(new Set([finalUrl, ...existingGallery]));
+
+  const { error: dbErr } = await supabaseClient
+    .from('products')
+    .update({
+      image_url: finalUrl,
+      image_urls: updatedUrls
+    })
+    .eq('id', productId);
+
+  if (dbErr) throw new Error(dbErr.message);
+
+  if (p) {
+    p.image_url = finalUrl;
+    p.image_urls = updatedUrls;
+  }
+
+  if (previewEl) {
+    previewEl.src = finalUrl;
+    previewEl.classList.remove('hidden');
+  }
+
+  if (typeof applyInventoryFilter === 'function') {
+    applyInventoryFilter();
+  } else {
+    renderInventoryTable(productsList);
+  }
+
+  showQuickStatus('<i class="fa-solid fa-circle-check"></i> تم تحديث صورة المنتج بنجاح!', 'success');
+  setTimeout(() => closeQuickImageModal(), 900);
 }

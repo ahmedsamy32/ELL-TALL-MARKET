@@ -17,11 +17,11 @@ dependencies:
   intl: ^0.20.3
 
   # Firebase Services
-  firebase_core: ^4.1.1
-  firebase_messaging: ^16.0.2
-  firebase_analytics: ^12.0.2
-  firebase_auth: ^6.1.0
-  cloud_firestore: ^6.0.2
+  firebase_core: ^5.2.0
+  firebase_messaging: ^17.1.0
+  firebase_analytics: ^13.1.0
+  firebase_auth: ^7.1.0
+  cloud_firestore: ^7.2.0
 
   # Supabase & Network
   supabase_flutter: ^2.10.2
@@ -56,7 +56,7 @@ dependencies:
   flutter_keyboard_visibility: ^6.0.0
 
   # Payments
-  flutter_stripe: ^13.0.0
+  flutter_stripe: ^15.0.0
 
   # Documents & File Processing
   pdf: ^3.11.1

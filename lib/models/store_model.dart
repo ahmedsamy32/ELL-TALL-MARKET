@@ -127,7 +127,7 @@ class StoreModel with BaseModelMixin {
       landmark: landmark,
       address: (address != null && address.isNotEmpty)
           ? address
-          : derivedAddress,
+          : (derivedAddress.isNotEmpty ? derivedAddress : (city ?? '')),
       latitude: map['latitude'] != null
           ? double.parse(map['latitude'].toString())
           : null,
@@ -327,7 +327,15 @@ class StoreModel with BaseModelMixin {
   bool get usesPlatformDelivery => deliveryMode == 'app';
 
   // Helper getters for UI
-  String get displayAddress => hasAddress ? address : 'عنوان غير محدد';
+  String get displayAddress {
+    if (address.trim().isNotEmpty) return address;
+    final parts = [governorate, city, area, street, landmark]
+        .where((p) => p != null && p.trim().isNotEmpty)
+        .map((p) => p!.trim())
+        .toList();
+    if (parts.isNotEmpty) return parts.join('، ');
+    return 'عنوان غير محدد';
+  }
   String get displayImageUrl => hasImage ? imageUrl! : '';
   String get displayCoverUrl => hasCover ? coverUrl! : '';
   String get ratingDisplay =>

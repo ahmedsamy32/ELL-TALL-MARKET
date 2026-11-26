@@ -63,16 +63,63 @@ class StoreService {
     }
   }
 
-  /// جلب متجر محدد بالتفصيل
+  /// التحقق من صلاحية اشتراك التاجر وباقته
+  static bool isMerchantSubscribed(Map<String, dynamic> data) {
+    Map<String, dynamic>? mData;
+    if (data.containsKey('merchants')) {
+      final merchantData = data['merchants'];
+      if (merchantData == null) return false;
+      if (merchantData is Map) {
+        mData = Map<String, dynamic>.from(merchantData);
+      } else if (merchantData is List && merchantData.isNotEmpty) {
+        mData = Map<String, dynamic>.from(merchantData.first);
+      } else {
+        return false;
+      }
+    } else if (data.containsKey('current_tier_id') ||
+        data.containsKey('package_expiry_date') ||
+        data.containsKey('remaining_orders')) {
+      mData = data;
+    } else {
+      return true;
+    }
+
+    final status = mData['status']?.toString().toLowerCase();
+    if (status == 'suspended') return false;
+
+    final currentTierId = mData['current_tier_id'];
+    final remainingOrders = mData['remaining_orders'] as int? ?? 0;
+    final expiryDateRaw = mData['package_expiry_date'];
+
+    if (expiryDateRaw == null) return false;
+
+    final expiryDate = DateTime.tryParse(expiryDateRaw.toString());
+    if (expiryDate == null) return false;
+
+    if (expiryDate.isBefore(DateTime.now())) return false;
+
+    if (currentTierId == null) {
+      return true;
+    }
+
+    if (remainingOrders <= 0 && remainingOrders != -1) return false;
+
+    return true;
+  }
+
+  /// جلب متجر محدد بالتفصيل مع التحقق من الاشتراك وحالة الفتح
   static Future<StoreModel?> getStoreById(String storeId) async {
     try {
       final response = await _supabase
           .from('stores')
-          .select()
+          .select('*, merchants(status, current_tier_id, package_expiry_date, remaining_orders)')
           .eq('id', storeId)
           .single();
 
-      return StoreModel.fromMap(response);
+      final storeMap = Map<String, dynamic>.from(response);
+      final store = StoreModel.fromMap(storeMap);
+      final isSubscribed = isMerchantSubscribed(storeMap);
+      return isSubscribed ? store : store.copyWith(isOpen: false);
     } on PostgrestException catch (e) {
       AppLogger.error('PostgreSQL خطأ في جلب المتجر: ${e.message}', e);
       return null;

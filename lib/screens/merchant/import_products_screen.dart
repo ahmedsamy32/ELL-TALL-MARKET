@@ -1,4 +1,3 @@
-// Removed dart:io for Web compatibility
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -27,7 +26,6 @@ class ImportProductsScreen extends StatefulWidget {
 class _ImportProductsScreenState extends State<ImportProductsScreen> {
   bool _isParsing = false;
   bool _isImporting = false;
-  // String? _selectedFileName; // Unused
   Uint8List? _selectedFileBytes;
   List<Map<String, dynamic>> _rawRows = [];
   List<ImportRow> _validatedRows = [];
@@ -145,16 +143,16 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
         return;
       }
 
-      final result = await FilePicker.pickFiles(
+      final files = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['xlsx'],
+        withData: true,
       );
 
-      if (result != null) {
-        final fileBytes = await result.files.single.readAsBytes();
+      if (files.isNotEmpty) {
+        final fileBytes = await files.single.readAsBytes();
 
         setState(() {
-          // _selectedFileName = fileName;
           _selectedFileBytes = fileBytes;
           _isParsing = true;
         });
@@ -195,7 +193,7 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
           ),
         );
         setState(() {
-          // keep _selectedFileBytes to allow retry; just stop parsing state
+          // Keep file bytes to allow retry; just stop parsing state
           _isParsing = false;
         });
       }
@@ -264,10 +262,6 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
 
       if (kIsWeb) {
         // Web download
-        // On web saveFile might not work as expected or requires bytes.
-        // Actually file_picker saveFile works on some platforms.
-        // Simpler way for web is usually anchor download.
-        // But let's try platform.saveFile first.
         await FilePicker.saveFile(
           dialogTitle: 'احفظ ملف النموذج',
           fileName: fileName,
@@ -278,7 +272,7 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
         return;
       }
 
-      String? outputFile = await FilePicker.saveFile(
+      final Uri? outputFileUri = await FilePicker.saveFile(
         dialogTitle: 'اختر مكان حفظ الملف',
         fileName: fileName,
         type: FileType.custom,
@@ -286,19 +280,12 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
         bytes: Uint8List.fromList(bytes),
       );
 
-      if (outputFile == null) {
-        // If saveFile returns null (user cancelled or platform not supported),
-        // fallback to sharing as a secondary option
-        if (mounted) {
-          // final tempDir = await getTemporaryDirectory(); // Removed unused
-          // final file = File('${tempDir.path}/$fileName'); // Removed File
-          // await file.writeAsBytes(bytes);
-          // Only use Share on mobile if we have a file path, which is hard without dart:io.
-          // For now, we rely on saveFile working.
+      final String? outputFile = outputFileUri != null
+          ? (outputFileUri.path.isNotEmpty ? outputFileUri.path : outputFileUri.toString())
+          : null;
 
-          if (!mounted) return;
-          // Share functionality removed for Web compatibility (relied on File)
-        }
+      if (outputFile == null) {
+        // Handle canceled or unsupported platform save
         return;
       }
 
@@ -547,7 +534,6 @@ class _ImportProductsScreenState extends State<ImportProductsScreen> {
                     ? null
                     : () => setState(() {
                         _selectedFileBytes = null;
-                        // _selectedFileName = null;
                       }),
                 child: const Text('إلغاء'),
               ),

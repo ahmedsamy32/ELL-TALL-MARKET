@@ -1,4 +1,5 @@
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
+import 'package:ell_tall_market/widgets/safe_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
@@ -1383,28 +1384,34 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
                 height: 120,
                 child: Stack(
                   children: [
-                    Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.horizontal(
-                          right: Radius.circular(12),
-                        ),
-                        color: Colors.grey.shade200,
-                        image: product.hasImage
-                            ? DecorationImage(
-                                image: NetworkImage(product.imageUrl!),
-                                fit: BoxFit.cover,
-                              )
-                            : null,
+                    ClipRRect(
+                      borderRadius: BorderRadius.horizontal(
+                        right: Radius.circular(12),
                       ),
-                      child: product.hasImage
-                          ? null
-                          : Center(
-                              child: Icon(
-                                Icons.image_not_supported,
-                                size: 40,
-                                color: Colors.grey.shade400,
+                      child: Container(
+                        width: 120,
+                        height: 120,
+                        color: Colors.grey.shade200,
+                        child: product.hasImage
+                            ? SafeNetworkImage(
+                                imageUrl: product.imageUrl!,
+                                fit: BoxFit.cover,
+                                errorWidget: Center(
+                                  child: Icon(
+                                    Icons.image_not_supported,
+                                    size: 40,
+                                    color: Colors.grey.shade400,
+                                  ),
+                                ),
+                              )
+                            : Center(
+                                child: Icon(
+                                  Icons.image_not_supported,
+                                  size: 40,
+                                  color: Colors.grey.shade400,
+                                ),
                               ),
-                            ),
+                      ),
                     ),
                     // شارة الحالة أو Checkbox عند التحديد
                     if (_isSelectionMode)

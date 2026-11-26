@@ -168,12 +168,12 @@ class ProductCard extends StatelessWidget {
 
             // معلومات المنتج - ارتفاع محدد لمنع overflow
             SizedBox(
-              height: 96, // زيادة الارتفاع
+              height: 104,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
                       product.name,
@@ -185,48 +185,40 @@ class ProductCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 4),
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                '${product.price.toStringAsFixed(0)} ج.م',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: colorScheme.primary,
-                                  fontSize: 14,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              if (product.comparePrice != null &&
-                                  product.comparePrice! > product.price)
-                                Text(
-                                  '${product.comparePrice!.toStringAsFixed(0)} ج.م',
-                                  style: TextStyle(
-                                    decoration: TextDecoration.lineThrough,
-                                    fontSize: 10,
-                                    color: colorScheme.outline,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                            ],
+                        Text(
+                          '${product.price.toStringAsFixed(0)} ج.م',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.primary,
+                            fontSize: 13,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
+                        if (product.comparePrice != null &&
+                            product.comparePrice! > product.price) ...[
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              '${product.comparePrice!.toStringAsFixed(0)} ج.م',
+                              style: TextStyle(
+                                decoration: TextDecoration.lineThrough,
+                                fontSize: 10,
+                                color: colorScheme.outline,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Row(
-                        children: [
-                          Row(
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               const Icon(Icons.star_rounded, size: 14, color: Colors.amber),
@@ -240,54 +232,58 @@ class ProductCard extends StatelessWidget {
                                 ),
                               ),
                               if (product.reviewCount > 0)
-                                Text(
-                                  ' (${product.reviewCount})',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: colorScheme.outline,
-                                    height: 1.1,
+                                Flexible(
+                                  child: Text(
+                                    ' (${product.reviewCount})',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: colorScheme.outline,
+                                      height: 1.1,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                             ],
                           ),
-                          const Spacer(),
-                          if (onBuyPressed != null)
-                            Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                onTap:
-                                    (product.inStock &&
-                                        product.stockQuantity > 0)
-                                    ? () {
-                                        HapticFeedback.lightImpact();
-                                        onBuyPressed?.call();
-                                      }
-                                    : null,
-                                borderRadius: BorderRadius.circular(20),
-                                child: Container(
-                                  padding: const EdgeInsets.all(6),
-                                  decoration: BoxDecoration(
-                                    color:
-                                        (product.inStock &&
-                                            product.stockQuantity > 0)
-                                        ? colorScheme.primaryContainer
-                                        : colorScheme.surfaceContainerHighest,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: Icon(
-                                    Icons.add_rounded,
-                                    size: 18,
-                                    color:
-                                        (product.inStock &&
-                                            product.stockQuantity > 0)
-                                        ? colorScheme.onPrimaryContainer
-                                        : colorScheme.outline,
-                                  ),
+                        ),
+                        const Spacer(),
+                        if (onBuyPressed != null)
+                          Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap:
+                                  (product.inStock &&
+                                      product.stockQuantity > 0)
+                                  ? () {
+                                      HapticFeedback.lightImpact();
+                                      onBuyPressed?.call();
+                                    }
+                                  : null,
+                              borderRadius: BorderRadius.circular(20),
+                              child: Container(
+                                padding: const EdgeInsets.all(5),
+                                decoration: BoxDecoration(
+                                  color:
+                                      (product.inStock &&
+                                          product.stockQuantity > 0)
+                                      ? colorScheme.primaryContainer
+                                      : colorScheme.surfaceContainerHighest,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.add_rounded,
+                                  size: 16,
+                                  color:
+                                      (product.inStock &&
+                                          product.stockQuantity > 0)
+                                      ? colorScheme.onPrimaryContainer
+                                      : colorScheme.outline,
                                 ),
                               ),
                             ),
-                        ],
-                      ),
+                          ),
+                      ],
                     ),
                   ],
                 ),

@@ -57,10 +57,17 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
 
   final _payoutDetailsController = TextEditingController();
   final _workingHoursController = TextEditingController();
+  final _workingHoursFromController = TextEditingController();
+  final _workingHoursToController = TextEditingController();
   final _estimatedPrepTimeController = TextEditingController();
+
+  TimeOfDay? _workingHoursFromTime;
+  TimeOfDay? _workingHoursToTime;
 
   final _payoutDetailsFocus = FocusNode();
   final _workingHoursFocus = FocusNode();
+  final _workingHoursFromFocus = FocusNode();
+  final _workingHoursToFocus = FocusNode();
   final _estimatedPrepTimeFocus = FocusNode();
 
   // Controllers - بيانات المتجر
@@ -163,6 +170,8 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
     _storeDescriptionController.addListener(_scheduleDraftSave);
     _payoutDetailsController.addListener(_scheduleDraftSave);
     _workingHoursController.addListener(_scheduleDraftSave);
+    _workingHoursFromController.addListener(_scheduleDraftSave);
+    _workingHoursToController.addListener(_scheduleDraftSave);
     _estimatedPrepTimeController.addListener(_scheduleDraftSave);
 
     // Store structured address listeners
@@ -373,6 +382,7 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
     }
     if (draft.workingHours?.isNotEmpty == true) {
       _workingHoursController.text = draft.workingHours!;
+      _parseWorkingHoursToFields(draft.workingHours!);
     }
 
     // بيانات شخصية
@@ -434,6 +444,75 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
     // إعلام بسيط للمستخدم
     if (mounted) {
       SnackBarHelper.showInfo(context, 'تم استرجاع مسودة بيانات المتجر');
+    }
+  }
+
+  void _parseWorkingHoursToFields(String text) {
+    if (text.contains(' إلى ')) {
+      final parts = text.split(' إلى ');
+      _workingHoursFromController.text =
+          parts[0].replaceFirst('من ', '').trim();
+      _workingHoursToController.text = parts[1].trim();
+    } else if (text.contains(' - ')) {
+      final parts = text.split(' - ');
+      _workingHoursFromController.text = parts[0].trim();
+      _workingHoursToController.text = parts[1].trim();
+    }
+  }
+
+  void _syncWorkingHoursText() {
+    final from = _workingHoursFromController.text.trim();
+    final to = _workingHoursToController.text.trim();
+    if (from.isNotEmpty && to.isNotEmpty) {
+      _workingHoursController.text = 'من $from إلى $to';
+    } else if (from.isNotEmpty) {
+      _workingHoursController.text = 'من $from';
+    } else if (to.isNotEmpty) {
+      _workingHoursController.text = 'إلى $to';
+    } else {
+      _workingHoursController.text = '';
+    }
+  }
+
+  String _formatTimeOfDay(TimeOfDay time) {
+    final period = time.period == DayPeriod.am ? 'صباحاً' : 'مساءً';
+    final hour = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
+    final minute = time.minute.toString().padLeft(2, '0');
+    return '${hour.toString().padLeft(2, '0')}:$minute $period';
+  }
+
+  Future<void> _pickWorkingHour({required bool isFrom}) async {
+    final initial = isFrom
+        ? (_workingHoursFromTime ?? const TimeOfDay(hour: 9, minute: 0))
+        : (_workingHoursToTime ?? const TimeOfDay(hour: 23, minute: 0));
+
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: initial,
+      helpText: isFrom ? 'اختر وقت بدء العمل' : 'اختر وقت انتهاء العمل',
+      cancelText: 'إلغاء',
+      confirmText: 'تأكيد',
+      builder: (context, child) {
+        return MediaQuery(
+          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: false),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        final formatted = _formatTimeOfDay(picked);
+        if (isFrom) {
+          _workingHoursFromTime = picked;
+          _workingHoursFromController.text = formatted;
+        } else {
+          _workingHoursToTime = picked;
+          _workingHoursToController.text = formatted;
+        }
+        _syncWorkingHoursText();
+        _scheduleDraftSave();
+      });
     }
   }
 
@@ -659,9 +738,13 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
     _draftSaveTimer?.cancel();
     _payoutDetailsController.dispose();
     _workingHoursController.dispose();
+    _workingHoursFromController.dispose();
+    _workingHoursToController.dispose();
     _estimatedPrepTimeController.dispose();
     _payoutDetailsFocus.dispose();
     _workingHoursFocus.dispose();
+    _workingHoursFromFocus.dispose();
+    _workingHoursToFocus.dispose();
     _estimatedPrepTimeFocus.dispose();
     _firstNameController.dispose();
     _middleNameController.dispose();
@@ -1027,6 +1110,40 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
         }
       } else {
         AppLogger.info("[RegisterMerchant] ℹ️ تخطي رفع الشعار (لم يتم اختيار صورة)");
+      }
+
+      // تحديث ساعات العمل للمطاعم في جدول stores بالقاعدة
+      if (_merchantType == 'restaurant' &&
+          _workingHoursController.text.trim().isNotEmpty) {
+        try {
+          final openingHoursPayload = {
+            'from': _workingHoursFromController.text.trim(),
+            'to': _workingHoursToController.text.trim(),
+            'text': _workingHoursController.text.trim(),
+          };
+          await Supabase.instance.client
+              .from('stores')
+              .update({'opening_hours': openingHoursPayload})
+              .eq('merchant_id', userId);
+
+          // حفظ عمود working_hours إن وجد في قاعدة البيانات
+          try {
+            await Supabase.instance.client
+                .from('stores')
+                .update({
+                  'working_hours': _workingHoursController.text.trim(),
+                })
+                .eq('merchant_id', userId);
+          } catch (_) {}
+
+          AppLogger.info("[RegisterMerchant] ✅ تم تسجيل ساعات العمل في قاعدة البيانات بنجاح");
+        } catch (e, st) {
+          AppLogger.warning(
+            "[RegisterMerchant] ⚠️ تعذر تحديث ساعات العمل مباشرة في stores: $e",
+            e,
+            st,
+          );
+        }
       }
 
       try {
@@ -2487,13 +2604,32 @@ class _RegisterMerchantScreenState extends State<RegisterMerchantScreen> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CustomTextField(
-            controller: _workingHoursController,
-            label: 'ساعات عمل المطبخ',
-            hintText: 'مثال: 10:00 صباحاً - 11:30 مساءً',
-            prefixIcon: const Icon(Icons.access_time_outlined),
-            focusNode: _workingHoursFocus,
-            textInputAction: TextInputAction.next,
+          Row(
+            children: [
+              Expanded(
+                child: CustomTextField(
+                  controller: _workingHoursFromController,
+                  label: 'من الساعة',
+                  hintText: 'مثال: 09:00 صباحاً',
+                  prefixIcon: const Icon(Icons.access_time_outlined),
+                  focusNode: _workingHoursFromFocus,
+                  readOnly: true,
+                  onTap: () => _pickWorkingHour(isFrom: true),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: CustomTextField(
+                  controller: _workingHoursToController,
+                  label: 'إلى الساعة',
+                  hintText: 'مثال: 11:30 مساءً',
+                  prefixIcon: const Icon(Icons.access_time_filled_outlined),
+                  focusNode: _workingHoursToFocus,
+                  readOnly: true,
+                  onTap: () => _pickWorkingHour(isFrom: false),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           CustomTextField(

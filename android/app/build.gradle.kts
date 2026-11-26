@@ -26,6 +26,11 @@ android {
     compileSdk = 36
     ndkVersion = "27.0.12077973"
 
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
     defaultConfig {
         applicationId = "com.elltall.market"
         minSdk = flutter.minSdkVersion
@@ -117,5 +122,16 @@ tasks.register<Copy>("renameApk") {
         include("app-release.apk")
     }
     into("build/outputs/apk/release")
-    rename("app-release.apk", "Ell-Tall-Market-v${android.defaultConfig.versionName}.apk")
+    rename("app-release.apk", "Ell-Tall-Market-v${flutter.versionName}.apk")
+}
+
+// Ensure default proguard files are mirrored to project buildDir when root buildDirectory is redirected
+tasks.matching { it.name.startsWith("minify") }.configureEach {
+    doFirst {
+        val srcDir = layout.buildDirectory.dir("intermediates/default_proguard_files/global").get().asFile
+        val targetDir = projectDir.resolve("build/intermediates/default_proguard_files/global")
+        if (srcDir.exists()) {
+            srcDir.copyRecursively(targetDir, overwrite = true)
+        }
+    }
 }

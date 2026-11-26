@@ -10,6 +10,7 @@ import 'package:ell_tall_market/models/product_model.dart';
 import 'package:ell_tall_market/widgets/app_search_bar.dart';
 import 'package:ell_tall_market/utils/responsive_helper.dart';
 import 'package:ell_tall_market/core/logger.dart';
+import 'package:ell_tall_market/widgets/safe_network_image.dart';
 
 class ManageProductsScreen extends StatefulWidget {
   const ManageProductsScreen({super.key});
@@ -346,30 +347,44 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
                     onTap: () => _editProduct(product),
                     child: Stack(
                       children: [
-                        Container(
-                          width: 60,
-                          height: 60,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.08),
-                                blurRadius: 6,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                            image:
-                                product.imageUrl != null &&
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: Container(
+                            width: 60,
+                            height: 60,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.08),
+                                  blurRadius: 6,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: product.imageUrl != null &&
                                     product.imageUrl!.isNotEmpty
-                                ? DecorationImage(
-                                    image: NetworkImage(product.imageUrl!),
+                                ? SafeNetworkImage(
+                                    imageUrl: product.imageUrl!,
+                                    width: 60,
+                                    height: 60,
                                     fit: BoxFit.cover,
-                                  )
-                                : const DecorationImage(
-                                    image: AssetImage(
-                                      'assets/images/default_product.png',
+                                    errorWidget: Container(
+                                      color: Colors.grey.shade200,
+                                      child: const Icon(
+                                        Icons.image_not_supported_rounded,
+                                        size: 24,
+                                        color: Colors.grey,
+                                      ),
                                     ),
-                                    fit: BoxFit.cover,
+                                  )
+                                : Container(
+                                    color: Colors.grey.shade200,
+                                    child: const Icon(
+                                      Icons.image_rounded,
+                                      size: 24,
+                                      color: Colors.grey,
+                                    ),
                                   ),
                           ),
                         ),
@@ -454,7 +469,10 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
                           ],
                         ),
                         const SizedBox(height: 4),
-                        Row(
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
@@ -476,7 +494,6 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 6),
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 8,
@@ -644,13 +661,17 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
                                     image: MemoryImage(newImageBytes!),
                                     fit: BoxFit.cover,
                                   )
-                                : const DecorationImage(
-                                    image: AssetImage(
-                                      'assets/images/default_product.png',
-                                    ),
-                                    fit: BoxFit.cover,
-                                  ),
+                                : null,
                           ),
+                          child: newImageBytes == null
+                              ? const Center(
+                                  child: Icon(
+                                    Icons.add_photo_alternate_rounded,
+                                    size: 36,
+                                    color: Colors.grey,
+                                  ),
+                                )
+                              : null,
                         ),
                         Positioned(
                           bottom: 0,
@@ -687,6 +708,7 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
                   // اختيار المتجر (مع افتراضي سوق التل)
                   if (_storeNames.isNotEmpty) ...[
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       initialValue: selectedStoreId,
                       decoration: InputDecoration(
                         labelText: 'المتجر التابع له المنتج *',
@@ -716,6 +738,7 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
                   // اختيار الفئة
                   if (_categoryNames.isNotEmpty) ...[
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       initialValue: selectedCategoryId,
                       decoration: InputDecoration(
                         labelText: 'فئة المنتج',
@@ -1032,19 +1055,35 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
                                     image: MemoryImage(newImageBytes!),
                                     fit: BoxFit.cover,
                                   )
-                                : (product.imageUrl != null &&
-                                        product.imageUrl!.isNotEmpty)
-                                    ? DecorationImage(
-                                        image: NetworkImage(product.imageUrl!),
-                                        fit: BoxFit.cover,
-                                      )
-                                    : const DecorationImage(
-                                        image: AssetImage(
-                                          'assets/images/default_product.png',
-                                        ),
-                                        fit: BoxFit.cover,
-                                      ),
+                                : null,
                           ),
+                          child: newImageBytes == null
+                              ? (product.imageUrl != null &&
+                                      product.imageUrl!.isNotEmpty)
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(16),
+                                      child: SafeNetworkImage(
+                                        imageUrl: product.imageUrl!,
+                                        width: 100,
+                                        height: 100,
+                                        fit: BoxFit.cover,
+                                        errorWidget: const Center(
+                                          child: Icon(
+                                            Icons.image_not_supported_rounded,
+                                            size: 36,
+                                            color: Colors.grey,
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : const Center(
+                                      child: Icon(
+                                        Icons.add_photo_alternate_rounded,
+                                        size: 36,
+                                        color: Colors.grey,
+                                      ),
+                                    )
+                              : null,
                         ),
                         Positioned(
                           bottom: 0,
@@ -1081,6 +1120,7 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
                   // اختيار المتجر
                   if (_storeNames.isNotEmpty) ...[
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       initialValue: _storeNames.containsKey(selectedStoreId)
                           ? selectedStoreId
                           : null,
@@ -1112,6 +1152,7 @@ class _ManageProductsScreenState extends State<ManageProductsScreen> {
                   // اختيار الفئة
                   if (_categoryNames.isNotEmpty) ...[
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       initialValue: _categoryNames.containsKey(selectedCategoryId)
                           ? selectedCategoryId
                           : null,
