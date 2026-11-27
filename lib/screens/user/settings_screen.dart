@@ -1,3 +1,4 @@
+import '../../widgets/auth_route_guard.dart';
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:provider/provider.dart';
@@ -196,7 +197,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         onTap: () => Navigator.push(
           context,
-          MaterialPageRoute(
+          protectedPage(
             builder: (context) => const NotificationSettingsScreen(),
           ),
         ),

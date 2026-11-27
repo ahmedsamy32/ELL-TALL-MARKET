@@ -215,6 +215,21 @@ class AuthDeepLinkHandler {
       final error = params['error'];
       final errorDescription = params['error_description'];
 
+      if (params['type'] == 'recovery' &&
+          accessToken != null &&
+          refreshToken != null &&
+          error == null) {
+        NavigationService.replaceWith(
+          AppRoutes.resetPassword,
+          arguments: {
+            'type': 'recovery',
+            'token': accessToken,
+            'token_hash': refreshToken,
+          },
+        );
+        return;
+      }
+
       // If the link contains an error, route the user to the confirmation screen
       if (error != null || errorDescription != null) {
         AppLogger.error('❌ رابط غير صالح: $error - $errorDescription');
@@ -308,10 +323,12 @@ class AuthDeepLinkHandler {
     BuildContext context,
   ) async {
     try {
-      AppLogger.info('🔗 بدء معالجة Deep Link: $url');
+      AppLogger.info('🔗 بدء معالجة Deep Link: ${_sanitizeUrl(url)}');
 
       if (!isAuthDeepLink(url)) {
-        AppLogger.warning('⚠️ الرابط ليس رابط مصادقة صالح: $url');
+        AppLogger.warning(
+          '⚠️ الرابط ليس رابط مصادقة صالح: ${_sanitizeUrl(url)}',
+        );
         return;
       }
 
@@ -324,6 +341,21 @@ class AuthDeepLinkHandler {
       final refreshToken = params['refresh_token'];
       final error = params['error'];
       final errorDescription = params['error_description'];
+
+      if (params['type'] == 'recovery' &&
+          accessToken != null &&
+          refreshToken != null &&
+          error == null) {
+        NavigationService.replaceWith(
+          AppRoutes.resetPassword,
+          arguments: {
+            'type': 'recovery',
+            'token': accessToken,
+            'token_hash': refreshToken,
+          },
+        );
+        return;
+      }
 
       AppLogger.info('📋 معاملات الرابط:');
       AppLogger.info(

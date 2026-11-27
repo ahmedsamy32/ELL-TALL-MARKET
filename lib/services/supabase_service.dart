@@ -18,21 +18,6 @@ class SupabaseService {
     return 'client';
   }
 
-  static String _sanitizeProfileRole(String? role) {
-    final normalized = role?.trim().toLowerCase();
-    const validRoles = {
-      'client',
-      'merchant',
-      'captain',
-      'admin',
-      'delivery_company_admin',
-    };
-    if (validRoles.contains(normalized)) {
-      return normalized!;
-    }
-    return 'client';
-  }
-
   static Exception _networkException(String action, Object error) {
     if (error is TimeoutException) {
       return Exception(
@@ -98,8 +83,8 @@ class SupabaseService {
             data: {
               'full_name': name,
               'phone': phone,
-              'role': safeUserType,
               ...?additionalData,
+              'role': safeUserType,
             },
           )
           .timeout(_defaultTimeout);
@@ -251,7 +236,7 @@ class SupabaseService {
           'email': current.email,
           'full_name': metadata['full_name'] ?? metadata['name'],
           'phone': metadata['phone'],
-          'role': _sanitizeProfileRole(metadata['role']?.toString()),
+          'role': 'client',
           'is_active': true,
           'updated_at': DateTime.now().toIso8601String(),
         };
@@ -259,7 +244,7 @@ class SupabaseService {
         try {
           await _client
               .from('profiles')
-              .upsert(payload, onConflict: 'id')
+              .upsert(payload, onConflict: 'id', ignoreDuplicates: true)
               .timeout(_defaultTimeout);
           AppLogger.info(
             '✅ Created missing profile row for user: ${current.id} (attempt $attempt/$maxAttempts)',

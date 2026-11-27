@@ -1,3 +1,5 @@
+import '../../widgets/auth_route_guard.dart';
+import '../../models/profile_model.dart';
 import 'dart:async';
 import 'package:flutter_keyboard_visibility/flutter_keyboard_visibility.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
@@ -2506,7 +2508,8 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
     try {
       // افتح شاشة إعدادات التاجر مباشرة (ليست مسجلة كمسار مُسمى)
       await Navigator.of(context).push(
-        MaterialPageRoute(
+        protectedPage(
+          roles: const {UserRole.merchant},
           builder: (_) => const MerchantSettingsScreen(scrollToSections: true),
         ),
       );
@@ -2985,7 +2988,8 @@ class _AddEditProductScreenState extends State<AddEditProductScreen> {
         // Navigate to edit the duplicated product
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(
+          protectedPage(
+            roles: const {UserRole.merchant},
             builder: (context) => AddEditProductScreen(product: duplicated),
           ),
         );

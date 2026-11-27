@@ -32,21 +32,21 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
   String? _verifiedEmail;
+  String? _recoveryUserId;
 
   @override
   void initState() {
     super.initState();
 
     // التحقق من وجود token للدخول في وضع إعادة تعيين كلمة المرور
-    if (widget.token != null && widget.tokenHash != null) {
-      _isResetMode = true;
+    if (widget.type == 'recovery' ||
+        (widget.token != null && widget.tokenHash != null)) {
       _verifyRecoveryToken();
     }
   }
 
   /// ✅ التحقق من token recovery من Supabase
   Future<void> _verifyRecoveryToken() async {
-    if (widget.token == null || widget.tokenHash == null) return;
 
     setState(() {
       _isLoading = true;
@@ -59,9 +59,15 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       );
 
       // التحقق من token باستخدام Supabase Auth
-      await authProvider.verifyPasswordResetToken(widget.token!);
+      _recoveryUserId = await authProvider.verifyRecoverySession(
+        accessToken: widget.token,
+        refreshToken: widget.tokenHash,
+      );
+      if (!mounted) return;
 
       setState(() {
+        _verifiedEmail = authProvider.client.auth.currentUser?.email;
+        _isResetMode = true;
         _isLoading = false;
       });
 
@@ -76,6 +82,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         );
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
         _isResetMode = false;
@@ -105,9 +112,11 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         context,
         listen: false,
       );
-      await authProvider.sendPasswordResetEmailSimple(
+      final sent = await authProvider.sendPasswordResetEmailSimple(
         _emailController.text.trim(),
       );
+      if (!sent) throw StateError(authProvider.error ?? 'تعذّر إرسال الرابط');
+      if (!mounted) return;
 
       setState(() {
         _isLoading = false;
@@ -127,6 +136,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         Navigator.pop(context);
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -157,7 +167,17 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       );
 
       // تحديث كلمة المرور باستخدام Supabase Auth
-      await authProvider.updatePasswordWithSupabase(_passwordController.text);
+      if (_recoveryUserId == null ||
+          authProvider.client.auth.currentUser?.id != _recoveryUserId) {
+        throw StateError('انتهت جلسة استعادة كلمة المرور');
+      }
+      final updated = await authProvider.updatePasswordWithSupabase(
+        _passwordController.text,
+      );
+      if (!updated) {
+        throw StateError(authProvider.error ?? 'تعذّر تغيير كلمة المرور');
+      }
+      if (!mounted) return;
 
       setState(() {
         _isLoading = false;
@@ -175,6 +195,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         Navigator.pushReplacementNamed(context, '/login');
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });

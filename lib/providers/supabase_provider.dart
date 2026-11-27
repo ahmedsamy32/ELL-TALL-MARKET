@@ -23,6 +23,11 @@ class SupabaseProvider with ChangeNotifier {
   bool _isProfileMissing = false;
   String? _error;
   StreamSubscription<AuthState>? _authSubscription;
+  Timer? _sessionExpiry;
+  int _identityVersion = 0;
+  String? _recoveryUserId;
+  String? get recoveryUserId => _recoveryUserId;
+  Future<void>? _profileRequest;
 
   ProfileModel? get currentProfile => _currentProfile;
   ProfileModel? get currentUserProfile =>
@@ -59,138 +64,95 @@ class SupabaseProvider with ChangeNotifier {
 
   /// Initialize provider and auth listener
   Future<void> initialize() async {
-    _isLoading = true;
+    if (isInitialized) return;
+    final auth = Supabase.instance.client.auth;
+    _authSubscription = auth.onAuthStateChange.listen(
+      _handleAuthStateChange,
+      onError: (Object error) {
+        AppLogger.warning('Auth session update failed: $error');
+        _syncSession(auth.currentSession);
+        notifyListeners();
+      },
+    );
+    _syncSession(auth.currentSession);
+    if (_currentUser != null) unawaited(_loadProfile());
     notifyListeners();
+  }
 
-    try {
-      // Get current user
-      _currentUser = SupabaseService.getCurrentUser();
-
-      // Listen to auth changes FIRST (أسرع)
-      _authSubscription = Supabase.instance.client.auth.onAuthStateChange
-          .listen((data) {
-            _handleAuthStateChange(data);
-          });
-
-      AppLogger.info('SupabaseProvider initialized successfully');
-
-      // تحميل البيانات في الخلفية بعد فتح التطبيق
-      if (_currentUser != null) {
-        // Load profile in background without blocking
-        // SupabaseService.getCurrentProfile() already has retry logic with timeouts
-        // so we don't need an outer timeout here
-        _loadProfile().catchError((e) {
-          AppLogger.warning('Profile load error: $e');
-          return Future.value(); // return empty Future to avoid crash
-        });
-      }
-    } catch (e) {
-      _error = 'Initialization error: $e';
-      AppLogger.error('Init error', e);
-      // Continue anyway - create minimal subscription
-      _authSubscription = Supabase.instance.client.auth.onAuthStateChange
-          .listen((data) {
-            _handleAuthStateChange(data);
-          });
-    } finally {
-      _isLoading = false;
-      notifyListeners();
+  void _syncSession(Session? session) {
+    _sessionExpiry?.cancel();
+    final expiresAt = session?.expiresAt;
+    final remaining = expiresAt == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(
+            expiresAt * 1000,
+          ).difference(DateTime.now());
+    User? user;
+    if (session != null &&
+        !session.user.isAnonymous &&
+        remaining != null &&
+        remaining > Duration.zero) {
+      user = session.user;
+    }
+    if (user?.id != _currentUser?.id) {
+      _identityVersion++;
+      _recoveryUserId = null;
+      _allUsers = [];
+      _currentProfile = null;
+      _profileRequest = null;
+      _isProfileLoading = false;
+      _isProfileMissing = false;
+    }
+    _currentUser = user;
+    if (user != null) {
+      _sessionExpiry = Timer(remaining!, () {
+        _syncSession(Supabase.instance.client.auth.currentSession);
+        notifyListeners();
+      });
     }
   }
 
-  /// Load user profile with retry
-  Future<void> _loadProfile() async {
-    if (_isProfileLoading) return;
-
+  // Wait for an in-flight load of the same identity. A previous user's result
+  // must never be published after sign-out or a switch to another account.
+  Future<void> _loadProfile() {
+    final user = _currentUser;
+    if (user == null) return Future.value();
+    final pending = _profileRequest;
+    if (pending != null) return pending;
+    final version = _identityVersion;
+    final done = Completer<void>();
+    _profileRequest = done.future;
     _isProfileLoading = true;
+    _isProfileMissing = false;
     notifyListeners();
 
-    try {
-      AppLogger.debug('🔄 Attempting to load profile...');
-
-      // تحقق من وجود user قبل المحاولة
-      if (_currentUser == null) {
-        AppLogger.warning('⚠️ No user to load profile for');
-        return;
-      }
-
-      // بدء محاولة تحميل بروفايل جديدة
-      _isProfileMissing = false;
-
-      _currentProfile = await SupabaseService.getCurrentProfile();
-      if (_currentProfile != null) {
-        AppLogger.info('✅ Profile loaded: ${_currentProfile?.fullName}');
-      } else {
-        AppLogger.warning(
-          '⚠️ Profile data unavailable after load attempt (userId: ${_currentUser?.id})',
-        );
-
-        // إذا لم نجد profile (maybeSingle = null) نحاول إنشاءه ثم إعادة التحميل.
-        final ensured = await SupabaseService.ensureCurrentProfileExists();
-        if (ensured) {
-          _currentProfile = await SupabaseService.getCurrentProfile();
-
-          if (_currentProfile != null) {
-            AppLogger.info(
-              '✅ Profile loaded after ensure: ${_currentProfile?.fullName}',
-            );
-          } else {
-            AppLogger.warning(
-              '⚠️ Profile still unavailable after ensure (possible RLS denial)',
-            );
-          }
+    Future<void> load() async {
+      try {
+        var profile = await SupabaseService.getCurrentProfile();
+        if (version != _identityVersion) return;
+        if (profile == null &&
+            await SupabaseService.ensureCurrentProfileExists()) {
+          if (version != _identityVersion) return;
+          profile = await SupabaseService.getCurrentProfile();
         }
-
-        // إذا مازال null بعد ensure، نعتبره بروفايل مفقود/غير قابل للقراءة
-        if (_currentProfile == null) {
-          _isProfileMissing = true;
-        }
-      }
-      notifyListeners(); // Update UI after profile loads
-    } catch (e) {
-      AppLogger.error('❌ Load profile error', e);
-
-      // إذا فشل التحميل، نحاول مرة أخرى بعد ثانيتين (فقط لو المستخدم موجود)
-      if (_currentUser != null) {
-        AppLogger.info('🔄 Retrying profile load in 2 seconds...');
-        await Future.delayed(Duration(seconds: 2));
-
-        try {
-          _currentProfile = await SupabaseService.getCurrentProfile().timeout(
-            Duration(seconds: 8),
-            onTimeout: () {
-              AppLogger.warning(
-                '⚠️ Profile load retry timed out after 8 seconds',
-              );
-              return null;
-            },
-          );
-          if (_currentProfile != null) {
-            AppLogger.info(
-              '✅ Profile loaded on retry: ${_currentProfile?.fullName}',
-            );
-            _isProfileMissing = false;
-          } else {
-            AppLogger.warning('⚠️ Profile data still unavailable after retry');
-            _isProfileMissing = true;
-          }
-          notifyListeners();
-        } catch (retryError) {
-          AppLogger.warning('⚠️ Profile load failed after retry: $retryError');
-          _currentProfile = null;
-          _isProfileMissing = true;
+        if (version != _identityVersion) return;
+        _currentProfile = profile?.id == user.id ? profile : null;
+      } catch (e) {
+        if (version == _identityVersion) _currentProfile = null;
+        AppLogger.warning('Profile load failed: $e');
+      } finally {
+        if (version == _identityVersion) {
+          _profileRequest = null;
+          _isProfileLoading = false;
+          _isProfileMissing = _currentProfile == null;
           notifyListeners();
         }
-      } else {
-        AppLogger.warning('⚠️ User logged out during profile load');
-        _currentProfile = null;
-        _isProfileMissing = false;
-        notifyListeners();
+        done.complete();
       }
-    } finally {
-      _isProfileLoading = false;
-      notifyListeners();
     }
+
+    unawaited(load());
+    return done.future;
   }
 
   /// Force refresh the current profile from the `profiles` table.
@@ -199,52 +161,30 @@ class SupabaseProvider with ChangeNotifier {
   }
 
   /// Handle auth state changes
-  void _handleAuthStateChange(AuthState authState) async {
-    AppLogger.debug('Auth state changed: ${authState.event}');
-
-    switch (authState.event) {
-      case AuthChangeEvent.signedIn:
-        _currentUser = authState.session?.user;
-        _isProfileMissing = false;
-        _isLoading = false; // Clear loading state
-        _error = null; // Clear any previous errors
-        AppLogger.info('✅ User signed in: ${_currentUser?.email}');
-        notifyListeners(); // Update UI immediately
-        // Load profile first, then save FCM token with correct role
-        _loadProfileThenSaveToken();
-        break;
-      case AuthChangeEvent.signedOut:
-        _currentUser = null;
-        _currentProfile = null;
-        _isProfileMissing = false;
-        _isLoading = false;
-        _error = null;
-        AppLogger.info('User signed out');
-        notifyListeners();
-        break;
-      case AuthChangeEvent.userUpdated:
-        _currentUser = authState.session?.user;
-        _isProfileMissing = false;
-        notifyListeners();
-        _loadProfile();
-        break;
-      case AuthChangeEvent.tokenRefreshed:
-        _currentUser = authState.session?.user;
-        notifyListeners();
-        break;
-      default:
-        notifyListeners();
-        break;
+  void _handleAuthStateChange(AuthState state) {
+    _syncSession(state.session);
+    if (state.event == AuthChangeEvent.passwordRecovery) {
+      _recoveryUserId = _currentUser?.id;
     }
+    if (state.event == AuthChangeEvent.signedIn && _currentUser != null) {
+      _error = null;
+      unawaited(_loadProfileThenSaveToken());
+    } else if (_currentUser != null &&
+        (_currentProfile == null ||
+            state.event == AuthChangeEvent.userUpdated ||
+            state.event == AuthChangeEvent.tokenRefreshed)) {
+      unawaited(_loadProfile());
+    }
+    notifyListeners();
   }
 
   /// Load profile then save FCM device token with correct role
   Future<void> _loadProfileThenSaveToken() async {
     try {
-      // 1) Wait for profile to load so we know the user's role
+      final version = _identityVersion;
       await _loadProfile();
 
-      // 2) Now save FCM token with the correct role
+      if (version != _identityVersion || _currentUser == null) return;
       await _saveDeviceTokenAfterAuth();
     } catch (e) {
       AppLogger.warning('⚠️ Profile load or token save failed: $e');
@@ -300,7 +240,7 @@ class SupabaseProvider with ChangeNotifier {
       );
 
       if (response?.user != null) {
-        _currentUser = response!.user;
+        _syncSession(client.auth.currentSession);
         await _loadProfile();
         return true;
       }
@@ -403,7 +343,7 @@ class SupabaseProvider with ChangeNotifier {
       );
 
       if (response?.user != null) {
-        _currentUser = response!.user;
+        _syncSession(client.auth.currentSession);
         return response;
       }
 
@@ -442,8 +382,7 @@ class SupabaseProvider with ChangeNotifier {
       await SupabaseService.signOut();
 
       // Clear authentication data
-      _currentUser = null;
-      _currentProfile = null;
+      _syncSession(null);
 
       // Clear all business data providers to prevent data leakage
       merchantProvider?.clearData();
@@ -512,8 +451,8 @@ class SupabaseProvider with ChangeNotifier {
 
     try {
       final success = await SupabaseService.updateProfile(profile);
-      if (success) {
-        _currentProfile = profile;
+      if (success && profile.id == _currentUser?.id) {
+        await _loadProfile();
       }
       return success;
     } catch (e) {
@@ -613,8 +552,8 @@ class SupabaseProvider with ChangeNotifier {
         AppLogger.info('✅ Native Google Sign In completed successfully: ${authResponse.user!.email}');
         
         // تحديث الحالة المحلية للمستخدم الحالي
-        _currentUser = authResponse.user;
-        
+        _syncSession(client.auth.currentSession);
+
         // تحميل الملف الشخصي محلياً
         await _loadProfile();
 
@@ -643,6 +582,8 @@ class SupabaseProvider with ChangeNotifier {
       await Supabase.instance.client.auth.updateUser(
         UserAttributes(password: newPassword),
       );
+      _recoveryUserId = null;
+      notifyListeners();
       return true;
     } catch (e) {
       _error = 'Update password error: $e';
@@ -651,10 +592,32 @@ class SupabaseProvider with ChangeNotifier {
     }
   }
 
-  /// Verify password reset token (placeholder)
-  Future<bool> verifyPasswordResetToken(String token) async {
-    // Supabase handles token verification internally
-    return true;
+  /// Bind the recovery form to the user Supabase validated for this link.
+  Future<String> verifyRecoverySession({
+    String? accessToken,
+    String? refreshToken,
+  }) async {
+    final auth = client.auth;
+    if (accessToken == null || refreshToken == null) {
+      final user = (await auth.getUser()).user;
+      if (user != null &&
+          user.id == _recoveryUserId &&
+          user.id == auth.currentUser?.id) {
+        return user.id;
+      }
+    } else {
+      final expected = (await auth.getUser(accessToken)).user;
+      if (expected != null) {
+        final session = auth.currentSession?.accessToken == accessToken
+            ? auth.currentSession
+            : (await auth.setSession(refreshToken)).session;
+        if (session?.user.id == expected.id &&
+            auth.currentUser?.id == expected.id) {
+          return expected.id;
+        }
+      }
+    }
+    throw const AuthException('رابط استعادة كلمة المرور غير صالح');
   }
 
   /// Resend email confirmation (placeholder)
@@ -685,7 +648,8 @@ class SupabaseProvider with ChangeNotifier {
   Future<bool> silentSignIn() async {
     final session = Supabase.instance.client.auth.currentSession;
     if (session != null) {
-      _currentUser = session.user;
+      _syncSession(session);
+      if (_currentUser == null) return false;
       await _loadProfile();
       return true;
     }
@@ -714,10 +678,10 @@ class SupabaseProvider with ChangeNotifier {
       );
 
       if (response?.user != null) {
-        _currentUser = response!.user;
+        _syncSession(client.auth.currentSession);
 
         // Check if email confirmation is required
-        final emailConfirmed = response.user?.emailConfirmedAt != null;
+        final emailConfirmed = response?.user?.emailConfirmedAt != null;
 
         if (emailConfirmed) {
           await _loadProfile();
@@ -982,6 +946,8 @@ class SupabaseProvider with ChangeNotifier {
 
   @override
   void dispose() {
+    _identityVersion++;
+    _sessionExpiry?.cancel();
     _authSubscription?.cancel();
     super.dispose();
   }
