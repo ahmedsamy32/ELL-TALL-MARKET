@@ -205,9 +205,6 @@
                 <button type="button" class="btn btn-lookup" id="btnLookupMain" onclick="lookupBarcodeOnline('productBarcode')" title="جلب بيانات السلعة تلقائياً برقم الباركود">
                   <i class="fa-solid fa-cloud-arrow-down"></i> <span>جلب البيانات</span>
                 </button>
-                <button type="button" class="btn btn-warning" onclick="generateLocalBarcode('productBarcode')" title="توليد باركود محلي تلقائي للسلعة">
-                  <i class="fa-solid fa-wand-magic-sparkles"></i> <span>توليد محلي</span>
-                </button>
               </div>
             </div>
             <div id="lookupStatusMain" class="lookup-status-banner hidden full-width"></div>
@@ -234,6 +231,17 @@
               <select id="productSupplier" title="المورد الشريك أو المتجر" aria-label="المورد الشريك أو المتجر">
                 <option value="">جاري تحميل الموردين…</option>
               </select>
+            </div>
+
+            <div class="form-group">
+              <label for="productSubCategory"><i class="fas fa-layer-group"></i> الفئة الفرعية / القسم الداخلي</label>
+              <select id="productSubCategory">
+                <option value="">-- اختر أو يُحدد تلقائياً --</option>
+                <option value="__custom__">+ كتابة فئة فرعية جديدة...</option>
+              </select>
+              <input type="text" id="customSubCategoryInput" class="custom-subcategory-input hidden"
+                     aria-label="اسم الفئة الفرعية الجديدة" placeholder="اكتب اسم الفئة الفرعية الجديدة..." disabled>
+              <small id="productSectionNotice" role="status"></small>
             </div>
 
             <!-- Wholesale/Cost Price -->
@@ -672,9 +680,6 @@
               <button type="button" class="btn btn-lookup" id="btnLookupModal" onclick="lookupBarcodeOnline('modalEditBarcode', true)" title="جلب بيانات السلعة تلقائياً برقم الباركود">
                 <i class="fa-solid fa-cloud-arrow-down"></i> <span>جلب البيانات</span>
               </button>
-              <button type="button" class="btn btn-warning" onclick="generateLocalBarcode('modalEditBarcode')" title="توليد باركود محلي تلقائي للسلعة">
-                <i class="fa-solid fa-wand-magic-sparkles"></i> <span>توليد محلي</span>
-              </button>
             </div>
           </div>
           <div id="lookupStatusModal" class="lookup-status-banner hidden full-width"></div>
@@ -699,6 +704,17 @@
             <select id="modalEditSupplier" title="المورد الشريك أو المتجر" aria-label="المورد الشريك أو المتجر">
               <option value="">اختر المورّد/المتجر…</option>
             </select>
+          </div>
+
+          <div class="form-group">
+            <label for="modalEditSubCategory"><i class="fas fa-layer-group"></i> الفئة الفرعية / القسم الداخلي</label>
+            <select id="modalEditSubCategory">
+              <option value="">-- اختر أو يُحدد تلقائياً --</option>
+              <option value="__custom__">+ كتابة فئة فرعية جديدة...</option>
+            </select>
+            <input type="text" id="modalEditCustomSubCategoryInput" class="custom-subcategory-input hidden"
+                   aria-label="اسم الفئة الفرعية الجديدة" placeholder="اكتب اسم الفئة الفرعية الجديدة..." disabled>
+            <small id="modalEditSectionNotice" role="status"></small>
           </div>
 
           <!-- Wholesale/Cost Price -->

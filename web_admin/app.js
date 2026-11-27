@@ -336,30 +336,6 @@ function closeImageModal() {
   if (img) img.src = "";
 }
 
-// ==========================================
-// 🏷️ UNIFIED BARCODE MANAGEMENT
-// ==========================================
-function generateLocalBarcode(targetInputId = "productBarcode") {
-  const input = document.getElementById(targetInputId);
-  if (!input) return;
-
-  // توليد باركود محلي قياسي مكون من 13 رقم يبدأ بـ 200
-  let code = "200" + Math.floor(100000000 + Math.random() * 900000000).toString();
-  let sum = 0;
-  for (let i = 0; i < 12; i++) {
-    sum += parseInt(code[i], 10) * (i % 2 === 0 ? 1 : 3);
-  }
-  const checkDigit = (10 - (sum % 10)) % 10;
-  const generated = code + checkDigit;
-
-  input.value = generated;
-  input.focus();
-
-  if (typeof checkBarcodeForEdit === "function") {
-    checkBarcodeForEdit(generated);
-  }
-}
-
 function initTabs() {
   const tabs = document.querySelectorAll(".nav-tab");
   tabs.forEach(tab => {
@@ -442,12 +418,199 @@ async function loadSuppliers() {
   }
 }
 
+const sectionKeywords = {
+  "ألبان وأجبان": "جبنة، لبن، حليب، زبادي، رايب، قشطة، زبدة، كيري، عبور لاند، دومتي، جهينة، المراعي، رودس، بريزيدن، لاكتيل",
+  "مقرمشات وتسالي": "سوداني، شيبسي، كرانشي، تايجر، فلامنكو، بيك رولز، مكسرات، لب، كري كري، أبو عوف، فشار، ذرة محمصة",
+  "حلويات وشوكولاتة": "شوكولاتة، نوتيلا، بسكويت، ويفر، مولتو، هوهوز، توينكيز، حلاوة، مربى، عسل، بسكو مصر، كيك، كرواسون",
+  "مشروبات ساخنة": "شاي، قهوة، نسكافيه، بن، كابتشينو، يانسون، نعناع، ليبتون، العروسة، أحمد تي، كاكاو",
+  "عصائر ومياه غازية": "عصير، مياه، بيبسي، كوكاكولا، سفن، ميرندا، سبرايت، شويبس، فيروز، حياة، بركة، راني، بيتي",
+  "بقالة جافة ومكرونات": "أرز، مكرونة، دقيق، سكر، عدس، فول، لوبيا، فاصوليا، إندومي، نودلز، الضحى، الملكة، إيطاليانو، ريجينا، حوا",
+  "زيوت وسمن وصلصات": "زيت، سمنة، سمن، صلصة، كاتشب، مايونيز، خل، طحينة، كريستال، روابي، جنة، عافية، هاينز، كنور، ماجي",
+  "معلبات وتونة": "تونة، سردين، بلوبيف، ذرة حلوة، مشروم، فول مدمس، صن شاين، حدائق كاليفورنيا",
+  "مخبوزات": "خبز، توست",
+  "مجمدات ولحوم": "لحم، لحوم، مجمدات",
+  "خضروات وفواكه": "خضروات، فواكه",
+  "منظفات وغسيل": "مسحوق، أريال، برسيل، تايد، أوكسي، فيري، بريل، كلور، كلوركس، ديتول، معطر، داوني",
+  "ورقيات ومناديل": "مناديل، فاين، زينة، ورق مطبخ، ورق تواليت، فوط صحية، حفاضات، بامبرز، مولفيكس",
+  "عناية شخصية": "شامبو، شاور، صابون، معجون أسنان، فرشاة، مزيل عرق، كريم، دوف، لوكس، نيفيا، إيفا، سيجنال، صانسيلك",
+  "إلكترونيات وإكسسوارات": "شاحن، كابل، سماعة، موبايل، بطارية، راوتر، فلاشة، باور بانك، جراب",
+  "أدوات منزلية": "أدوات منزلية"
+};
+
+function normalizeSectionName(text) {
+  return String(text || "").normalize("NFKD").toLowerCase()
+    .replace(/[\p{M}ـ]/gu, "").replace(/ى/g, "ي").replace(/ة/g, "ه")
+    .trim().replace(/\s+/g, " ");
+}
+
+// Whole words keep لب and بن distinct from لبن. Longer phrases win at the same position.
+const sectionMatchers = Object.entries(sectionKeywords).flatMap(([section, words]) =>
+  words.split("، ").map(word => {
+    const phrase = normalizeSectionName(word);
+    return { section, length: phrase.length, pattern: new RegExp("(?:^| )(?:ال)?" + phrase + "(?= |$)") };
+  })
+);
+
+const sectionForms = {};
+
+function autoSelectProductSubCategory(productName, description = '', brand = '', prefix = 'product') {
+  const state = sectionForms[prefix];
+  if (state.manual) return;
+  for (const field of [productName, description, brand]) {
+    const text = normalizeSectionName(field).replace(/[^\p{L}\p{N}]+/gu, " ");
+    let best;
+    for (const matcher of sectionMatchers) {
+      const index = text.search(matcher.pattern);
+      if (index >= 0 && (!best || index < best.index || (index === best.index && matcher.length > best.length))) {
+        best = { ...matcher, index };
+      }
+    }
+    if (best) {
+      state.select.value = "name:" + normalizeSectionName(best.section);
+      return;
+    }
+  }
+  state.select.value = "";
+}
+
+function suggestFormSection(prefix) {
+  autoSelectProductSubCategory(
+    document.getElementById(prefix + "Name").value,
+    document.getElementById(prefix + "Description").value,
+    document.getElementById(prefix + "Brand").value, prefix
+  );
+}
+
+async function fetchStoreSections(storeId) {
+  const { data, error } = await supabaseClient.from("store_sections")
+    .select("id, name, display_order").eq("store_id", storeId).order("display_order");
+  if (error) throw error;
+  return data;
+}
+
+function renderSectionOptions(select, sections, savedId) {
+  const options = new Map();
+  for (const name of Object.keys(sectionKeywords)) {
+    const key = normalizeSectionName(name);
+    options.set(key, new Option(name, "name:" + key));
+  }
+  for (const { id, name } of sections) {
+    const key = normalizeSectionName(name);
+    if (!key || (options.get(key)?.dataset.sectionId && id !== savedId)) continue;
+    const option = new Option(name, "name:" + key);
+    option.dataset.sectionId = id;
+    options.set(key, option);
+  }
+  select.replaceChildren(new Option("-- اختر أو يُحدد تلقائياً --", ""), ...options.values(),
+    new Option("+ كتابة فئة فرعية جديدة...", "__custom__"));
+}
+
+async function loadStoreSectionsForSelect(prefix = "product", product = null) {
+  const state = sectionForms[prefix];
+  const { select, custom, supplier } = state;
+  const storeId = supplier.value;
+  const request = Symbol();
+  state.request = request;
+  clearTimeout(state.timer);
+  state.timer = null;
+  const savedId = product?.store_id === storeId ? product.section_id : null;
+  const saved = savedId ? [{ id: savedId, name: product.store_sections?.name || "القسم المحفوظ" }] : [];
+  state.manual = Boolean(savedId);
+  custom.value = "";
+  custom.disabled = true;
+  custom.required = false;
+  custom.classList.add("hidden");
+  state.notice.textContent = "";
+  renderSectionOptions(select, saved, savedId);
+  if (savedId) select.value = "name:" + normalizeSectionName(saved[0].name);
+  else suggestFormSection(prefix);
+  if (!storeId) return;
+
+  try {
+    const sections = await fetchStoreSections(storeId);
+    if (state.request !== request) return;
+    const previous = select.value;
+    const selectedId = select.selectedOptions[0]?.dataset.sectionId;
+    if (savedId && !sections.some(s => s.id === savedId)) sections.push(...saved);
+    renderSectionOptions(select, sections, savedId);
+    const selected = sections.find(s => s.id === selectedId);
+    select.value = selected ? "name:" + normalizeSectionName(selected.name) : previous;
+  } catch (error) {
+    if (state.request === request) state.notice.textContent = "تعذّر تحميل أقسام المتجر. أعد اختيار المتجر للمحاولة مجددًا.";
+    console.warn("تعذّر تحميل أقسام المتجر", error);
+  }
+}
+
+function initSectionForm(prefix, customId) {
+  const select = document.getElementById(prefix + "SubCategory");
+  const custom = document.getElementById(customId);
+  const supplier = document.getElementById(prefix + "Supplier");
+  const notice = document.getElementById(prefix + "SectionNotice");
+  const state = sectionForms[prefix] = { select, custom, supplier, notice };
+  supplier.addEventListener("change", () => {
+    const previous = select.value;
+    const typed = custom.value;
+    const manual = state.manual;
+    loadStoreSectionsForSelect(prefix);
+    // Keep an explicit standard choice or draft name across stores, but never reuse another store's ID.
+    if (manual && Array.from(select.options).some(option => option.value === previous)) {
+      select.value = previous;
+      custom.value = typed;
+      select.dispatchEvent(new Event("change"));
+    }
+  });
+  select.addEventListener("change", () => {
+    state.manual = true;
+    const writing = select.value === "__custom__";
+    custom.disabled = !writing;
+    custom.required = writing;
+    custom.classList.toggle("hidden", !writing);
+    if (writing) custom.focus();
+  });
+  document.getElementById(prefix + "Name").addEventListener("input", () => {
+    clearTimeout(state.timer);
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      suggestFormSection(prefix);
+    }, 400);
+  });
+  loadStoreSectionsForSelect(prefix);
+}
+
+async function resolveProductSection(prefix, storeId) {
+  const state = sectionForms[prefix];
+  const { select, custom } = state;
+  if (state.timer) {
+    clearTimeout(state.timer);
+    state.timer = null;
+    suggestFormSection(prefix);
+  }
+  if (!select.value) return null;
+  if (!storeId) throw new Error("اختر المتجر لحفظ الفئة الفرعية.");
+  const option = select.selectedOptions[0];
+  if (option.dataset.sectionId) return { id: option.dataset.sectionId, name: option.textContent };
+  const name = (select.value === "__custom__" ? custom.value : option.textContent).trim();
+  if (!name) throw new Error("اكتب اسم الفئة الفرعية الجديدة.");
+  const sections = await fetchStoreSections(storeId);
+  const key = normalizeSectionName(name);
+  const existing = sections.find(section => normalizeSectionName(section.name) === key);
+  if (existing) return existing;
+
+  const { data, error } = await supabaseClient.from("store_sections")
+    .insert({ store_id: storeId, name, is_active: true,
+      display_order: Math.max(0, ...sections.map(section => section.display_order || 0)) + 1 })
+    .select("id, name").single();
+  if (error?.code === "42501") throw new Error("لا تملك صلاحية إنشاء قسم لهذا المتجر. اختر قسمًا مسجلًا أو راجع صلاحيات المتجر.");
+  if (error) throw error;
+  return data;
+}
+
 // Load Inventory / Products from Supabase
 async function loadInventory() {
   try {
     let { data, error } = await supabaseClient
       .from("products")
-      .select("*, categories(name), stores(name)")
+      .select("*, categories(name), stores(name), store_sections(name)")
       .order("created_at", { ascending: false })
       .limit(1000);
 
@@ -526,7 +689,9 @@ function renderInventoryTable(items) {
             </div>
           </div>
         </td>
-        <td>${p.categories?.name || 'غير محدد'}</td>
+        <td>${escapeHtml(p.categories?.name || 'غير محدد')}
+          ${p.store_sections?.name ? `<small class="inventory-subcategory">${escapeHtml(p.store_sections.name)}</small>` : ''}
+        </td>
         <td>${supplierName}</td>
         <td><strong class="text-danger">${p.cost_price ? p.cost_price + ' ج.م' : '-'}</strong></td>
         <td><strong class="text-primary">${p.price ? p.price + ' ج.م' : '-'}</strong></td>
@@ -573,6 +738,7 @@ function applyInventoryFilter() {
 
     const matchesQuery = !query ||
       name.includes(query) ||
+      (p.store_sections?.name || '').toLowerCase().includes(query) ||
       barcode.includes(query) ||
       localBarcode.includes(query) ||
       brand.includes(query) ||
@@ -700,6 +866,7 @@ function openEditModal(productId) {
   document.getElementById("modalEditDescription").value = p.description || "";
 
   document.getElementById("modalEditBrand").value = cf.brand || p.brand || "";
+  loadStoreSectionsForSelect("modalEdit", p);
   document.getElementById("modalEditSize").value = cf.size || cf.volume || cf.weight || p.size || "";
   document.getElementById("modalEditSerialNumber").value = cf.serial_number || "";
   document.getElementById("modalEditColor").value = cf.color || "";
@@ -803,6 +970,7 @@ async function saveModalEdit() {
     }
 
     const existingProd = productsList.find(p => p.id === productId);
+    const section = await resolveProductSection("modalEdit", targetStoreId);
     const existingCustomFields = (existingProd && existingProd.custom_fields && typeof existingProd.custom_fields === 'object')
       ? { ...existingProd.custom_fields }
       : {};
@@ -856,6 +1024,7 @@ async function saveModalEdit() {
       name: name,
       category_id: categoryId || null,
       store_id: targetStoreId,
+      section_id: section?.id ?? null,
       cost_price: isNaN(costPrice) ? null : costPrice,
       price: price,
       compare_price: isNaN(comparePrice) ? null : comparePrice,
@@ -881,6 +1050,7 @@ async function saveModalEdit() {
     const prod = productsList.find(p => p.id === productId);
     if (prod) {
       Object.assign(prod, updatePayload);
+      prod.store_sections = section ? { name: section.name } : null;
       if (categoryId) {
         const cat = categories.find(c => c.id === categoryId);
         prod.categories = cat ? { name: cat.name } : null;
@@ -927,6 +1097,7 @@ function cancelEditMode() {
 
   const form = document.getElementById("addProductForm");
   if (form) form.reset();
+  loadStoreSectionsForSelect("product");
 
   const banner = document.getElementById("editModeBanner");
   if (banner) banner.classList.add("hidden");
@@ -1096,7 +1267,7 @@ function populateProductForm(prod, prefix = "product", overrideBarcode = "") {
   if (barcodeInput) barcodeInput.value = activeBarcode;
   if (nameInput) nameInput.value = prod.name || "";
   if (categorySelect && prod.category_id) categorySelect.value = prod.category_id;
-  if (supplierSelect && (prod.store_id || prod.merchant_id)) supplierSelect.value = prod.store_id || prod.merchant_id;
+  if (supplierSelect) supplierSelect.value = prod.store_id || prod.merchant_id || "";
   if (costPriceInput) costPriceInput.value = prod.cost_price ?? "";
   if (priceInput) priceInput.value = prod.price ?? "";
   if (comparePriceInput) comparePriceInput.value = prod.compare_price ?? "";
@@ -1111,6 +1282,7 @@ function populateProductForm(prod, prefix = "product", overrideBarcode = "") {
   if (originInput) originInput.value = cf.country_of_origin || "";
   if (imageInput) imageInput.value = prod.image_url || "";
   if (descInput) descInput.value = prod.description || "";
+  loadStoreSectionsForSelect(prefix, prod);
 
   updateImagePreview(`${prefix}ImageUrl`, `${prefix}ImagePreview`, `${prefix}ImagePlaceholder`);
 
@@ -1216,6 +1388,8 @@ function checkBarcodeForEdit(barcode) {
 
 // Form Handlers
 function initFormListeners() {
+  initSectionForm("product", "customSubCategoryInput");
+  initSectionForm("modalEdit", "modalEditCustomSubCategoryInput");
   const form = document.getElementById("addProductForm");
   if (form) {
     form.addEventListener("submit", async (e) => {
@@ -1365,6 +1539,7 @@ async function saveProduct() {
     }
 
     let existingCustomFields = {};
+    const section = await resolveProductSection("product", targetStoreId);
     if (editingId) {
       const existingProd = productsList.find(p => p.id === editingId);
       if (existingProd && existingProd.custom_fields && typeof existingProd.custom_fields === 'object') {
@@ -1421,6 +1596,7 @@ async function saveProduct() {
       name: name,
       category_id: categoryId || null,
       store_id: targetStoreId,
+      section_id: section?.id ?? null,
       cost_price: isNaN(costPrice) ? null : costPrice,
       price: price,
       compare_price: isNaN(comparePrice) ? null : comparePrice,
@@ -2180,6 +2356,7 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
       }
       if (originInput && result.country) originInput.value = result.country;
       if (descInput && result.description) descInput.value = result.description;
+      autoSelectProductSubCategory(result.name, result.description, result.brand, prefix);
       if (categorySelect && categorySelect.value === initialCategory) {
         autoSelectProductCategory(categorySelect, result);
       }
