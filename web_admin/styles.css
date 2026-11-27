@@ -151,11 +151,6 @@ body {
   grid-column: 1 / -1;
 }
 
-.form-group .custom-subcategory-input {
-  padding: 6px 10px;
-  font-size: 0.9rem;
-}
-
 .form-group small[role="status"]:empty {
   display: none;
 }

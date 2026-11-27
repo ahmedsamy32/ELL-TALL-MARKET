@@ -443,34 +443,42 @@ function normalizeSectionName(text) {
     .trim().replace(/\s+/g, " ");
 }
 
-// Whole words keep لب and بن distinct from لبن. Longer phrases win at the same position.
-const sectionMatchers = Object.entries(sectionKeywords).flatMap(([section, words]) =>
-  words.split("، ").map(word => {
-    const phrase = normalizeSectionName(word);
-    return { section, length: phrase.length, pattern: new RegExp("(?:^| )(?:ال)?" + phrase + "(?= |$)") };
-  })
-);
+function sectionWords(value) {
+  return normalizeSectionName(value).replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim().replace(/(^| )ال(?=\p{L})/gu, "$1");
+}
+
+const sectionHints = Object.entries(sectionKeywords).map(([name, keywords]) => ({
+  name: sectionWords(name),
+  labels: name.split(/\s+و/).map(sectionWords),
+  keywords: keywords.split("، ").map(sectionWords)
+}));
 
 const sectionForms = {};
 
 function autoSelectProductSubCategory(productName, description = '', brand = '', prefix = 'product') {
   const state = sectionForms[prefix];
   if (state.manual) return;
+  state.select.value = "";
   for (const field of [productName, description, brand]) {
-    const text = normalizeSectionName(field).replace(/[^\p{L}\p{N}]+/gu, " ");
+    const text = " " + sectionWords(field) + " ";
     let best;
-    for (const matcher of sectionMatchers) {
-      const index = text.search(matcher.pattern);
-      if (index >= 0 && (!best || index < best.index || (index === best.index && matcher.length > best.length))) {
-        best = { ...matcher, index };
+    for (const section of state.sections) {
+      for (const phrase of section.phrases) {
+        const index = text.indexOf(" " + phrase + " ");
+        if (index < 0) continue;
+        const direct = phrase === section.label;
+        if (!best || index < best.index || (index === best.index &&
+            (phrase.length > best.length || (phrase.length === best.length && direct && !best.direct)))) {
+          best = { id: section.id, index, length: phrase.length, direct };
+        }
       }
     }
     if (best) {
-      state.select.value = "name:" + normalizeSectionName(best.section);
+      state.select.value = best.id;
       return;
     }
   }
-  state.select.value = "";
 }
 
 function suggestFormSection(prefix) {
@@ -483,89 +491,76 @@ function suggestFormSection(prefix) {
 
 async function fetchStoreSections(storeId) {
   const { data, error } = await supabaseClient.from("store_sections")
-    .select("id, name, display_order").eq("store_id", storeId).order("display_order");
+    .select("id, name").eq("store_id", storeId).order("display_order").order("id");
   if (error) throw error;
   return data;
 }
 
-function renderSectionOptions(select, sections, savedId) {
-  const options = new Map();
-  for (const name of Object.keys(sectionKeywords)) {
-    const key = normalizeSectionName(name);
-    options.set(key, new Option(name, "name:" + key));
-  }
-  for (const { id, name } of sections) {
-    const key = normalizeSectionName(name);
-    if (!key || (options.get(key)?.dataset.sectionId && id !== savedId)) continue;
-    const option = new Option(name, "name:" + key);
-    option.dataset.sectionId = id;
-    options.set(key, option);
-  }
-  select.replaceChildren(new Option("-- اختر أو يُحدد تلقائياً --", ""), ...options.values(),
-    new Option("+ كتابة فئة فرعية جديدة...", "__custom__"));
-}
-
-async function loadStoreSectionsForSelect(prefix = "product", product = null) {
+function loadStoreSectionsForSelect(prefix = "product", product = null) {
   const state = sectionForms[prefix];
-  const { select, custom, supplier } = state;
+  const { select, supplier, notice } = state;
   const storeId = supplier.value;
-  const request = Symbol();
-  state.request = request;
+  const savedId = product?.store_id === storeId ? product.section_id : null;
+  const saved = savedId ? { id: savedId, name: product.store_sections?.name } : null;
   clearTimeout(state.timer);
   state.timer = null;
-  const savedId = product?.store_id === storeId ? product.section_id : null;
-  const saved = savedId ? [{ id: savedId, name: product.store_sections?.name || "القسم المحفوظ" }] : [];
-  state.manual = Boolean(savedId);
-  custom.value = "";
-  custom.disabled = true;
-  custom.required = false;
-  custom.classList.add("hidden");
-  state.notice.textContent = "";
-  renderSectionOptions(select, saved, savedId);
-  if (savedId) select.value = "name:" + normalizeSectionName(saved[0].name);
-  else suggestFormSection(prefix);
+  state.sections = [];
+  state.manual = Boolean(saved);
+  state.saved = saved;
+  state.pending = null;
+  state.failed = false;
+  notice.textContent = "";
+  select.disabled = true;
+  select.replaceChildren(new Option(storeId ? "جارٍ تحميل أقسام المتجر…" : "اختر المتجر أولًا", ""));
   if (!storeId) return;
 
-  try {
-    const sections = await fetchStoreSections(storeId);
-    if (state.request !== request) return;
-    const previous = select.value;
-    const selectedId = select.selectedOptions[0]?.dataset.sectionId;
-    if (savedId && !sections.some(s => s.id === savedId)) sections.push(...saved);
-    renderSectionOptions(select, sections, savedId);
-    const selected = sections.find(s => s.id === selectedId);
-    select.value = selected ? "name:" + normalizeSectionName(selected.name) : previous;
-  } catch (error) {
-    if (state.request === request) state.notice.textContent = "تعذّر تحميل أقسام المتجر. أعد اختيار المتجر للمحاولة مجددًا.";
+  const pending = fetchStoreSections(storeId).then(rows => {
+    if (state.pending !== pending) return;
+    const unique = new Map();
+    for (const row of rows) {
+      const key = normalizeSectionName(row.name);
+      if (key && (!unique.has(key) || row.id === savedId)) unique.set(key, row);
+    }
+    state.sections = Array.from(unique.values(), row => {
+      const label = sectionWords(row.name);
+      const hints = sectionHints.find(group => group.name === label || group.labels.includes(label));
+      return { ...row, label, phrases: [label, ...(hints?.keywords || [])].filter(Boolean) };
+    });
+    select.replaceChildren(
+      new Option(state.sections.length ? "-- اختر أو يُحدد تلقائياً --" : "لا توجد أقسام مسجّلة لهذا المتجر", ""),
+      ...state.sections.map(section => new Option(section.name, section.id))
+    );
+    select.disabled = state.sections.length === 0;
+    if (saved) {
+      select.value = saved.id;
+      if (!select.value) {
+        select.value = "";
+        notice.textContent = "القسم المحفوظ غير متاح في القائمة. سيبقى مرتبطًا بالسلعة حتى تختار قسمًا آخر.";
+      }
+    } else {
+      suggestFormSection(prefix);
+    }
+  }).catch(error => {
+    if (state.pending !== pending) return;
+    state.failed = true;
+    select.replaceChildren(new Option("تعذّر تحميل الأقسام", ""));
+    notice.textContent = "أعد اختيار المتجر للمحاولة مجددًا.";
     console.warn("تعذّر تحميل أقسام المتجر", error);
-  }
+  });
+  state.pending = pending;
+  return pending;
 }
 
-function initSectionForm(prefix, customId) {
+function initSectionForm(prefix) {
   const select = document.getElementById(prefix + "SubCategory");
-  const custom = document.getElementById(customId);
   const supplier = document.getElementById(prefix + "Supplier");
   const notice = document.getElementById(prefix + "SectionNotice");
-  const state = sectionForms[prefix] = { select, custom, supplier, notice };
-  supplier.addEventListener("change", () => {
-    const previous = select.value;
-    const typed = custom.value;
-    const manual = state.manual;
-    loadStoreSectionsForSelect(prefix);
-    // Keep an explicit standard choice or draft name across stores, but never reuse another store's ID.
-    if (manual && Array.from(select.options).some(option => option.value === previous)) {
-      select.value = previous;
-      custom.value = typed;
-      select.dispatchEvent(new Event("change"));
-    }
-  });
+  const state = sectionForms[prefix] = { select, supplier, notice };
+  supplier.addEventListener("change", () => loadStoreSectionsForSelect(prefix));
   select.addEventListener("change", () => {
     state.manual = true;
-    const writing = select.value === "__custom__";
-    custom.disabled = !writing;
-    custom.required = writing;
-    custom.classList.toggle("hidden", !writing);
-    if (writing) custom.focus();
+    state.saved = null;
+    notice.textContent = "";
   });
   document.getElementById(prefix + "Name").addEventListener("input", () => {
     clearTimeout(state.timer);
@@ -579,30 +574,19 @@ function initSectionForm(prefix, customId) {
 
 async function resolveProductSection(prefix, storeId) {
   const state = sectionForms[prefix];
-  const { select, custom } = state;
+  const pending = state.pending;
+  if (!pending) return null;
+  await pending;
+  if (pending !== state.pending || storeId !== state.supplier.value) {
+    throw new Error("تغيّر المتجر أثناء الحفظ. راجع القسم وأعد الحفظ.");
+  }
+  if (state.failed) throw new Error("تعذّر تحميل أقسام المتجر. أعد اختيار المتجر قبل الحفظ.");
   if (state.timer) {
     clearTimeout(state.timer);
     state.timer = null;
     suggestFormSection(prefix);
   }
-  if (!select.value) return null;
-  if (!storeId) throw new Error("اختر المتجر لحفظ الفئة الفرعية.");
-  const option = select.selectedOptions[0];
-  if (option.dataset.sectionId) return { id: option.dataset.sectionId, name: option.textContent };
-  const name = (select.value === "__custom__" ? custom.value : option.textContent).trim();
-  if (!name) throw new Error("اكتب اسم الفئة الفرعية الجديدة.");
-  const sections = await fetchStoreSections(storeId);
-  const key = normalizeSectionName(name);
-  const existing = sections.find(section => normalizeSectionName(section.name) === key);
-  if (existing) return existing;
-
-  const { data, error } = await supabaseClient.from("store_sections")
-    .insert({ store_id: storeId, name, is_active: true,
-      display_order: Math.max(0, ...sections.map(section => section.display_order || 0)) + 1 })
-    .select("id, name").single();
-  if (error?.code === "42501") throw new Error("لا تملك صلاحية إنشاء قسم لهذا المتجر. اختر قسمًا مسجلًا أو راجع صلاحيات المتجر.");
-  if (error) throw error;
-  return data;
+  return state.sections.find(section => section.id === state.select.value) || state.saved;
 }
 
 // Load Inventory / Products from Supabase
@@ -1388,8 +1372,8 @@ function checkBarcodeForEdit(barcode) {
 
 // Form Handlers
 function initFormListeners() {
-  initSectionForm("product", "customSubCategoryInput");
-  initSectionForm("modalEdit", "modalEditCustomSubCategoryInput");
+  initSectionForm("product");
+  initSectionForm("modalEdit");
   const form = document.getElementById("addProductForm");
   if (form) {
     form.addEventListener("submit", async (e) => {

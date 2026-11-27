@@ -235,12 +235,9 @@
 
             <div class="form-group">
               <label for="productSubCategory"><i class="fas fa-layer-group"></i> الفئة الفرعية / القسم الداخلي</label>
-              <select id="productSubCategory">
-                <option value="">-- اختر أو يُحدد تلقائياً --</option>
-                <option value="__custom__">+ كتابة فئة فرعية جديدة...</option>
+              <select id="productSubCategory" aria-describedby="productSectionNotice" disabled>
+                <option value="">اختر المتجر أولًا</option>
               </select>
-              <input type="text" id="customSubCategoryInput" class="custom-subcategory-input hidden"
-                     aria-label="اسم الفئة الفرعية الجديدة" placeholder="اكتب اسم الفئة الفرعية الجديدة..." disabled>
               <small id="productSectionNotice" role="status"></small>
             </div>
 
@@ -708,12 +705,9 @@
 
           <div class="form-group">
             <label for="modalEditSubCategory"><i class="fas fa-layer-group"></i> الفئة الفرعية / القسم الداخلي</label>
-            <select id="modalEditSubCategory">
-              <option value="">-- اختر أو يُحدد تلقائياً --</option>
-              <option value="__custom__">+ كتابة فئة فرعية جديدة...</option>
+            <select id="modalEditSubCategory" aria-describedby="modalEditSectionNotice" disabled>
+              <option value="">اختر المتجر أولًا</option>
             </select>
-            <input type="text" id="modalEditCustomSubCategoryInput" class="custom-subcategory-input hidden"
-                   aria-label="اسم الفئة الفرعية الجديدة" placeholder="اكتب اسم الفئة الفرعية الجديدة..." disabled>
             <small id="modalEditSectionNotice" role="status"></small>
           </div>
 
