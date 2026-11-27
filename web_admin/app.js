@@ -502,18 +502,19 @@ function renderInventoryTable(items) {
         <td>
           ${(() => {
             return `
-              ${mainBarcode ? `<div class="${isLocal ? 'badge-local-barcode' : 'meta-tag badge-global-barcode'}" title="الباركود"><i class="fa-solid fa-barcode"></i> <strong>${mainBarcode}</strong> <span class="barcode-type-tag">${isLocal ? 'محلي' : 'دولي/مصنع'}</span></div>` : '<span class="text-muted">بدون باركود</span>'}
+              ${mainBarcode ? `<div class="${isLocal ? 'badge-local-barcode' : 'meta-tag badge-global-barcode'}" title="الباركود"><i class="fa-solid fa-barcode"></i> <strong>${mainBarcode}</strong> <span class="barcode-type-tag">${isLocal ? 'محلي' : 'دولي / مصنع'}</span></div>` : '<span class="text-muted">بدون باركود</span>'}
             `;
           })()}
         </td>
         <td>
           <div class="product-item-cell">
             <div class="product-thumb-wrapper" onclick="openQuickImageModal('${p.id}')" title="${p.image_url ? 'انقر لتغيير الصورة أو رفع صورة جديدة' : 'انقر لرفع صورة من الجهاز أو لصق رابط'}">
+              <div class="product-thumb-placeholder" aria-hidden="true"><i class="fa-solid fa-camera"></i></div>
               ${p.image_url
-                ? `<img src="${p.image_url}" class="product-thumb" alt="${escapeHtml(p.name || '')}"><div class="product-thumb-edit-overlay"><i class="fa-solid fa-camera"></i></div>`
-                : `<div class="product-thumb-placeholder"><i class="fa-solid fa-camera"></i></div>`}
+                ? `<img src="${escapeHtml(p.image_url)}" class="product-thumb" alt="${escapeHtml(p.name || '')}" onerror="this.style.display='none'"><div class="product-thumb-edit-overlay"><i class="fa-solid fa-camera"></i></div>`
+                : ''}
             </div>
-            <div>
+            <div class="inventory-product-details">
               <strong>${p.name || ''}</strong>
               <div class="product-desc-text">${p.description || ''}</div>
               <div class="meta-tags-container">
@@ -531,7 +532,7 @@ function renderInventoryTable(items) {
         <td>${supplierName}</td>
         <td><strong class="text-danger">${p.cost_price ? p.cost_price + ' ج.م' : '-'}</strong></td>
         <td><strong class="text-primary">${p.price ? p.price + ' ج.م' : '-'}</strong></td>
-        <td><span class="badge ${badgeClass}">${qtyText}</span></td>
+        <td><span class="badge inventory-stock-badge ${badgeClass}">${qtyText}</span></td>
         <td>
           <div class="table-actions">
             <button type="button" class="btn btn-primary btn-sm" onclick="openEditModal('${p.id}')" title="تعديل كافة بيانات السلعة والباركود والمواصفات">

@@ -485,7 +485,7 @@
       <div class="card">
         <div class="card-title">
           <i class="fa-solid fa-boxes-packing text-primary"></i>
-          <span>جرد المخزون الحالي بمستودع سوق التل</span>
+          <span id="inventoryTableTitle">جرد المخزون الحالي بمستودع سوق التل</span>
           <button type="button" id="btnFetchMissingImages" class="btn btn-lookup btn-sm" onclick="fetchMissingProductImages()" title="البحث عن الصور المفقودة للمنتجات ذات الباركود الدولي وتحديثها تلقائياً" style="margin-right:auto;margin-left:0;">
             <i class="fa-solid fa-images"></i> <span>جلب الصور المفقودة تلقائياً</span>
           </button>
@@ -523,8 +523,8 @@
         </div>
 
         <!-- Inventory Table -->
-        <div class="table-responsive">
-          <table>
+        <div class="table-responsive inventory-table-scroll" role="region" aria-labelledby="inventoryTableTitle" tabindex="0">
+          <table class="inventory-table">
             <thead>
               <tr>
                 <th>الباركود</th>
