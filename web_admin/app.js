@@ -122,7 +122,7 @@ async function handleUserSession(user) {
       role: 'admin'
     };
 
-    applyUserUI(currentUser);
+    applyUserUI();
     showAppUI();
 
     // Load warehouse data once
@@ -245,12 +245,10 @@ function showLoginAlert(message) {
   }
 }
 
-function applyUserUI(user) {
-  const nameEl = document.getElementById("navUserName");
+function applyUserUI() {
   const roleEl = document.getElementById("navUserRole");
-  if (nameEl) nameEl.textContent = user.full_name || user.email || 'المدير العام';
   if (roleEl) {
-    roleEl.textContent = 'مدير عام (Admin)';
+    roleEl.textContent = 'أدمن';
   }
 }
 

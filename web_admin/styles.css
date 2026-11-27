@@ -511,22 +511,6 @@ tr:hover {
   gap: 12px;
 }
 
-.user-badge {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  padding: 6px 14px;
-  border-radius: 10px;
-  color: white;
-}
-
-.user-badge i {
-  font-size: 1.5rem;
-  color: var(--primary);
-}
-
 .btn-logout {
   background: rgba(239, 68, 68, 0.15);
   color: #fca5a5;
@@ -1197,22 +1181,6 @@ tr:hover {
   gap: 12px;
 }
 
-.user-badge {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  padding: 6px 14px;
-  border-radius: 10px;
-  color: white;
-}
-
-.user-badge i {
-  font-size: 1.5rem;
-  color: var(--primary);
-}
-
 .btn-logout {
   background: rgba(239, 68, 68, 0.15);
   color: #fca5a5;
@@ -1436,19 +1404,29 @@ input[type="password"]::-ms-clear {
 }
 
 .user-badge {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  padding: 6px 14px;
+  padding: 5px 10px;
   border-radius: 10px;
   color: white;
+  font-size: 0.82rem;
+  white-space: nowrap;
 }
 
 .user-badge i {
-  font-size: 1.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
   color: var(--primary);
+  font-size: 12px;
 }
 
 .btn-logout {
