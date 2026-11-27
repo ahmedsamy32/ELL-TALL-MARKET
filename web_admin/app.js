@@ -1937,7 +1937,7 @@ function parseUpcItemDbData(item) {
 async function lookupBarcodeFromGoogleEdge(barcode) {
   try {
     const response = await fetch(
-      "https://ebbkdhmwaawzxbidjynz.supabase.co/functions/v1/barcode-google-lookup",
+      `${SUPABASE_URL}/functions/v1/barcode-google-lookup`,
       {
         method: "POST",
         headers: {
@@ -1948,7 +1948,7 @@ async function lookupBarcodeFromGoogleEdge(barcode) {
     );
     if (!response.ok) return null;
     const data = await response.json();
-    if (data && data.found && data.product) {
+    if (data?.found === true && data.product) {
       return data.product;
     }
     return null;
@@ -1957,6 +1957,61 @@ async function lookupBarcodeFromGoogleEdge(barcode) {
     return null;
   }
 }
+function autoSelectProductCategory(categorySelect, { categoryHint, name, description }) {
+  if (!categorySelect) return;
+
+  const normalize = (text) => String(text ?? "")
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[\p{M}ـ]/gu, "")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+  const containsPhrase = (text, phrase) => phrase &&
+    (text.includes(" " + phrase + " ") || text.includes(" ال" + phrase + " "));
+  const withoutFlavor = (text) => normalize(text).split(/(?:^| )(?:بطعم|بنكهه|flavored|flavoured)(?: |$)/)[0].trim();
+
+  const keywords = [
+    [["سناكس", "تسالي", "مقرمشات", "مكسرات", "وجبات خفيفة", "snacks"],
+     ["سناكس", "تسالي", "مقرمشات", "مكسرات", "شيبسي", "شيبس", "سوداني", "كري كري", "فشار", "chips", "peanuts", "popcorn"]],
+    [["مشروبات", "عصائر", "beverages", "drinks"],
+     ["عصير", "مشروب", "مياه معدنية", "مياه غازية", "juice", "soda", "sparkling water"]],
+    [["ألبان", "أجبان", "dairy"],
+     ["حليب", "لبن", "زبادي", "جبنة", "جبن", "milk", "yogurt", "cheese"]],
+    [["حلويات", "حلوى", "sweets", "confectionery"],
+     ["شوكولاتة", "شيكولاتة", "بسكويت", "حلوى", "chocolate", "biscuits", "cookies", "candy"]],
+    [["مخبوزات", "bakery"],
+     ["خبز", "توست", "كرواسون", "كيك", "bread", "croissant", "cake"]],
+    [["منظفات", "مواد تنظيف", "cleaning supplies"],
+     ["مسحوق غسيل", "سائل غسيل", "منظف", "مطهر", "detergent", "disinfectant"]],
+    [["عناية شخصية", "personal care"],
+     ["شامبو", "معجون أسنان", "مزيل عرق", "shampoo", "toothpaste", "deodorant"]],
+  ];
+  const options = Array.from(categorySelect.options)
+    .filter((option) => option.value && !option.disabled)
+    .map((option) => ({ option, label: normalize(option.textContent) }));
+
+  for (const source of [normalize(categoryHint), withoutFlavor(name), withoutFlavor(description)]) {
+    if (!source) continue;
+    const text = " " + source + " ";
+    let matches = options.filter(({ label }) => containsPhrase(text, label));
+    if (matches.length === 0) {
+      const rules = keywords.filter(([, terms]) =>
+        terms.some((term) => containsPhrase(text, normalize(term))));
+      matches = options.filter(({ label }) => rules.some(([labels]) =>
+        labels.some((alias) => containsPhrase(" " + label + " ", normalize(alias)))));
+    }
+    if (matches.length === 0) continue;
+    if (matches.length === 1 && categorySelect.value !== matches[0].option.value) {
+      categorySelect.value = matches[0].option.value;
+      categorySelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    return;
+  }
+}
+
+const barcodeLookupRequests = new WeakMap();
 
 async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = false) {
   const prefix = isModal ? "modalEdit" : "product";
@@ -1972,6 +2027,12 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
   }
 
   inputEl.value = barcode;
+  const request = Symbol();
+  barcodeLookupRequests.set(inputEl, request);
+  const isLatestLookup = () => barcodeLookupRequests.get(inputEl) === request;
+  const isCurrentLookup = () => isLatestLookup() && cleanBarcode(inputEl.value) === barcode;
+  const categorySelect = document.getElementById(`${prefix}Category`);
+  const initialCategory = categorySelect?.value;
 
   const statusEl = document.getElementById(isModal ? "lookupStatusModal" : "lookupStatusMain");
   const showStatus = (contentHtml, type = "loading") => {
@@ -1992,7 +2053,7 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
   };
 
   const hideStatus = () => {
-    if (statusEl) statusEl.classList.add("hidden");
+    if (statusEl && isLatestLookup()) statusEl.classList.add("hidden");
   };
 
   showStatus(`جاري فحص الباركود (${barcode})...`, "loading");
@@ -2000,6 +2061,10 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
   try {
     // 1. أولاً: فحص قاعدة بيانات المستودع (الكاش المحلي + Supabase)
     const localProd = await findProductByBarcode(barcode);
+    if (!isCurrentLookup()) {
+      hideStatus();
+      return;
+    }
 
     if (localProd) {
       populateProductForm(localProd, prefix, barcode);
@@ -2053,23 +2118,25 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
       };
 
       // محاولة 1: Open Food Facts (العالمي + مصر)
-      const [offRes, egRes] = await Promise.allSettled([
+      const offResults = await Promise.allSettled([
         fetchWithTimeout(`https://world.openfoodfacts.org/api/v0/product/${encodeURIComponent(barcode)}.json`),
         fetchWithTimeout(`https://eg.openfoodfacts.org/api/v0/product/${encodeURIComponent(barcode)}.json`)
       ]);
-
-      if (offRes.status === "fulfilled" && offRes.value.ok) {
-        const data = await offRes.value.json();
-        if (data && (data.status === 1 || data.status_verbose === "product found") && data.product) {
-          result = parseGlobalProductData(data.product);
+      for (const response of offResults) {
+        if (response.status !== "fulfilled" || !response.value.ok) continue;
+        try {
+          const data = await response.value.json();
+          if ((data?.status === 1 || data?.status_verbose === "product found") && data.product) {
+            result = parseGlobalProductData(data.product);
+            if (result) break;
+          }
+        } catch (error) {
+          console.warn("Open Food Facts lookup error:", error);
         }
       }
-
-      if ((!result || !result.name) && egRes.status === "fulfilled" && egRes.value.ok) {
-        const data = await egRes.value.json();
-        if (data && (data.status === 1 || data.status_verbose === "product found") && data.product) {
-          result = parseGlobalProductData(data.product);
-        }
+      if (!isCurrentLookup()) {
+        hideStatus();
+        return;
       }
 
       // محاولة 2: Google Edge Function (احتياطي للمنتجات المصرية والدولية عبر Supabase)
@@ -2077,13 +2144,12 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
       if (!result || !result.name || !result.imageUrl) {
         showStatus(`جاري البحث في قاعدة البيانات الدولية (${barcode})...`, "loading");
         const googleProduct = await lookupBarcodeFromGoogleEdge(barcode);
-        console.log(`[Google Edge barcode-google-lookup] barcode=${barcode} →`, googleProduct);
         if (googleProduct) {
           result = {
             name:        result?.name        || googleProduct.name        || "",
             brand:       result?.brand       || googleProduct.brand       || "",
             size:        result?.size        || googleProduct.size        || "",
-            country:     result?.country     || googleProduct.country     || (barcode.startsWith("622") ? "مصر" : ""),
+            country:     result?.country     || googleProduct.country     || "",
             imageUrl:    result?.imageUrl    || googleProduct.image_url   || "",
             description: result?.description || googleProduct.description || "",
             categoryHint: result?.categoryHint || "",
@@ -2092,6 +2158,10 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
       }
     } catch (e) {
       console.warn("Online barcode lookup error:", e);
+    }
+    if (!isCurrentLookup()) {
+      hideStatus();
+      return;
     }
 
     if (result && result.name) {
@@ -2111,15 +2181,10 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
       }
       if (originInput && result.country) originInput.value = result.country;
       if (descInput && result.description) descInput.value = result.description;
-
-      if (result.categoryHint && categories.length > 0) {
-        const hint = (result.categoryHint + " " + result.name).toLowerCase();
-        const matchedCategory = categories.find(cat => hint.includes(cat.name.toLowerCase()));
-        const catSelect = document.getElementById(`${prefix}Category`);
-        if (matchedCategory && catSelect) catSelect.value = matchedCategory.id;
+      if (categorySelect && categorySelect.value === initialCategory) {
+        autoSelectProductCategory(categorySelect, result);
       }
-
-      showStatus(`✅ تم جلب بيانات السلعة من السجل الدولي: "<strong>${result.name}</strong>" بنجاح وتعبئة الحقول المتاحة!`, "success");
+      showStatus(`✅ تم جلب بيانات السلعة من السجل الدولي: "<strong>${escapeHtml(result.name)}</strong>" بنجاح وتعبئة الحقول المتاحة!`, "success");
       setTimeout(hideStatus, 8000);
     } else {
       const googleSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(barcode)}`;
@@ -2154,6 +2219,10 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
       setTimeout(hideStatus, 25000);
     }
   } catch (err) {
+    if (!isCurrentLookup()) {
+      hideStatus();
+      return;
+    }
     console.error("Barcode lookup error:", err);
     showStatus(`❌ تعذر جلب البيانات: ${err.message}`, "error");
     setTimeout(hideStatus, 6000);
