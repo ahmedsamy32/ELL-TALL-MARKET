@@ -426,10 +426,16 @@
               <div id="productVariantsMatrixSection" class="variants-matrix-section hidden">
                 <div class="variants-matrix-header">
                   <span><i class="fa-solid fa-table-list"></i> جدول التركيبات والأسعار والمخزون (variants)</span>
-                  <button type="button" class="btn btn-outline btn-sm" onclick="applyBaseValuesToVariants('product')" title="نسخ السعر والكمية الأساسية إلى جميع الخيارات">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i> تطبيق السعر والكمية الأساسية للكل
-                  </button>
+                  <div class="table-actions">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="applyBaseValuesToVariants('product')" title="نسخ السعر والكمية الأساسية إلى جميع الخيارات">
+                      <i class="fa-solid fa-wand-magic-sparkles"></i> تطبيق السعر والكمية الأساسية للكل
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" id="productFetchVariantImages" onclick="autoFetchAllVariantImages('product')">
+                      <i class="fa-solid fa-images" aria-hidden="true"></i> جلب صور الخيارات تلقائياً
+                    </button>
+                  </div>
                 </div>
+                <small id="productVariantImageStatus" role="status"></small>
                 <div class="variants-table-wrapper">
                   <table class="variants-table">
                     <thead>
@@ -972,10 +978,16 @@
             <div id="modalEditVariantsMatrixSection" class="variants-matrix-section hidden">
               <div class="variants-matrix-header">
                 <span><i class="fa-solid fa-table-list"></i> جدول التركيبات والأسعار والمخزون (variants)</span>
-                <button type="button" class="btn btn-outline btn-sm" onclick="applyBaseValuesToVariants('modalEdit')" title="نسخ السعر والكمية الأساسية إلى جميع الخيارات">
-                  <i class="fa-solid fa-wand-magic-sparkles"></i> تطبيق السعر والكمية الأساسية للكل
-                </button>
+                <div class="table-actions">
+                  <button type="button" class="btn btn-outline btn-sm" onclick="applyBaseValuesToVariants('modalEdit')" title="نسخ السعر والكمية الأساسية إلى جميع الخيارات">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> تطبيق السعر والكمية الأساسية للكل
+                  </button>
+                  <button type="button" class="btn btn-outline btn-sm" id="modalEditFetchVariantImages" onclick="autoFetchAllVariantImages('modalEdit')">
+                    <i class="fa-solid fa-images" aria-hidden="true"></i> جلب صور الخيارات تلقائياً
+                  </button>
+                </div>
               </div>
+              <small id="modalEditVariantImageStatus" role="status"></small>
               <div class="variants-table-wrapper">
                 <table class="variants-table">
                   <thead>

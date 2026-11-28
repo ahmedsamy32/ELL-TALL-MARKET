@@ -1125,7 +1125,7 @@ async function saveModalEdit() {
       description: description || null,
       custom_fields: updatedCustomFields,
       variant_groups: variantGroups.length > 0 ? variantGroups : null,
-      variants: variants.length > 0 ? variants : null
+      variants: variantsWithPrimaryImage(variants, uniqueImages[0])
     };
 
     const { error } = await supabaseClient
@@ -1710,7 +1710,7 @@ async function saveProduct() {
       image_urls: uniqueImages.length > 0 ? uniqueImages : null,
       custom_fields: updatedCustomFields,
       variant_groups: variantGroups.length > 0 ? variantGroups : null,
-      variants: variants.length > 0 ? variants : null
+      variants: variantsWithPrimaryImage(variants, uniqueImages[0])
     };
 
     let res;
@@ -2486,26 +2486,29 @@ function parseUpcItemDbData(item) {
 // Lookup barcode via Supabase Edge Function (Google Shopping / Google Egypt)
 async function lookupBarcodeFromGoogleEdge(barcode) {
   try {
-    const response = await fetch(
-      `${SUPABASE_URL}/functions/v1/barcode-google-lookup`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ barcode }),
-      }
-    );
-    if (!response.ok) return null;
-    const data = await response.json();
-    if (data?.found === true && data.product) {
-      return data.product;
-    }
-    return null;
+    return await requestGoogleProductLookup({ barcode });
   } catch (err) {
     console.warn("Google Edge lookup error:", err);
     return null;
   }
+}
+
+async function requestGoogleProductLookup(payload, signal) {
+  const headers = { "Content-Type": "application/json" };
+  if (payload.query) {
+    const { data, error } = await supabaseClient.auth.getSession();
+    if (error) throw error;
+    if (data?.session?.access_token) headers.Authorization = `Bearer ${data.session.access_token}`;
+  }
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/barcode-google-lookup`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(payload),
+    signal
+  });
+  if (!response.ok) throw new Error(`Google product lookup failed (HTTP ${response.status})`);
+  const data = await response.json();
+  return data?.found === true ? data.product || null : null;
 }
 function autoSelectProductCategory(categorySelect, { categoryHint, name, description }) {
   if (!categorySelect) return;
@@ -4298,11 +4301,15 @@ function syncVariantsTable(prefix, existingVariants = null) {
       <td style="min-width:130px;"><input type="text" class="var-sku" placeholder="SKU / باركود" value="${escapeHtml(skuVal)}"></td>
       <td>
         <div class="variant-img-cell">
-          <img class="variant-thumb-preview ${imgVal ? '' : 'hidden'}" src="${escapeHtml(imgVal || 'logo.png')}" alt="صورة الخيار">
+          <img class="variant-thumb-preview ${imgVal ? '' : 'hidden'}" style="width:32px;height:32px" src="${escapeHtml(imgVal || 'logo.png')}" alt="صورة الخيار">
           <input type="url" class="var-img" placeholder="رابط الصورة..." value="${escapeHtml(imgVal)}">
           <input type="file" accept="image/*" class="hidden var-file-input">
           <button type="button" class="variant-upload-btn" title="رفع صورة لهذا الخيار"><i class="fa-solid fa-upload"></i></button>
+          <button type="button" class="variant-upload-btn var-fetch-image" title="جلب صورة هذا الخيار تلقائياً" aria-label="جلب صورة هذا الخيار تلقائياً">
+            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+          </button>
         </div>
+        <small class="var-image-status" role="status"></small>
       </td>
       <td style="text-align:center;"><input type="checkbox" class="var-active" ${isActive ? 'checked' : ''}></td>
     `;
@@ -4317,11 +4324,12 @@ function syncVariantsTable(prefix, existingVariants = null) {
     const imgInput = tr.querySelector(".var-img");
     const thumbImg = tr.querySelector(".variant-thumb-preview");
     const fileInput = tr.querySelector(".var-file-input");
-    const uploadBtn = tr.querySelector(".variant-upload-btn");
+    const uploadBtn = tr.querySelector(".variant-upload-btn:not(.var-fetch-image)");
+    const fetchBtn = tr.querySelector(".var-fetch-image");
 
     imgInput.addEventListener("input", () => {
       const url = imgInput.value.trim();
-      if (url && (url.startsWith("http") || url.startsWith("data:"))) {
+      if (/^(?:https?:\/\/|data:)/i.test(url)) {
         thumbImg.src = url;
         thumbImg.classList.remove("hidden");
       } else {
@@ -4331,10 +4339,108 @@ function syncVariantsTable(prefix, existingVariants = null) {
 
     uploadBtn.addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", () => uploadVariantImage(fileInput, imgInput, thumbImg, prefix));
+    fetchBtn.addEventListener("click", () => autoFetchSingleVariantImage(tr, prefix));
 
     tbody.appendChild(tr);
   });
   refreshVariantSkus(prefix);
+}
+
+function getVariantImageLookup(row, prefix) {
+  const barcode = cleanBarcode(row.querySelector(".var-sku").value);
+  if (/^\d{8,}$/.test(barcode)) return { barcode };
+
+  const productName = document.getElementById(`${prefix}Name`).value.trim();
+  if (!productName) return null;
+  const selectedOptions = JSON.parse(row.dataset.selectedOptions || "[]");
+  const variantLabel = selectedOptions.map(option => option.value).filter(Boolean).join(" - ");
+  return { query: [productName, variantLabel].filter(Boolean).join(" ") };
+}
+
+async function autoFetchSingleVariantImage(row, prefix) {
+  const button = row.querySelector(".var-fetch-image");
+  if (!row.isConnected || button.disabled) return "skipped";
+
+  const imageInput = row.querySelector(".var-img");
+  const status = row.querySelector(".var-image-status");
+  const lookup = getVariantImageLookup(row, prefix);
+  if (!lookup) {
+    status.textContent = "اكتب اسم المنتج أولاً.";
+    return "failed";
+  }
+
+  const initialImage = imageInput.value;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  button.disabled = true;
+  status.textContent = "جارٍ البحث عن الصورة…";
+  try {
+    const product = await requestGoogleProductLookup(lookup, controller.signal);
+    if (!row.isConnected || imageInput.value !== initialImage ||
+        JSON.stringify(getVariantImageLookup(row, prefix)) !== JSON.stringify(lookup)) {
+      status.textContent = "";
+      return "skipped";
+    }
+    const imageUrl = typeof product?.image_url === "string" ? product.image_url.trim() : "";
+    if (!/^https?:\/\//i.test(imageUrl)) {
+      status.textContent = "لم نجد صورة لهذا الخيار.";
+      return "missing";
+    }
+    imageInput.value = imageUrl;
+    imageInput.dispatchEvent(new Event("input"));
+    status.textContent = "تم جلب الصورة.";
+    return "found";
+  } catch (error) {
+    console.warn("Variant image lookup failed:", error);
+    status.textContent = "تعذّر جلب الصورة.";
+    return "failed";
+  } finally {
+    clearTimeout(timeout);
+    button.disabled = false;
+  }
+}
+
+async function autoFetchAllVariantImages(prefix) {
+  const tbody = document.getElementById(`${prefix}VariantsTableBody`);
+  const button = document.getElementById(`${prefix}FetchVariantImages`);
+  const status = document.getElementById(`${prefix}VariantImageStatus`);
+  if (button.disabled) return;
+
+  const primaryImage = document.getElementById(`${prefix}ImageUrl`).value.trim();
+  const needsLookup = row => {
+    const imageUrl = row.querySelector(".var-img").value.trim();
+    return !imageUrl || imageUrl === primaryImage;
+  };
+  const rows = Array.from(tbody.rows).filter(needsLookup);
+  if (rows.length === 0) {
+    status.textContent = "جميع الخيارات لها صور خاصة بها.";
+    return;
+  }
+
+  button.disabled = true;
+  const counts = { found: 0, missing: 0, failed: 0, skipped: 0 };
+  try {
+    for (const [index, row] of rows.entries()) {
+      status.textContent = `جارٍ البحث عن صور الخيارات (${index + 1} من ${rows.length})…`;
+      const result = needsLookup(row) ? await autoFetchSingleVariantImage(row, prefix) : "skipped";
+      counts[result]++;
+    }
+    const summary = [`تم جلب ${counts.found} من ${rows.length}.`];
+    if (counts.missing) summary.push(`بدون نتائج: ${counts.missing}.`);
+    if (counts.failed) summary.push(`تعذّر الجلب: ${counts.failed}.`);
+    if (counts.skipped) summary.push(`تم تخطي: ${counts.skipped}.`);
+    status.textContent = summary.join(" ");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function variantsWithPrimaryImage(variants, primaryImageUrl) {
+  if (!variants.length) return null;
+  if (!primaryImageUrl && variants.some(variant => !variant.image_url)) {
+    throw new Error("أضف صورة رئيسية للمنتج أو صورة لكل خيار قبل الحفظ.");
+  }
+  return variants.map(variant => variant.image_url ? variant : { ...variant, image_url: primaryImageUrl });
 }
 
 function applyBaseValuesToVariants(prefix) {
