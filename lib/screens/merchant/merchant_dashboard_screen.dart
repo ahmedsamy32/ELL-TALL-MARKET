@@ -1,3 +1,5 @@
+import '../../widgets/auth_route_guard.dart';
+import '../../models/profile_model.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -832,7 +834,8 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                         onTap: () {
                           Navigator.push(
                             context,
-                            MaterialPageRoute(
+                            protectedPage(
+                              roles: const {UserRole.merchant},
                               builder: (_) => const MerchantCouponsScreen(),
                             ),
                           );
@@ -859,7 +862,8 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                         onTap: () {
                           Navigator.push(
                             context,
-                            MaterialPageRoute(
+                            protectedPage(
+                              roles: const {UserRole.merchant},
                               builder: (_) => const MerchantHelpScreen(),
                             ),
                           );
@@ -958,7 +962,8 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                     Navigator.pop(context);
                     Navigator.push(
                       context,
-                      MaterialPageRoute(
+                      protectedPage(
+                        roles: const {UserRole.merchant},
                         builder: (_) => const MerchantCouponsScreen(),
                       ),
                     );
@@ -980,7 +985,8 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                     Navigator.pop(context);
                     Navigator.push(
                       context,
-                      MaterialPageRoute(
+                      protectedPage(
+                        roles: const {UserRole.merchant},
                         builder: (_) => const MerchantHelpScreen(),
                       ),
                     );

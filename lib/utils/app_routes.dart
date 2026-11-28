@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import '../models/profile_model.dart';
+import '../widgets/auth_route_guard.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -137,408 +140,240 @@ class AppRoutes {
   static const String termsConditions = '/terms-conditions';
 
   // ===== Routes Map =====
-  static Map<String, WidgetBuilder> get routes {
-    return {
-      splash: (_) => const SplashScreen(),
-      onboarding: (_) => const OnboardingScreen(),
-      login: (_) => const LoginScreen(),
-      register: (_) => const RegisterScreen(),
-      registerMerchant: (_) => const RegisterMerchantScreen(),
-      resetPassword: (_) => const ResetPasswordScreen(),
-      emailConfirmation: (_) => const EmailConfirmationScreen(email: ''),
-      callback: (context) => _CallbackScreen(), // معالج روابط تأكيد البريد
-      home: (_) => const MainNavigationScreen(initialIndex: 0),
-      main: (_) => const MainNavigationScreen(),
-      category: (context) {
-        final args = ModalRoute.of(context)?.settings.arguments;
-
-        if (args is Map<String, dynamic>) {
-          final String? categoryId = args['id'] as String?;
-          final String? categoryName = args['name'] as String?;
-          return CategoryScreen(
-            categoryId: (categoryId ?? '').trim().isEmpty ? null : categoryId,
-            categoryName: (categoryName ?? '').trim().isEmpty
-                ? null
-                : categoryName,
-          );
-        }
-
-        if (args is CategoryModel) {
-          return CategoryScreen(categoryId: args.id, categoryName: args.name);
-        }
-
-        return const CategoryScreen();
-      },
-      search: (_) => const SearchScreen(),
-      notifications: (_) => const NotificationsScreen(),
-      cart: (_) => const CartScreen(),
-      checkout: (_) => const CheckoutScreen(),
-      orderHistory: (_) => const OrderHistoryScreen(),
-      profile: (_) => const MainNavigationScreen(initialIndex: 3),
-      favorites: (_) => const MainNavigationScreen(initialIndex: 2),
-
-      merchantDashboard: (_) => const MerchantDashboardScreen(),
-      merchantWallet: (_) => const MerchantWalletScreen(),
-      // مهم: استخدم args لتمرير المنتج عند التعديل، وأبقها null عند الإضافة
-      addEditProduct: (context) {
-        final args = ModalRoute.of(context)?.settings.arguments;
-        final product = args is ProductModel ? args : null;
-        return AddEditProductScreen(
-          key: ValueKey<String>('addEdit-${product?.id ?? 'new'}'),
-          product: product,
+  static final Map<String, WidgetBuilder> _pages = {
+    splash: (_) => const SplashScreen(),
+    onboarding: (_) => const OnboardingScreen(),
+    login: (_) => const LoginScreen(),
+    register: (_) => const RegisterScreen(),
+    registerMerchant: (_) => const RegisterMerchantScreen(),
+    resetPassword: (context) {
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is Map<String, dynamic>) {
+        return ResetPasswordScreen(
+          token: args['token'],
+          tokenHash: args['token_hash'],
+          type: args['type'],
         );
-      },
+      }
+      return const ResetPasswordScreen();
+    },
+    emailConfirmation: (context) {
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is Map<String, dynamic>) {
+        return EmailConfirmationScreen(
+          email: args['email'] ?? '',
+          password: args['password'],
+          userType: args['userType'],
+        );
+      }
+      return const EmailConfirmationScreen(email: '');
+    },
+    callback: (context) => _CallbackScreen(), // معالج روابط تأكيد البريد
+    home: (_) => const MainNavigationScreen(initialIndex: 0),
+    main: (_) => const MainNavigationScreen(),
+    category: (context) {
+      final args = ModalRoute.of(context)?.settings.arguments;
 
-      captainDashboard: (_) => const CaptainDashboard(),
-      deliveryCompanyDashboard: (_) => const DeliveryCompanyDashboardScreen(),
-      captainWallet: (_) => const CaptainWalletScreen(),
+      if (args is Map<String, dynamic>) {
+        final String? categoryId = args['id'] as String?;
+        final String? categoryName = args['name'] as String?;
+        return CategoryScreen(
+          categoryId: (categoryId ?? '').trim().isEmpty ? null : categoryId,
+          categoryName: (categoryName ?? '').trim().isEmpty
+              ? null
+              : categoryName,
+        );
+      }
 
-      stores: (_) => const StoresScreen(),
-      adminDashboard: (_) => const AdminDashboardScreen(),
-      manageUsers: (_) => const ManageUsersScreen(),
-      manageProducts: (_) => const ManageProductsScreen(),
-      manageOrders: (_) => const ManageOrdersScreen(),
-      storeWalletTopups: (_) => const StoreWalletTopupsScreen(),
-      manageCategories: (_) => const ManageCategoriesScreen(),
-      manageCoupons: (_) => const ManageCouponsScreen(),
-      appSettings: (_) => const AppSettingsScreen(),
-      dynamicUIBuilder: (_) => const DynamicUIBuilderScreen(),
-      analytics: (_) => const AnalyticsScreen(),
-      manageCaptains: (_) => const CaptainReportsScreen(),
-      manageBanners: (_) => const ManageBannersScreen(),
-      deliveryZonePricing: (_) => const DeliveryZonePricingScreen(),
-      appUpdates: (_) => const AppUpdatesScreen(),
-      editProfile: (_) => const EditProfileScreen(),
-      settings: (_) => const SettingsScreen(),
-      addresses: (_) => const AddressesScreen(),
-      aboutApp: (_) => const AboutAppScreen(),
-      privacyPolicy: (_) => const PrivacyPolicyScreen(),
-      termsConditions: (_) => const TermsConditionsScreen(),
-      uploadPrescription: (context) {
-        final args = ModalRoute.of(context)?.settings.arguments;
-        if (args is Map<String, dynamic>) {
-          final store = args['store'] as StoreModel?;
-          final prescriptionUrl = args['prescriptionUrl'] as String?;
-          final initialNotes = args['initialNotes'] as String?;
-          return UploadPrescriptionScreen(
-            initialStore: store,
-            prescriptionUrl: prescriptionUrl,
-            initialNotes: initialNotes,
-          );
-        } else if (args is StoreModel) {
-          return UploadPrescriptionScreen(initialStore: args);
-        }
-        return const UploadPrescriptionScreen();
-      },
-    };
-  }
+      if (args is CategoryModel) {
+        return CategoryScreen(categoryId: args.id, categoryName: args.name);
+      }
 
-  // ===== Dynamic Routes =====
+      return const CategoryScreen();
+    },
+    search: (_) => const SearchScreen(),
+    notifications: (_) => const NotificationsScreen(),
+    cart: (_) => const CartScreen(),
+    checkout: (_) => const CheckoutScreen(),
+    orderHistory: (_) => const OrderHistoryScreen(),
+    profile: (_) => const MainNavigationScreen(initialIndex: 3),
+    favorites: (_) => const MainNavigationScreen(initialIndex: 2),
+
+    merchantDashboard: (_) => const MerchantDashboardScreen(),
+    merchantWallet: (_) => const MerchantWalletScreen(),
+    // مهم: استخدم args لتمرير المنتج عند التعديل، وأبقها null عند الإضافة
+    addEditProduct: (context) {
+      final args = ModalRoute.of(context)?.settings.arguments;
+      final product = args is ProductModel ? args : null;
+      return AddEditProductScreen(
+        key: ValueKey<String>('addEdit-${product?.id ?? 'new'}'),
+        product: product,
+      );
+    },
+
+    captainDashboard: (_) => const CaptainDashboard(),
+    deliveryCompanyDashboard: (_) => const DeliveryCompanyDashboardScreen(),
+    captainWallet: (_) => const CaptainWalletScreen(),
+
+    stores: (_) => const StoresScreen(),
+    adminDashboard: (_) => const AdminDashboardScreen(),
+    manageUsers: (_) => const ManageUsersScreen(),
+    manageProducts: (_) => const ManageProductsScreen(),
+    manageOrders: (_) => const ManageOrdersScreen(),
+    storeWalletTopups: (_) => const StoreWalletTopupsScreen(),
+    manageCategories: (_) => const ManageCategoriesScreen(),
+    manageCoupons: (_) => const ManageCouponsScreen(),
+    appSettings: (_) => const AppSettingsScreen(),
+    dynamicUIBuilder: (_) => const DynamicUIBuilderScreen(),
+    analytics: (_) => const AnalyticsScreen(),
+    manageCaptains: (_) => const CaptainReportsScreen(),
+    manageBanners: (_) => const ManageBannersScreen(),
+    deliveryZonePricing: (_) => const DeliveryZonePricingScreen(),
+    appUpdates: (_) => const AppUpdatesScreen(),
+    editProfile: (_) => const EditProfileScreen(),
+    settings: (_) => const SettingsScreen(),
+    addresses: (_) => const AddressesScreen(),
+    aboutApp: (_) => const AboutAppScreen(),
+    privacyPolicy: (_) => const PrivacyPolicyScreen(),
+    termsConditions: (_) => const TermsConditionsScreen(),
+    uploadPrescription: (context) {
+      final args = ModalRoute.of(context)?.settings.arguments;
+      if (args is Map<String, dynamic>) {
+        final store = args['store'] as StoreModel?;
+        final prescriptionUrl = args['prescriptionUrl'] as String?;
+        final initialNotes = args['initialNotes'] as String?;
+        return UploadPrescriptionScreen(
+          initialStore: store,
+          prescriptionUrl: prescriptionUrl,
+          initialNotes: initialNotes,
+        );
+      } else if (args is StoreModel) {
+        return UploadPrescriptionScreen(initialStore: args);
+      }
+      return const UploadPrescriptionScreen();
+    },
+    merchantProducts: (_) => const MerchantProductsScreen(),
+    merchantOrders: (_) => const MerchantOrdersScreen(),
+    captainOrders: (context) {
+      final profile = context.read<SupabaseProvider>().currentProfile!;
+      return CaptainOrdersScreen(
+        captainId: profile.id,
+        captainName: profile.fullName ?? 'كابتن',
+      );
+    },
+  };
+
+  // The storefront and account entry flows support guests. All other pages
+  // require an active account unless an explicit staff role is listed below.
+  static const _publicPages = {
+    splash,
+    onboarding,
+    login,
+    register,
+    registerMerchant,
+    resetPassword,
+    emailConfirmation,
+    callback,
+    home,
+    main,
+    category,
+    productDetail,
+    stores,
+    storeDetail,
+    search,
+    cart,
+    aboutApp,
+    privacyPolicy,
+    termsConditions,
+  };
+  static const _roles = <String, Set<UserRole>>{
+    merchantDashboard: {UserRole.merchant},
+    merchantProducts: {UserRole.merchant},
+    merchantOrders: {UserRole.merchant},
+    merchantWallet: {UserRole.merchant},
+    addEditProduct: {UserRole.merchant},
+    captainDashboard: {UserRole.captain},
+    captainOrders: {UserRole.captain},
+    captainWallet: {UserRole.captain},
+    orderDelivery: {UserRole.captain},
+    deliveryCompanyDashboard: {UserRole.deliveryCompanyAdmin, UserRole.admin},
+    adminDashboard: {UserRole.admin},
+    manageUsers: {UserRole.admin},
+    manageProducts: {UserRole.admin},
+    manageOrders: {UserRole.admin},
+    manageCategories: {UserRole.admin},
+    manageCoupons: {UserRole.admin},
+    appSettings: {UserRole.admin},
+    dynamicUIBuilder: {UserRole.admin},
+    analytics: {UserRole.admin},
+    manageCaptains: {UserRole.admin},
+    manageBanners: {UserRole.admin},
+    deliveryZonePricing: {UserRole.admin},
+    storeWalletTopups: {UserRole.admin},
+    appUpdates: {UserRole.admin},
+  };
+
   static Route<dynamic> generateRoute(RouteSettings settings) {
-    final args = settings.arguments;
-
-    // معالجة callback routes حتى لو كان فيها query parameters
-    final routeName = settings.name ?? '';
-    if (routeName.contains('/callback')) {
+    final uri = Uri.tryParse(settings.name ?? '');
+    var path = uri?.path ?? '';
+    if (path == '/auth/callback' ||
+        path == '/market/auth/callback' ||
+        (path == callback && (uri!.hasQuery || uri.hasFragment))) {
       return _handleSupabaseAuthCallback(settings);
     }
-
-    // معالجة مسار تتبع الطلب للعميل ديناميكياً من الإشعارات
-    if (routeName.startsWith('/orders/')) {
-      final orderId = routeName.substring('/orders/'.length);
-      return MaterialPageRoute(
-        builder: (_) => OrderTrackingScreen(orderId: orderId),
-        settings: settings,
-      );
+    final args = settings.arguments;
+    WidgetBuilder? builder;
+    if (path.startsWith('/orders/')) {
+      final orderId = path.substring('/orders/'.length);
+      path = orderTracking;
+      builder = (_) => OrderTrackingScreen(orderId: orderId);
+    } else if (path.startsWith('/admin/orders/')) {
+      path = manageOrders;
+    } else if (path.startsWith('/merchant/orders/') ||
+        const {
+          'merchant_order',
+          'merchant_orders',
+          '/merchant_order',
+          '/merchant_orders',
+        }.contains(path)) {
+      path = merchantOrders;
     }
-
-    // معالجة مسار طلبات المشرف ديناميكياً من الإشعارات
-    if (routeName.startsWith('/admin/orders/')) {
-      return MaterialPageRoute(
-        builder: (context) {
-          final authProvider = Provider.of<SupabaseProvider>(
-            context,
-            listen: false,
-          );
-          if (!authProvider.isLoggedIn) {
-            return _buildRedirectScreen(context, login);
+    builder ??= _pages[path];
+    if (builder == null) {
+      switch (path) {
+        case productDetail:
+          if (args is ProductModel) {
+            builder = (_) => ProductDetailScreen(product: args);
           }
-          if (authProvider.isAdmin) {
-            return const ManageOrdersScreen();
+          break;
+        case storeDetail:
+          if (args is StoreModel) builder = (_) => const StoreDetailScreen();
+          break;
+        case orderTracking:
+          if (args is Map<String, dynamic>) {
+            builder = (_) => OrderTrackingScreen(
+              orderId: args['orderId'],
+              orderGroupId: args['orderGroupId'],
+              orderNumber: args['orderNumber'],
+            );
           }
-          return _errorScaffold('Admin access required');
-        },
-        settings: settings,
-      );
+          break;
+        case orderDelivery:
+          if (args is Map<String, dynamic> && args['orderId'] is String) {
+            builder = (_) => OrderDeliveryScreen(orderId: args['orderId']);
+          }
+          break;
+      }
     }
-
-    // معالجة جميع أشكال مسارات طلبات التاجر (سواء كانت ثابتة، متغيرة مع معرف الطلب، أو بأسماء مختلفة من الإشعارات)
-    if (routeName == 'merchant_order' ||
-        routeName == 'merchant_orders' ||
-        routeName == '/merchant_order' ||
-        routeName == '/merchant_orders' ||
-        routeName == '/merchant/orders' ||
-        routeName.startsWith('/merchant/orders/')) {
-      return MaterialPageRoute(
-        builder: (context) {
-          final authProvider = Provider.of<SupabaseProvider>(
-            context,
-            listen: false,
-          );
-          if (!authProvider.isLoggedIn) {
-            return _buildRedirectScreen(context, login);
-          }
-          if (authProvider.isMerchant) {
-            return const MerchantOrdersScreen();
-          }
-          return _errorScaffold('Merchant not authenticated');
-        },
-        settings: settings,
-      );
+    if (builder == null) return _errorRoute('تعذّر فتح الصفحة المطلوبة');
+    if (_publicPages.contains(path)) {
+      return MaterialPageRoute(builder: builder, settings: settings);
     }
-
-    switch (settings.name) {
-      // ===== Supabase Auth Deep Link Handler =====
-      case '/auth/callback':
-        return _handleSupabaseAuthCallback(settings);
-
-      // ===== Callback Handler for Direct /callback Routes =====
-      case '/callback':
-        return _handleSupabaseAuthCallback(settings);
-
-      case category:
-        if (args is Map<String, dynamic>) {
-          final String categoryId = (args['id'] as String?) ?? '';
-          final String categoryName = (args['name'] as String?) ?? '';
-          return MaterialPageRoute(
-            builder: (_) => CategoryScreen(
-              categoryId: categoryId.trim().isEmpty ? null : categoryId,
-              categoryName: categoryName.trim().isEmpty ? null : categoryName,
-            ),
-          );
-        }
-
-        if (args is CategoryModel) {
-          return MaterialPageRoute(
-            builder: (_) =>
-                CategoryScreen(categoryId: args.id, categoryName: args.name),
-          );
-        }
-        return _errorRoute('Category data not provided');
-
-      case productDetail:
-        if (args is ProductModel) {
-          return MaterialPageRoute(
-            builder: (_) => ProductDetailScreen(product: args),
-          );
-        }
-        return _errorRoute('Product data not provided');
-
-      case storeDetail:
-        if (args is StoreModel) {
-          return MaterialPageRoute(
-            builder: (_) => const StoreDetailScreen(),
-            settings: RouteSettings(name: storeDetail, arguments: args),
-          );
-        }
-        return _errorRoute('Store data not provided');
-
-      case uploadPrescription:
-        StoreModel? store;
-        String? prescriptionUrl;
-        String? initialNotes;
-        if (args is Map<String, dynamic>) {
-          store = args['store'] as StoreModel?;
-          prescriptionUrl = args['prescriptionUrl'] as String?;
-          initialNotes = args['initialNotes'] as String?;
-        } else if (args is StoreModel) {
-          store = args;
-        }
-        return MaterialPageRoute(
-          builder: (_) => UploadPrescriptionScreen(
-            initialStore: store,
-            prescriptionUrl: prescriptionUrl,
-            initialNotes: initialNotes,
-          ),
-          settings: settings,
-        );
-
-      case addEditProduct:
-        final product = args is ProductModel ? args : null;
-        return MaterialPageRoute(
-          builder: (_) => AddEditProductScreen(
-            key: ValueKey<String>('addEdit-${product?.id ?? 'new'}'),
-            product: product,
-          ),
-          settings: settings,
-        );
-
-      case resetPassword:
-        if (args is Map<String, dynamic>) {
-          final String? token = args['token'];
-          final String? tokenHash = args['token_hash'];
-          final String? type = args['type'];
-          return MaterialPageRoute(
-            builder: (_) => ResetPasswordScreen(
-              token: token,
-              tokenHash: tokenHash,
-              type: type,
-            ),
-          );
-        }
-        // إذا لم توجد معاملات، اعرض الشاشة العادية
-        return MaterialPageRoute(builder: (_) => const ResetPasswordScreen());
-
-      case emailConfirmation:
-        if (args is Map<String, dynamic>) {
-          final String email = args['email'] ?? '';
-          final String? password = args['password'];
-          final String? userType = args['userType'];
-          return MaterialPageRoute(
-            builder: (_) => EmailConfirmationScreen(
-              email: email,
-              password: password,
-              userType: userType,
-            ),
-          );
-        }
-        return _errorRoute('Email not provided for confirmation');
-
-      case orderTracking:
-        if (args is Map<String, dynamic>) {
-          final String? orderId = args['orderId'] as String?;
-          final String? orderGroupId = args['orderGroupId'] as String?;
-          final String? orderNumber = args['orderNumber'] as String?;
-          return MaterialPageRoute(
-            builder: (_) => OrderTrackingScreen(
-              orderId: orderId,
-              orderGroupId: orderGroupId,
-              orderNumber: orderNumber,
-            ),
-          );
-        }
-        return _errorRoute('Order data not provided');
-
-      // ===== Merchant Protected Routes =====
-      case merchantProducts:
-        return MaterialPageRoute(
-          builder: (context) {
-            final authProvider = Provider.of<SupabaseProvider>(
-              context,
-              listen: false,
-            );
-            if (!authProvider.isLoggedIn) {
-              return _buildRedirectScreen(context, login);
-            }
-            if (authProvider.isMerchant) {
-              return const MerchantProductsScreen();
-            }
-            return _errorScaffold('Merchant not authenticated');
-          },
-        );
-
-      case merchantOrders:
-        return MaterialPageRoute(
-          builder: (context) {
-            final authProvider = Provider.of<SupabaseProvider>(
-              context,
-              listen: false,
-            );
-            if (!authProvider.isLoggedIn) {
-              return _buildRedirectScreen(context, login);
-            }
-            if (authProvider.isMerchant) {
-              return const MerchantOrdersScreen();
-            }
-            return _errorScaffold('Merchant not authenticated');
-          },
-        );
-
-      // ===== Captain Protected Routes =====
-      case captainOrders:
-        return MaterialPageRoute(
-          builder: (context) {
-            final authProvider = Provider.of<SupabaseProvider>(
-              context,
-              listen: false,
-            );
-            if (!authProvider.isLoggedIn) {
-              return _buildRedirectScreen(context, login);
-            }
-            if (authProvider.isCaptain) {
-              return CaptainOrdersScreen(
-                captainId: authProvider.currentUserProfile!.id,
-                captainName:
-                    authProvider.currentUserProfile!.fullName ?? 'كابتن',
-              );
-            }
-            return _errorScaffold('Captain not authenticated');
-          },
-        );
-
-      case orderDelivery:
-        if (args is Map<String, dynamic>) {
-          final String orderId = args['orderId'] ?? '';
-          return MaterialPageRoute(
-            builder: (_) => OrderDeliveryScreen(orderId: orderId),
-          );
-        }
-        return _errorRoute('Order data not provided');
-
-      case deliveryCompanyDashboard:
-        return MaterialPageRoute(
-          builder: (context) {
-            final authProvider = Provider.of<SupabaseProvider>(
-              context,
-              listen: false,
-            );
-            if (!authProvider.isLoggedIn) {
-              return _buildRedirectScreen(context, login);
-            }
-            if (authProvider.isDeliveryCompanyAdmin || authProvider.isAdmin) {
-              return const DeliveryCompanyDashboardScreen();
-            }
-            return _errorScaffold('Delivery company admin access required');
-          },
-        );
-
-      // ===== Admin Protected Routes =====
-      case manageUsers:
-      case manageProducts:
-      case manageOrders:
-      case manageCategories:
-      case manageCoupons:
-      case appSettings:
-      case dynamicUIBuilder:
-      case analytics:
-      case manageCaptains:
-      case deliveryZonePricing:
-        return MaterialPageRoute(
-          builder: (context) {
-            final authProvider = Provider.of<SupabaseProvider>(
-              context,
-              listen: false,
-            );
-            if (!authProvider.isLoggedIn) {
-              return _buildRedirectScreen(context, login);
-            }
-            if (authProvider.isAdmin) {
-              // العودة إلى الشاشة المطلوبة
-              return routes[settings.name]!(context);
-            }
-            return _errorScaffold('Admin access required');
-          },
-        );
-
-      default:
-        if (routes.containsKey(settings.name)) {
-          return MaterialPageRoute(
-            builder: routes[settings.name]!,
-            settings: settings,
-          );
-        }
-        return _errorRoute('Route not found: ${settings.name}');
-    }
+    return protectedPage(
+      builder: builder,
+      roles: _roles[path] ?? const {},
+      settings: settings,
+    );
   }
 
   // ===== Helper Methods =====
@@ -547,10 +382,12 @@ class AppRoutes {
   static MaterialPageRoute _handleSupabaseAuthCallback(RouteSettings settings) {
     try {
       final uri = Uri.parse(settings.name ?? '');
-      final queryParams = uri.queryParameters;
+      final queryParams = <String, String>{
+        ...uri.queryParameters,
+        if (uri.hasFragment) ...Uri.splitQueryString(uri.fragment),
+      };
 
-      AppLogger.info('🔗 معالجة auth callback: ${settings.name}');
-      AppLogger.debug('معاملات URL: $queryParams');
+      AppLogger.info('🔗 معالجة auth callback');
 
       // استخراج المعاملات من URL (النوع القديم والجديد)
       final accessToken = queryParams['access_token'];
@@ -560,6 +397,17 @@ class AppRoutes {
       final provider = queryParams['provider']; // مثال: google عند OAuth
       final error = queryParams['error'];
       final errorDescription = queryParams['error_description'];
+
+      // في حالة recovery (إعادة تعيين كلمة المرور)
+      if (type == 'recovery' && accessToken != null && refreshToken != null) {
+        return MaterialPageRoute(
+          builder: (_) => ResetPasswordScreen(
+            token: accessToken,
+            tokenHash: refreshToken,
+            type: type,
+          ),
+        );
+      }
 
       // ===== معالجة النوع الجديد - Code Exchange (Email Confirmation فقط) =====
       // ملاحظة: عند OAuth قد يأتي code أيضاً، لكن يتم معالجته داخلياً من مكتبة Supabase
@@ -571,7 +419,7 @@ class AppRoutes {
         // ✅ إذا كان type موجود (signup/invite) → تأكيد بريد → استبدال يدوي للكود
         // ✅ إذا لم يكن type موجود → OAuth PKCE → Supabase يعالج الكود تلقائياً
         if (type != null && type.isNotEmpty) {
-          AppLogger.info('🔄 معالجة رابط تأكيد بريد (code exchange): $code');
+          AppLogger.info('🔄 معالجة رابط تأكيد بريد (code exchange)');
           return MaterialPageRoute(
             builder: (context) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -641,17 +489,6 @@ class AppRoutes {
         }
       }
 
-      // في حالة recovery (إعادة تعيين كلمة المرور)
-      if (type == 'recovery' && accessToken != null) {
-        return MaterialPageRoute(
-          builder: (_) => ResetPasswordScreen(
-            token: accessToken,
-            tokenHash: refreshToken,
-            type: type,
-          ),
-        );
-      }
-
       // في حالة email confirmation - منع التسجيل التلقائي
       if (type == 'signup') {
         // تعيين علامة تدفق تأكيد البريد لمنع التسجيل التلقائي
@@ -664,7 +501,7 @@ class AppRoutes {
       }
 
       // في حالة عدم وجود معاملات صحيحة
-      AppLogger.warning('معاملات auth callback غير صحيحة: $queryParams');
+      AppLogger.warning('معاملات auth callback غير صحيحة');
       return MaterialPageRoute(
         builder: (_) => const LoginScreen(),
         settings: const RouteSettings(name: AppRoutes.login),
@@ -677,28 +514,6 @@ class AppRoutes {
         settings: const RouteSettings(name: AppRoutes.login),
       );
     }
-  }
-
-  /// بناء شاشة إعادة التوجيه مؤقتة
-  static Widget _buildRedirectScreen(BuildContext context, String routeName) {
-    // استخدام Future.microtask لتجنب مشاكل السياق مع فحص mounted
-    Future.microtask(() {
-      if (context.mounted) {
-        Navigator.pushReplacementNamed(context, routeName);
-      }
-    });
-    return const Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('جاري التوجيه...', style: TextStyle(fontSize: 16)),
-          ],
-        ),
-      ),
-    );
   }
 
   /// معالجة الأخطاء بطريقة أكثر أناقة
@@ -755,29 +570,6 @@ class AppRoutes {
     String routeName, {
     Object? arguments,
   }) {
-    final authProvider = Provider.of<SupabaseProvider>(context, listen: false);
-
-    // التحقق من الشاشات المحمية
-    final protectedRoutes = [
-      merchantProducts,
-      merchantOrders,
-      captainOrders,
-      manageUsers,
-      manageProducts,
-      manageOrders,
-      manageCategories,
-      manageCoupons,
-      appSettings,
-      dynamicUIBuilder,
-      analytics,
-      manageCaptains,
-    ];
-
-    if (protectedRoutes.contains(routeName) && !authProvider.isLoggedIn) {
-      Navigator.pushNamed(context, login);
-      return;
-    }
-
     Navigator.pushNamed(context, routeName, arguments: arguments);
   }
 
@@ -802,46 +594,6 @@ class AppRoutes {
       (route) => false,
       arguments: arguments,
     );
-  }
-
-  // ===== Route Guards =====
-
-  /// التحقق من صلاحية الوصول للشاشة
-  static bool canAccessRoute(BuildContext context, String routeName) {
-    final authProvider = Provider.of<SupabaseProvider>(context, listen: false);
-
-    if (!authProvider.isLoggedIn) {
-      return false;
-    }
-
-    // تحقق من الصلاحيات حسب نوع المستخدم
-    switch (routeName) {
-      case merchantProducts:
-      case merchantOrders:
-      case merchantWallet:
-        return authProvider.isMerchant;
-
-      case captainOrders:
-      case orderDelivery:
-        return authProvider.isCaptain;
-
-      case deliveryCompanyDashboard:
-        return authProvider.isDeliveryCompanyAdmin || authProvider.isAdmin;
-
-      case manageUsers:
-      case manageProducts:
-      case manageOrders:
-      case manageCategories:
-      case manageCoupons:
-      case appSettings:
-      case dynamicUIBuilder:
-      case analytics:
-      case manageCaptains:
-        return authProvider.isAdmin;
-
-      default:
-        return true;
-    }
   }
 
   // ===== Supabase Auth Deep Link Helpers =====
@@ -1025,7 +777,6 @@ class AppRoutes {
       final queryParams = uri.queryParameters;
 
       AppLogger.info('🔗 معالجة deep link: $path');
-      AppLogger.debug('معاملات URI: $queryParams');
 
       // معالجة روابط Supabase Auth - دعم المسارات المختلفة
       if (path.contains('/auth/callback') || path.contains('/callback')) {
@@ -1038,7 +789,7 @@ class AppRoutes {
 
         // معالجة النوع الجديد - Code Exchange
         if (code != null) {
-          AppLogger.info('🔄 معالجة code exchange من deep link: $code');
+          AppLogger.info('🔄 معالجة code exchange من deep link');
 
           // Note: Email confirmation handled automatically by Supabase
           AppLogger.debug('🚫 Email confirmation code exchange processing');
@@ -1089,7 +840,7 @@ class AppRoutes {
           );
         } else {
           // في حالة عدم وجود معاملات صحيحة، توجه لشاشة تسجيل الدخول
-          AppLogger.warning('معاملات deep link غير صحيحة: $queryParams');
+          AppLogger.warning('معاملات deep link غير صحيحة');
           Navigator.pushNamedAndRemoveUntil(
             context,
             AppRoutes.login,
@@ -1131,7 +882,7 @@ class _CallbackScreenState extends State<_CallbackScreen> {
       final uri = Uri.base;
       final code = uri.queryParameters['code'];
 
-      AppLogger.info('🔗 معالجة رابط callback مع الكود: $code');
+      AppLogger.info('🔗 معالجة رابط callback مع الكود');
 
       if (code != null) {
         // معالجة callback للحصول على session
@@ -1337,6 +1088,7 @@ class _OAuthCallbackScreenState extends State<_OAuthCallbackScreen> {
 
   Future<void> _navigateAfterSignIn() async {
     _navigated = true;
+    if (context.read<SupabaseProvider>().recoveryUserId != null) return;
     try {
       final user = Supabase.instance.client.auth.currentUser!;
 
@@ -1440,7 +1192,7 @@ class _CodeExchangeScreenState extends State<_CodeExchangeScreen> {
 
   Future<void> _handleCodeExchange() async {
     try {
-      AppLogger.info('🔄 بدء معالجة code exchange: ${widget.code}');
+      AppLogger.info('🔄 بدء معالجة code exchange');
 
       // معالجة code exchange مع Supabase
       await Supabase.instance.client.auth

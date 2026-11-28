@@ -1,3 +1,4 @@
+import '../../widgets/auth_route_guard.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -4084,8 +4085,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       if (!context.mounted) return;
 
       final route = firstOrder == null
-          ? MaterialPageRoute(builder: (_) => const OrderHistoryScreen())
-          : MaterialPageRoute(
+          ? protectedPage(builder: (_) => const OrderHistoryScreen())
+          : protectedPage(
               builder: (_) => OrderTrackingScreen(
                 orderId: firstOrder.id,
                 orderNumber: firstOrder.orderNumber,

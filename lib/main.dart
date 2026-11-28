@@ -159,14 +159,18 @@ Future<void> main([List<String> args = const []]) async {
         args,
         "ell_tall_market_instance_id",
         onSecondWindow: (secondArgs) {
-          AppLogger.info('🔄 Windows Single Instance: Received args from second window - $secondArgs');
+          AppLogger.info(
+            '🔄 Windows Single Instance: Received args from second window',
+          );
           if (secondArgs.isNotEmpty) {
             final link = secondArgs.firstWhere(
               (arg) => arg.contains('elltallmarket://'),
               orElse: () => '',
             );
             if (link.isNotEmpty) {
-              AppLogger.info('🔄 Windows Single Instance: Routing deep link to handler - $link');
+              AppLogger.info(
+                '🔄 Windows Single Instance: Routing deep link to handler',
+              );
               AuthDeepLinkHandler.handleAuthDeepLinkPublic(link);
             }
           }
@@ -180,7 +184,9 @@ Future<void> main([List<String> args = const []]) async {
           orElse: () => '',
         );
         if (link.isNotEmpty) {
-          AppLogger.info('🔄 Windows Single Instance: App launched with deep link - $link');
+          AppLogger.info(
+            '🔄 Windows Single Instance: App launched with deep link',
+          );
           AuthDeepLinkHandler.handleAuthDeepLinkPublic(link);
         }
       }
@@ -353,7 +359,6 @@ class MyApp extends StatelessWidget {
             return supportedLocales.first;
           },
           initialRoute: AppRoutes.splash,
-          routes: AppRoutes.routes,
           onGenerateRoute: AppRoutes.generateRoute,
           navigatorKey: NavigationService.navigatorKey,
           debugShowCheckedModeBanner: false,
@@ -383,6 +388,47 @@ class _SupabaseInitializerState extends State<SupabaseInitializer> {
   bool _isInitializing = true;
   String? _errorMessage;
 
+  SupabaseProvider? _auth;
+  String? _lastUserId;
+  String? _lastRecoveryUserId;
+
+  void _handleIdentityChange() {
+    final userId = _auth?.currentUser?.id;
+    final previous = _lastUserId;
+    _lastUserId = userId;
+    final recoveryId = _auth?.recoveryUserId;
+    final newRecovery = recoveryId != null && _lastRecoveryUserId != recoveryId;
+    _lastRecoveryUserId = recoveryId;
+    if (newRecovery) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _auth?.recoveryUserId != recoveryId) return;
+        NavigationService.navigatorKey.currentState?.pushNamedAndRemoveUntil(
+          AppRoutes.resetPassword,
+          (_) => false,
+          arguments: {'type': 'recovery'},
+        );
+      });
+      WidgetsBinding.instance.ensureVisualUpdate();
+      return;
+    }
+    if (previous == null || previous == userId) return;
+    // Drop dialogs, sheets and route arguments that belonged to the old account.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _lastUserId != userId) return;
+      NavigationService.navigatorKey.currentState?.pushNamedAndRemoveUntil(
+        userId == null ? AppRoutes.login : AppRoutes.splash,
+        (_) => false,
+      );
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  @override
+  void dispose() {
+    _auth?.removeListener(_handleIdentityChange);
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -405,6 +451,9 @@ class _SupabaseInitializerState extends State<SupabaseInitializer> {
         listen: false,
       );
 
+      _auth = supabaseProvider;
+      _lastUserId = supabaseProvider.currentUser?.id;
+      supabaseProvider.addListener(_handleIdentityChange);
       await supabaseProvider.initialize().timeout(
         const Duration(seconds: 3),
         onTimeout: () {
@@ -414,6 +463,8 @@ class _SupabaseInitializerState extends State<SupabaseInitializer> {
 
       if (mounted) {
         setState(() => _isInitializing = false);
+        _lastRecoveryUserId = null;
+        _handleIdentityChange();
       }
     } catch (e) {
       AppLogger.error('❌ Supabase initialization error: $e');

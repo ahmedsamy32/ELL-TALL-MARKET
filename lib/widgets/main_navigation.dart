@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'auth_route_guard.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -440,7 +441,9 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
             color: colorScheme.surface,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           ),
-          child: NotificationsScreen(targetRole: 'client'),
+          child: AuthRouteGuard(
+            builder: (_) => const NotificationsScreen(targetRole: 'client'),
+          ),
         ),
       ),
     );
@@ -705,9 +708,9 @@ class MainNavigationScreenState extends State<MainNavigationScreen> {
 
     final pages = [
       HomeScreen(key: _pageKeys[0]),
-      OrderHistoryScreen(key: _pageKeys[1]),
-      FavoritesScreen(key: _pageKeys[2]),
-      ProfileScreen(key: _pageKeys[3]),
+      AuthRouteGuard(builder: (_) => OrderHistoryScreen(key: _pageKeys[1])),
+      AuthRouteGuard(builder: (_) => FavoritesScreen(key: _pageKeys[2])),
+      AuthRouteGuard(builder: (_) => ProfileScreen(key: _pageKeys[3])),
     ];
 
     return Scaffold(

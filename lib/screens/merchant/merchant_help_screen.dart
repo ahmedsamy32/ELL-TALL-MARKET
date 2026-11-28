@@ -1,3 +1,5 @@
+import '../../widgets/auth_route_guard.dart';
+import '../../models/profile_model.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:ell_tall_market/screens/merchant/merchant_policies_screen.dart';
@@ -407,7 +409,8 @@ class MerchantHelpScreen extends StatelessWidget {
                 onTap: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(
+                    protectedPage(
+                      roles: const {UserRole.merchant},
                       builder: (_) => MerchantPoliciesScreen(
                         initialTab: policy['tab'] as int,
                       ),

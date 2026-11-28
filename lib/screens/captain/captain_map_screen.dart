@@ -1,3 +1,5 @@
+import '../../widgets/auth_route_guard.dart';
+import '../../models/profile_model.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
@@ -341,7 +343,8 @@ class _CaptainMapScreenState extends State<CaptainMapScreen> {
           );
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(
+            protectedPage(
+              roles: const {UserRole.captain},
               builder: (context) =>
                   OrderDeliveryScreen(orderId: _selectedOrder!.id),
             ),
@@ -581,7 +584,8 @@ class _CaptainMapScreenState extends State<CaptainMapScreen> {
                             onPressed: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(
+                                protectedPage(
+                                  roles: const {UserRole.captain},
                                   builder: (context) => OrderDeliveryScreen(
                                     orderId: _selectedOrder!.id,
                                   ),

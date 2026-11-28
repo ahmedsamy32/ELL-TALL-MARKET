@@ -1,3 +1,5 @@
+import '../../widgets/auth_route_guard.dart';
+import '../../models/profile_model.dart';
 import 'package:flutter/material.dart';
 import 'package:ell_tall_market/core/logger.dart';
 import 'package:provider/provider.dart';
@@ -1068,7 +1070,8 @@ class _CaptainDashboardState extends State<CaptainDashboard>
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(
+            protectedPage(
+              roles: const {UserRole.captain},
               builder: (context) => OrderDeliveryScreen(orderId: order.id),
             ),
           );

@@ -1,3 +1,5 @@
+import '../../widgets/auth_route_guard.dart';
+import '../../models/profile_model.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
 import 'package:ell_tall_market/widgets/safe_network_image.dart';
 import 'package:flutter/material.dart';
@@ -620,7 +622,8 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
                 onPressed: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(
+                    protectedPage(
+                      roles: const {UserRole.merchant},
                       builder: (context) =>
                           AddEditProductScreen(product: duplicated),
                     ),
@@ -1007,7 +1010,8 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
                         if (_storeId != null) {
                           Navigator.push(
                             context,
-                            MaterialPageRoute(
+                            protectedPage(
+                              roles: const {UserRole.merchant},
                               builder: (context) =>
                                   ImportProductsScreen(storeId: _storeId!),
                             ),
@@ -1031,7 +1035,8 @@ class _MerchantProductsScreenState extends State<MerchantProductsScreen>
                         if (_storeId != null) {
                           Navigator.push(
                             context,
-                            MaterialPageRoute(
+                            protectedPage(
+                              roles: const {UserRole.merchant},
                               builder: (context) =>
                                   TemplateManagerScreen(storeId: _storeId!),
                             ),

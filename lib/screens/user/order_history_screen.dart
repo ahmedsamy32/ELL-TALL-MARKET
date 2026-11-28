@@ -1,3 +1,4 @@
+import '../../widgets/auth_route_guard.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:ell_tall_market/widgets/app_shimmer.dart';
@@ -385,7 +386,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
               final firstOrder = group.orders.first;
               Navigator.push(
                 context,
-                MaterialPageRoute(
+                protectedPage(
                   builder: (context) => OrderTrackingScreen(
                     orderId: firstOrder.id,
                     orderNumber: firstOrder.orderNumber,
@@ -506,7 +507,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen>
               final firstOrder = group.orders.first;
               Navigator.push(
                 context,
-                MaterialPageRoute(
+                protectedPage(
                   builder: (context) => OrderTrackingScreen(
                     orderId: firstOrder.id,
                     orderNumber: firstOrder.orderNumber,
@@ -793,9 +794,10 @@ class _OrderGroupCardState extends State<_OrderGroupCard> {
                             onPressed: () async {
                               final rated = await Navigator.push<bool>(
                                 context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      RateOrderScreen(orders: widget.group.orders),
+                                protectedPage(
+                                  builder: (context) => RateOrderScreen(
+                                    orders: widget.group.orders,
+                                  ),
                                 ),
                               );
                               // تحديث الشاشة بعد التقييم بنجاح
