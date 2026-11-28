@@ -660,6 +660,7 @@ function generateProductSku(prefix) {
   const number = document.getElementById(`${prefix}Barcode`).value.replace(/[^\p{Nd}]/gu, "");
   const suffix = number || String(Math.floor(100000 + Math.random() * 900000));
   document.getElementById(`${prefix}Sku`).value = `${initials}-${suffix}`;
+  refreshVariantSkus(prefix);
 }
 
 function updateStockPieces(prefix) {
@@ -1484,6 +1485,9 @@ function initFormListeners() {
     const refreshPieces = () => updateStockPieces(prefix);
     document.getElementById(`${prefix}Stock`).addEventListener("input", refreshPieces);
     document.getElementById(`${prefix}PackSize`).addEventListener("input", refreshPieces);
+    for (const field of ["Sku", "Barcode"]) {
+      document.getElementById(`${prefix}${field}`).addEventListener("input", () => refreshVariantSkus(prefix));
+    }
     refreshPieces();
   }
   const form = document.getElementById("addProductForm");
@@ -2573,6 +2577,7 @@ async function lookupBarcodeOnline(inputElementId = "productBarcode", isModal = 
   }
 
   inputEl.value = barcode;
+  refreshVariantSkus(prefix);
   const request = Symbol();
   barcodeLookupRequests.set(inputEl, request);
   const isLatestLookup = () => barcodeLookupRequests.get(inputEl) === request;
@@ -4083,6 +4088,108 @@ function getVariantGroupsFromContainer(prefix) {
   return groups;
 }
 
+const arabicVariantLetters = {
+  ا: "A", ب: "B", ت: "T", ث: "TH", ج: "G", ح: "H", خ: "KH",
+  د: "D", ذ: "DH", ر: "R", ز: "Z", س: "S", ش: "SH", ص: "S",
+  ض: "D", ط: "T", ظ: "Z", ع: "A", غ: "GH", ف: "F", ق: "Q",
+  ك: "K", ل: "L", م: "M", ن: "N", ه: "H", ة: "H", و: "W",
+  ي: "Y", ى: "Y", ء: "A"
+};
+
+// These two established option codes use different spelling from the letter map.
+const arabicVariantSpellings = new Map([["جملي", "GML"], ["جبنة", "JBN"]]);
+
+const variantColorCodes = new Map([
+  ["اسود", "BLK"], ["black", "BLK"], ["ابيض", "WHT"], ["white", "WHT"],
+  ["احمر", "RED"], ["red", "RED"], ["ازرق", "BLU"], ["blue", "BLU"],
+  ["اخضر", "GRN"], ["green", "GRN"], ["اصفر", "YLW"], ["yellow", "YLW"],
+  ["كحلي", "NVY"], ["navy", "NVY"], ["رمادي", "GRY"], ["رصاصي", "GRY"],
+  ["gray", "GRY"], ["grey", "GRY"], ["بني", "BRN"], ["brown", "BRN"],
+  ["بيج", "BEG"], ["beige", "BEG"], ["ذهبي", "GLD"], ["gold", "GLD"],
+  ["فضي", "SLV"], ["silver", "SLV"]
+]);
+
+const variantUnits = {
+  مل: "ML", ملليلتر: "ML", مليلتر: "ML", ml: "ML",
+  لتر: "L", l: "L",
+  جم: "G", جرام: "G", غرام: "G", g: "G",
+  كجم: "KG", كيلو: "KG", كيلوجرام: "KG", "كيلو جرام": "KG", kg: "KG",
+  جيجا: "GB", gb: "GB", تيرا: "TB", tb: "TB",
+  وات: "W", w: "W", سم: "CM", cm: "CM"
+};
+const variantMeasurementPattern = new RegExp(
+  "(?:^|[^\\p{L}\\p{N}.])(\\d+(?:\\.\\d+)?)\\s*(" + Object.keys(variantUnits).join("|") + ")(?![\\p{L}\\p{N}])",
+  "u"
+);
+
+function normalizeVariantOptionText(text) {
+  return String(text ?? "").normalize("NFKD").toLowerCase()
+    .replace(/[\p{M}ـ]/gu, "").replace(/\s+/g, " ").trim();
+}
+
+function transliterateArabicToCode(text) {
+  const words = normalizeVariantOptionText(text).replace(/(^|[^\p{L}])ال(?=\p{Script=Arabic})/gu, "$1");
+  const special = arabicVariantSpellings.get(words);
+  if (special) return special;
+  return Array.from(words, char => arabicVariantLetters[char] || (/[a-z]/.test(char) ? char.toUpperCase() : ""))
+    .join("").slice(0, 4);
+}
+
+function formatVariantOptionCode(rawValue) {
+  const value = normalizeVariantOptionText(rawValue)
+    .replace(/[٠-٩]/g, digit => String(digit.charCodeAt(0) - "٠".charCodeAt(0)))
+    .replace(/[۰-۹]/g, digit => String(digit.charCodeAt(0) - "۰".charCodeAt(0)))
+    .replace(/٫/g, ".").replace(/٬/g, "");
+  const size = value.replace(/^(?:مقاس|size)\s+/, "");
+  if (/^(?:[sml]|x+s|x+l|\d+xl|\d+(?:\.\d+)?)$/.test(size)) return size.toUpperCase();
+
+  const measurement = value.match(variantMeasurementPattern);
+  if (measurement) return measurement[1] + variantUnits[measurement[2]];
+
+  const term = value.replace(/^ال(?=\p{Script=Arabic})/u, "");
+  const color = variantColorCodes.get(term);
+  if (color) return color;
+  if (/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(value)) return value.slice(1).toUpperCase();
+  return /\p{Script=Arabic}/u.test(term)
+    ? transliterateArabicToCode(value)
+    : value.replace(/[^a-z]/g, "").slice(0, 4).toUpperCase();
+}
+
+function buildVariantChildSku(baseSku, selectedOptions, usedSkus = new Set()) {
+  const optionCodes = selectedOptions.map(option => formatVariantOptionCode(option?.value ?? option) || "OPT");
+  const base = [baseSku.trim() || "VAR", ...optionCodes].join("-");
+  let sku = base;
+  for (let suffix = 2; usedSkus.has(sku.toUpperCase()); suffix++) {
+    sku = `${base}-${suffix}`;
+  }
+  usedSkus.add(sku.toUpperCase());
+  return sku;
+}
+
+function refreshVariantSkus(prefix, editingSku = null) {
+  const tbody = document.getElementById(`${prefix}VariantsTableBody`);
+  const baseSku = document.getElementById(`${prefix}Sku`)?.value.trim() ||
+    document.getElementById(`${prefix}Barcode`)?.value.trim() || "";
+  const usedSkus = new Set();
+  const automaticRows = [];
+  for (const tr of tbody?.rows || []) {
+    const input = tr.querySelector(".var-sku");
+    const key = input.value.trim().toUpperCase();
+    input.setCustomValidity("");
+    if (tr.dataset.skuManual === "true" && key) {
+      if (usedSkus.has(key)) input.setCustomValidity("كود التركيبة مكرر. اكتب كودًا مختلفًا أو امسحه لتوليد كود تلقائي.");
+      usedSkus.add(key);
+    } else {
+      automaticRows.push(tr);
+    }
+  }
+  for (const tr of automaticRows) {
+    const input = tr.querySelector(".var-sku");
+    const sku = buildVariantChildSku(baseSku, JSON.parse(tr.dataset.selectedOptions), usedSkus);
+    if (input !== editingSku) input.value = sku;
+  }
+}
+
 // Generate Cartesian product of variant groups and render the Variants Matrix Table
 function syncVariantsTable(prefix, existingVariants = null) {
   const section = document.getElementById(`${prefix}VariantsMatrixSection`);
@@ -4097,11 +4204,12 @@ function syncVariantsTable(prefix, existingVariants = null) {
   }
 
   section.classList.remove("hidden");
+  const baseBarcode = document.getElementById(`${prefix}Barcode`)?.value.trim() || "";
 
   // Build map of existing variant values (either from passed existingVariants or current DOM)
   const preservedMap = new Map();
   if (Array.isArray(existingVariants)) {
-    existingVariants.forEach(v => {
+    existingVariants.forEach((v, index) => {
       if (v && Array.isArray(v.selected_options)) {
         const key = v.selected_options.map(o => `${o.name}:${o.value}`).join('|');
         preservedMap.set(key, {
@@ -4109,6 +4217,8 @@ function syncVariantsTable(prefix, existingVariants = null) {
           price: v.price ?? '',
           stock_quantity: v.stock_quantity ?? '',
           sku: v.sku || '',
+          skuManual: v.sku_is_manual ?? Boolean(v.sku && v.sku !== `VAR-${index + 1}` &&
+            (!baseBarcode || v.sku !== `${baseBarcode}-${index + 1}`)),
           image_url: v.image_url || '',
           is_active: v.is_active !== false,
           created_at: v.created_at || new Date().toISOString()
@@ -4124,6 +4234,7 @@ function syncVariantsTable(prefix, existingVariants = null) {
           price: tr.querySelector(".var-price")?.value || '',
           stock_quantity: tr.querySelector(".var-stock")?.value || '',
           sku: tr.querySelector(".var-sku")?.value || '',
+          skuManual: tr.dataset.skuManual === "true",
           image_url: tr.querySelector(".var-img")?.value || '',
           is_active: tr.querySelector(".var-active")?.checked !== false,
           created_at: tr.dataset.createdAt || new Date().toISOString()
@@ -4153,7 +4264,6 @@ function syncVariantsTable(prefix, existingVariants = null) {
 
   const basePrice = document.getElementById(`${prefix}Price`)?.value || '';
   const baseStock = document.getElementById(`${prefix}Stock`)?.value || '0';
-  const baseBarcode = document.getElementById(`${prefix}Barcode`)?.value?.trim() || '';
 
   tbody.innerHTML = "";
   combinations.forEach((selectedOptions, idx) => {
@@ -4163,7 +4273,7 @@ function syncVariantsTable(prefix, existingVariants = null) {
     const varId = saved?.id || `var_${Date.now()}_${idx}`;
     const priceVal = saved ? saved.price : basePrice;
     const stockVal = saved ? saved.stock_quantity : baseStock;
-    const skuVal = saved?.sku || (baseBarcode ? `${baseBarcode}-${idx + 1}` : `VAR-${idx + 1}`);
+    const skuVal = saved?.skuManual ? saved.sku : "";
     const imgVal = saved?.image_url || '';
     const isActive = saved ? saved.is_active : true;
     const createdAt = saved?.created_at || new Date().toISOString();
@@ -4179,6 +4289,7 @@ function syncVariantsTable(prefix, existingVariants = null) {
     tr.dataset.variantId = varId;
     tr.dataset.createdAt = createdAt;
     tr.dataset.selectedOptions = JSON.stringify(selectedOptions);
+    tr.dataset.skuManual = String(Boolean(saved?.skuManual));
 
     tr.innerHTML = `
       <td><div class="variant-combo-badge">${badgesHtml}</div></td>
@@ -4195,6 +4306,13 @@ function syncVariantsTable(prefix, existingVariants = null) {
       </td>
       <td style="text-align:center;"><input type="checkbox" class="var-active" ${isActive ? 'checked' : ''}></td>
     `;
+
+    const skuInput = tr.querySelector(".var-sku");
+    skuInput.addEventListener("input", () => {
+      tr.dataset.skuManual = String(Boolean(skuInput.value.trim()));
+      refreshVariantSkus(prefix, skuInput);
+    });
+    skuInput.addEventListener("change", () => refreshVariantSkus(prefix));
 
     const imgInput = tr.querySelector(".var-img");
     const thumbImg = tr.querySelector(".variant-thumb-preview");
@@ -4216,6 +4334,7 @@ function syncVariantsTable(prefix, existingVariants = null) {
 
     tbody.appendChild(tr);
   });
+  refreshVariantSkus(prefix);
 }
 
 function applyBaseValuesToVariants(prefix) {
@@ -4223,18 +4342,13 @@ function applyBaseValuesToVariants(prefix) {
   if (!tbody) return;
   const basePrice = document.getElementById(`${prefix}Price`)?.value || '';
   const baseStock = document.getElementById(`${prefix}Stock`)?.value || '';
-  const baseBarcode = document.getElementById(`${prefix}Barcode`)?.value?.trim() || '';
-
-  tbody.querySelectorAll("tr").forEach((tr, idx) => {
+  tbody.querySelectorAll("tr").forEach(tr => {
     const pInput = tr.querySelector(".var-price");
     const sInput = tr.querySelector(".var-stock");
-    const skuInput = tr.querySelector(".var-sku");
     if (pInput && basePrice) pInput.value = basePrice;
     if (sInput && baseStock !== '') sInput.value = baseStock;
-    if (skuInput && baseBarcode && (!skuInput.value || skuInput.value.startsWith("VAR-"))) {
-      skuInput.value = `${baseBarcode}-${idx + 1}`;
-    }
   });
+  refreshVariantSkus(prefix);
 }
 
 async function uploadVariantImage(fileInput, urlInput, thumbImg, prefix) {
@@ -4280,6 +4394,7 @@ async function uploadVariantImage(fileInput, urlInput, thumbImg, prefix) {
 function getVariantsFromContainer(prefix, productId = '') {
   const tbody = document.getElementById(`${prefix}VariantsTableBody`);
   if (!tbody) return [];
+  refreshVariantSkus(prefix);
   const variants = [];
   const nowIso = new Date().toISOString();
 
@@ -4289,7 +4404,8 @@ function getVariantsFromContainer(prefix, productId = '') {
 
     const priceRaw = parseFloat(tr.querySelector(".var-price")?.value);
     const stockRaw = parseInt(tr.querySelector(".var-stock")?.value, 10);
-    const skuRaw = (tr.querySelector(".var-sku")?.value || "").trim();
+    const skuInput = tr.querySelector(".var-sku");
+    if (!skuInput.validity.valid) throw new Error(skuInput.validationMessage);
     const imgRaw = (tr.querySelector(".var-img")?.value || "").trim();
     const isActive = tr.querySelector(".var-active")?.checked !== false;
 
@@ -4297,7 +4413,8 @@ function getVariantsFromContainer(prefix, productId = '') {
       id: tr.dataset.variantId || `var_${Date.now()}_${idx}`,
       product_id: productId || '',
       selected_options: selectedOptions,
-      sku: skuRaw || `VAR-${idx + 1}`,
+      sku: skuInput.value.trim(),
+      sku_is_manual: tr.dataset.skuManual === "true",
       price: isNaN(priceRaw) ? null : priceRaw,
       stock_quantity: isNaN(stockRaw) ? null : stockRaw,
       image_url: (imgRaw && !imgRaw.startsWith("data:")) ? imgRaw : null,
