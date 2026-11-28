@@ -150,6 +150,22 @@
             </button>
           </div>
 
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="bulkImportCategory">القسم الرئيسي لجميع سلع الملف</label>
+              <select id="bulkImportCategory" required>
+                <option value="">اختر القسم الرئيسي…</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="bulkImportSupplier">المورّد الشريك / التاجر لجميع سلع الملف</label>
+              <select id="bulkImportSupplier" required>
+                <option value="">اختر المورّد/المتجر…</option>
+              </select>
+            </div>
+          </div>
+          <p>يُطبّق القسم الرئيسي والمورّد المختاران على جميع السلع. أدخل الفئة الفرعية في الملف أو اتركها فارغة لاقتراحها من اسم السلعة.</p>
+
           <div class="bulk-import-actions">
             <button type="button" class="btn btn-outline btn-sm" onclick="downloadBulkTemplate()" title="تحميل نموذج Excel جاهز لملء بياناته">
               <i class="fa-solid fa-download"></i> تحميل قالب Excel النموذجي
@@ -261,8 +277,43 @@
 
             <!-- Stock Quantity -->
             <div class="form-group">
-              <label for="productStock"><i class="fa-solid fa-boxes-stacked"></i> الكمية الموردة بالمستودع (بالقطعة)</label>
-              <input type="number" id="productStock" placeholder="مثال: 100" required>
+              <label for="productStock"><i class="fa-solid fa-boxes-stacked"></i> الكمية الموردة بالمستودع</label>
+              <input type="number" id="productStock" placeholder="مثال: 100" min="0" max="2147483647" aria-describedby="productStockPieces" required>
+              <output id="productStockPieces" class="stock-pieces-note" for="productStock productPackSize"></output>
+            </div>
+
+            <div class="form-group">
+              <label for="productUnit">وحدة القياس</label>
+              <select id="productUnit">
+                <option value="قطعة">قطعة</option>
+                <option value="علبة">علبة</option>
+                <option value="كيس">كيس</option>
+                <option value="كرتونة">كرتونة</option>
+                <option value="باكت">باكت</option>
+                <option value="كيلو">كيلو</option>
+                <option value="جرام">جرام</option>
+                <option value="لتر">لتر</option>
+                <option value="زجاجة">زجاجة</option>
+                <option value="عبوة">عبوة</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="productPackSize">معامل التعبئة (قطع/وحدة)</label>
+              <input type="number" id="productPackSize" value="1" min="1" max="2147483647" step="1" required>
+            </div>
+
+            <div class="form-group">
+              <label for="productExpiryDate"><i class="fa-solid fa-calendar-days"></i> تاريخ انتهاء الصلاحية</label>
+              <input type="date" id="productExpiryDate">
+            </div>
+
+            <div class="form-group">
+              <label for="productSku"><i class="fa-solid fa-hashtag"></i> كود الصنف بالمخزن (SKU)</label>
+              <div class="input-with-action sku-field">
+                <input type="text" id="productSku" dir="auto" placeholder="مثال: ABC-123456">
+                <button type="button" class="btn btn-secondary" onclick="generateProductSku('product')">توليد SKU</button>
+              </div>
             </div>
 
             <!-- Brand / Manufacturer -->
@@ -442,7 +493,7 @@
             </label>
             <div class="input-with-action">
               <input type="text" id="posBarcodeScanner" placeholder="امسح باركود السلعة هنا..." autocomplete="off">
-              <button type="button" class="btn btn-secondary" onclick="openCameraModalForPos()" title="مسح باستخدام الكاميرا">
+              <button type="button" id="btnScanPosCamera" class="btn btn-secondary" onclick="openCameraModalForPos()" title="مسح باستخدام الكاميرا">
                 <i class="fa-solid fa-camera"></i> الكاميرا
               </button>
             </div>
@@ -474,12 +525,53 @@
 
             <button type="button" id="btnCheckoutPos" class="btn btn-success btn-checkout" onclick="checkoutPosSale()">
               <i class="fa-solid fa-circle-check"></i>
-              <span>إتمام العملية وطباعة الفاتورة</span>
+              <span id="posCheckoutLabel">إتمام العملية وطباعة الفاتورة</span>
             </button>
+            <p id="posCheckoutStatus" class="pos-status" role="status"></p>
           </div>
         </div>
 
       </div>
+      <section class="card pos-history" aria-labelledby="posHistoryTitle">
+        <header class="pos-history-header">
+          <div>
+            <h2 id="posHistoryTitle" class="card-title"><i class="fa-solid fa-cash-register" aria-hidden="true"></i> سجل فواتير اليوم والمرتجعات وتقفيل الوردية</h2>
+            <p id="posHistoryDate" class="pos-history-date"></p>
+          </div>
+          <div class="pos-history-actions">
+            <button type="button" id="btnRefreshPosHistory" class="btn btn-secondary btn-sm">
+              <i class="fa-solid fa-rotate-right" aria-hidden="true"></i> تحديث
+            </button>
+            <button type="button" id="btnPrintPosShift" class="btn btn-primary btn-sm">
+              <i class="fa-solid fa-print" aria-hidden="true"></i> طباعة تقرير تقفيل الوردية
+            </button>
+          </div>
+        </header>
+
+        <dl class="pos-shift-summary">
+          <div><dt>إجمالي المبيعات</dt><dd id="posSalesAmount">—</dd></div>
+          <div><dt>إجمالي المرتجعات</dt><dd id="posReturnsAmount">—</dd></div>
+          <div><dt>صافي الوردية</dt><dd id="posShiftNet">—</dd></div>
+          <div><dt>عدد الفواتير</dt><dd id="posInvoiceCount">—</dd></div>
+        </dl>
+
+        <p id="posHistoryStatus" class="pos-status" role="status"></p>
+        <div class="table-responsive" role="region" aria-labelledby="posHistoryTitle" tabindex="0">
+          <table class="pos-history-table">
+            <thead>
+              <tr>
+                <th scope="col">رقم الفاتورة</th>
+                <th scope="col">وقت البيع</th>
+                <th scope="col">الكاشير</th>
+                <th scope="col">الإجمالي</th>
+                <th scope="col">الحالة</th>
+                <th scope="col">الإجراءات</th>
+              </tr>
+            </thead>
+            <tbody id="posHistoryRows"></tbody>
+          </table>
+        </div>
+      </section>
     </div>
 
     <!-- TAB 3: Warehouse Inventory Management -->
@@ -508,7 +600,7 @@
         <div class="form-grid inventory-filter-grid">
           <div class="form-group">
             <label for="searchInventory" class="sr-only">بحث في المخزون</label>
-            <input type="text" id="searchInventory" placeholder="ابحث باسم السلعة، الباركود، الماركة، أو السيريال..." aria-label="ابحث باسم السلعة أو رقم الباركود أو الماركة" title="بحث في المخزون">
+            <input type="text" id="searchInventory" placeholder="ابحث باسم السلعة، الباركود، كود الصنف أو الماركة..." aria-label="ابحث باسم السلعة أو الباركود أو كود الصنف أو الماركة" title="بحث في المخزون">
           </div>
           <div class="form-group">
             <label for="filterCategory" class="sr-only">تصفية حسب القسم</label>
@@ -731,8 +823,43 @@
 
           <!-- Stock Quantity -->
           <div class="form-group">
-            <label for="modalEditStock"><i class="fa-solid fa-boxes-stacked"></i> كمية المخزون (بالقطعة)</label>
-            <input type="number" id="modalEditStock" placeholder="مثال: 100" required>
+            <label for="modalEditStock"><i class="fa-solid fa-boxes-stacked"></i> كمية المخزون</label>
+            <input type="number" id="modalEditStock" placeholder="مثال: 100" min="0" max="2147483647" aria-describedby="modalEditStockPieces" required>
+            <output id="modalEditStockPieces" class="stock-pieces-note" for="modalEditStock modalEditPackSize"></output>
+          </div>
+
+          <div class="form-group">
+            <label for="modalEditUnit">وحدة القياس</label>
+            <select id="modalEditUnit">
+              <option value="قطعة">قطعة</option>
+              <option value="علبة">علبة</option>
+              <option value="كيس">كيس</option>
+              <option value="كرتونة">كرتونة</option>
+              <option value="باكت">باكت</option>
+              <option value="كيلو">كيلو</option>
+              <option value="جرام">جرام</option>
+              <option value="لتر">لتر</option>
+              <option value="زجاجة">زجاجة</option>
+              <option value="عبوة">عبوة</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="modalEditPackSize">معامل التعبئة (قطع/وحدة)</label>
+            <input type="number" id="modalEditPackSize" value="1" min="1" max="2147483647" step="1" required>
+          </div>
+
+          <div class="form-group">
+            <label for="modalEditExpiryDate"><i class="fa-solid fa-calendar-days"></i> تاريخ انتهاء الصلاحية</label>
+            <input type="date" id="modalEditExpiryDate">
+          </div>
+
+          <div class="form-group">
+            <label for="modalEditSku"><i class="fa-solid fa-hashtag"></i> كود الصنف بالمخزن (SKU)</label>
+            <div class="input-with-action sku-field">
+              <input type="text" id="modalEditSku" dir="auto" placeholder="مثال: ABC-123456">
+              <button type="button" class="btn btn-secondary" onclick="generateProductSku('modalEdit')">توليد SKU</button>
+            </div>
           </div>
 
           <!-- Brand / Manufacturer -->
@@ -950,6 +1077,7 @@
 
   <!-- Thermal Print Container (Hidden on screen, strictly visible during @media print) -->
   <div id="thermalPrintArea" class="thermal-print-area"></div>
+  <div id="posPrintArea" dir="rtl"></div>
 
   <!-- Product Photo Camera Capture Modal -->
   <div id="productPhotoModal" class="modal">

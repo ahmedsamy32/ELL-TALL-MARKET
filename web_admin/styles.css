@@ -189,6 +189,20 @@ input:focus, select:focus, textarea:focus {
   gap: 8px;
 }
 
+.sku-field input {
+  min-width: 0;
+}
+
+.sku-field .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.stock-pieces-note {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
 /* Buttons */
 .btn {
   padding: 12px 20px;
@@ -737,6 +751,72 @@ tr:hover {
   font-size: 1.1rem;
 }
 
+.pos-history {
+  margin-top: 1.5rem;
+}
+
+.pos-history-header,
+.pos-history-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.pos-history-header {
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.pos-history-header .card-title,
+.pos-history-date,
+.pos-status,
+.pos-shift-summary dd {
+  margin: 0;
+}
+
+.pos-history-date,
+.pos-status,
+.pos-shift-summary dt {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.pos-status:not(:empty) {
+  margin: 0.75rem 0;
+}
+
+.pos-shift-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  margin: 0 0 1rem;
+}
+
+.pos-shift-summary > div {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #f8fafc;
+}
+
+.pos-shift-summary dd {
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.pos-shift-summary > div:nth-child(3) {
+  border-color: var(--primary);
+}
+
+.pos-history-table :is(th, td) {
+  white-space: nowrap;
+}
+
+#posPrintArea {
+  display: none;
+}
+
 /* Inventory Tab */
 .inventory-filter-grid {
   margin-bottom: 1.5rem;
@@ -903,6 +983,25 @@ tr:hover {
   font-size: 0.75rem;
   font-weight: 600;
   line-height: 1.2;
+}
+
+.badge-sku,
+.badge-expiry-date {
+  background-color: #f1f5f9;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+
+.badge-expiry-expired {
+  background-color: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+
+.badge-expiry-soon {
+  background-color: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fcd34d;
 }
 
 .badge-brand {
@@ -1955,6 +2054,11 @@ input[type="password"]::-ms-clear {
    Supports: Xprinter, Zebra, TSC, Bixolon, Honeywell, etc.
    ============================================================ */
 
+@page pos-receipt {
+  size: auto;
+  margin: 0;
+}
+
 /* Default 50mm x 25mm label sticker size rule */
 @page {
   size: 50mm 25mm;
@@ -1995,6 +2099,52 @@ input[type="password"]::-ms-clear {
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
+  }
+
+  body.pos-printing #thermalPrintArea {
+    display: none !important;
+  }
+
+  body.pos-printing #posPrintArea {
+    display: block !important;
+    page: pos-receipt;
+    box-sizing: border-box;
+    max-width: 80mm;
+    padding: 3mm;
+    margin: 0 auto;
+    font: 10pt/1.5 Arial, sans-serif;
+    overflow-wrap: anywhere;
+  }
+
+  #posPrintArea h2,
+  #posPrintArea p {
+    margin: 0 0 2mm;
+  }
+
+  #posPrintArea h2 {
+    text-align: center;
+    font-size: 13pt;
+  }
+
+  #posPrintArea table {
+    font-size: 9pt;
+    table-layout: fixed;
+    margin: 2mm 0;
+  }
+
+  #posPrintArea :is(th, td) {
+    padding: 1mm;
+    background: white;
+    color: black;
+    border-bottom: 1px solid black;
+  }
+
+  #posPrintArea th:first-child {
+    width: 40%;
+  }
+
+  #posPrintArea tr {
+    break-inside: avoid;
   }
 
   /* 4. Thermal Sticker Sheet Formatting */
